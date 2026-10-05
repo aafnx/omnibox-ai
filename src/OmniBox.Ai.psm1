@@ -141,21 +141,122 @@ function New-AiContextXml {
 function Save-AiServiceXml {
     param($Backend, [Xml.XmlDocument]$Xml)
     $path = [IO.Path]::GetFullPath($Backend.service_config)
-    $directory = Split-Path $path -Parent
-    $suffix = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N')
-    $backup = "$path.backup-$suffix"
-    $temp = Join-Path $directory ('.omnibox-ai-xml-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    $history = Read-AiRecoveryState $Backend
+    $paths = @($path, "$path.ai-previous", "$path.ai-state.json")
+    $snapshot = @{}
+    foreach ($item in $paths) { $snapshot[$item] = if ([IO.File]::Exists($item)) { [IO.File]::ReadAllBytes($item) } else { $null } }
+    $stream = [IO.MemoryStream]::new()
     try {
         $settings = [Xml.XmlWriterSettings]::new()
         $settings.Encoding = [Text.UTF8Encoding]::new($false)
-        $writer = [Xml.XmlWriter]::Create($temp, $settings)
+        $settings.CloseOutput = $false
+        $writer = [Xml.XmlWriter]::Create($stream, $settings)
         try { $Xml.Save($writer) } finally { $writer.Dispose() }
-        # Replace atomically and keep the original XML as backup; all paths are same-volume.
-        [IO.File]::Replace($temp, $path, $backup)
-        Write-Host "Резервная копия XML: $backup"
-    } finally {
-        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force }
+        $bytes = $stream.ToArray()
+        # Consecutive unapplied edits keep the same last working configuration.
+        $previous = if ($null -ne $history -and $history.pending) { $snapshot["$path.ai-previous"] } else { $snapshot[$path] }
+        $state = @{ schema_version = 1; current_sha256 = Get-AiBytesHash $bytes; previous_sha256 = Get-AiBytesHash $previous; pending = $true }
+        try {
+            Write-AiAtomicBytes "$path.ai-previous" $previous
+            Write-AiAtomicBytes $path $bytes
+            Write-AiRecoveryState $Backend $state
+        } catch {
+            $cause = $_.Exception.Message
+            $errors = @()
+            foreach ($item in $paths) {
+                try {
+                    if ($null -eq $snapshot[$item]) { if ([IO.File]::Exists($item)) { [IO.File]::Delete($item) } }
+                    else { Write-AiAtomicBytes $item $snapshot[$item] }
+                } catch { $errors += $_.Exception.Message }
+            }
+            if ($errors.Count) { throw "Не удалось сохранить XML: $cause. Восстановление файлов: $($errors -join '; ')" }
+            throw "Не удалось сохранить XML; прежние файлы восстановлены: $cause"
+        }
+        Write-Host 'Предыдущие настройки сохранены для автоматического отката и ai restore.'
+    } finally { $stream.Dispose() }
+}
+
+function Get-AiBytesHash {
+    param([byte[]]$Bytes)
+    return [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($Bytes)).ToLowerInvariant()
+}
+
+function Write-AiAtomicBytes {
+    param([string]$Path, [byte[]]$Bytes)
+    $temp = "$Path.tmp-$([Guid]::NewGuid().ToString('N'))"
+    try {
+        [IO.File]::WriteAllBytes($temp, $Bytes)
+        if ([IO.File]::Exists($Path)) { [IO.File]::Replace($temp, $Path, [System.Management.Automation.Language.NullString]::Value) }
+        else { [IO.File]::Move($temp, $Path) }
+    } finally { if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) } }
+}
+
+function Write-AiRecoveryState {
+    param($Backend, $State)
+    $bytes = [Text.UTF8Encoding]::new($false).GetBytes(($State | ConvertTo-Json -Compress))
+    Write-AiAtomicBytes "$($Backend.service_config).ai-state.json" $bytes
+}
+
+function Read-AiRecoveryState {
+    param($Backend)
+    $path = $Backend.service_config
+    $stateExists = [IO.File]::Exists("$path.ai-state.json")
+    $previousExists = [IO.File]::Exists("$path.ai-previous")
+    if (-not $stateExists -and -not $previousExists) { return $null }
+    if (-not $stateExists -or -not $previousExists) { throw 'История отката неполная. Проверь файлы .ai-state.json и .ai-previous рядом с XML.' }
+    $state = Get-Content -LiteralPath "$path.ai-state.json" -Raw | ConvertFrom-Json -AsHashtable
+    if ($state.schema_version -ne 1 -or $state.pending -isnot [bool] -or
+        $state.current_sha256 -notmatch '^[a-f0-9]{64}$' -or $state.previous_sha256 -notmatch '^[a-f0-9]{64}$') {
+        throw 'Некорректная история отката; XML не изменён.'
     }
+    if ((Get-AiBytesHash ([IO.File]::ReadAllBytes($path))) -cne $state.current_sha256 -or
+        (Get-AiBytesHash ([IO.File]::ReadAllBytes("$path.ai-previous"))) -cne $state.previous_sha256) {
+        throw 'XML или предыдущие настройки изменены вне ai. Автоматическая перезапись отменена; проверь историю отката.'
+    }
+    return $state
+}
+
+function Restore-AiServiceXml {
+    param($Backend)
+    $state = Read-AiRecoveryState $Backend
+    if ($null -eq $state) { throw 'Нет предыдущих настроек. Они появятся после изменения контекста через ai.' }
+    $path = $Backend.service_config
+    Write-AiAtomicBytes $path ([IO.File]::ReadAllBytes("$path.ai-previous"))
+    $state.current_sha256 = $state.previous_sha256
+    $state.pending = $false
+    Write-AiRecoveryState $Backend $state
+}
+
+function Invoke-AiBackendStart {
+    param($Config, [string]$Name, [string]$Command, [AllowNull()][Xml.XmlDocument]$PreparedXml)
+    $backend = Get-AiBackend $Config $Name
+    $service = Get-AiService $backend.service
+    if ($null -eq $service) { throw "Служба '$($backend.service)' не установлена." }
+    if ([string]$service.StartType -eq 'Disabled') { throw 'Целевая служба отключена; XML не изменён.' }
+    $state = Read-AiRecoveryState $backend
+    $wasRunning = [string]$service.Status -eq 'Running'
+    if ($Command -eq 'start' -and [string]$service.Status -ne 'Stopped' -and
+        ($null -ne $PreparedXml -or ($null -ne $state -and $state.pending))) {
+        throw "Новые настройки ещё не применены. Используй ai restart $Name."
+    }
+    try {
+        if ($Command -eq 'restart') { Stop-AiBackend $Config $Name }
+        if ($null -ne $PreparedXml) { Save-AiServiceXml $backend $PreparedXml }
+        Start-AiBackend $Config $Name
+    } catch {
+        $cause = $_.Exception.Message
+        try {
+            $pending = Read-AiRecoveryState $backend
+            if ($null -eq $pending -or -not $pending.pending) { throw "Нет ожидающих применения настроек для отката." }
+            # Stop first. Never rewrite configuration under a process that failed to stop.
+            Stop-AiBackend $Config $Name
+            Restore-AiServiceXml $backend
+            if ($wasRunning) { Start-AiBackend $Config $Name }
+        } catch { throw "Запуск не выполнен: $cause. Откат: $($_.Exception.Message)" }
+        throw "Запуск с новыми настройками не выполнен: $cause. Предыдущий XML восстановлен; сервер $(if ($wasRunning) { 'снова запущен' } else { 'оставлен остановленным' })."
+    }
+    $state = Read-AiRecoveryState $backend
+    if ($null -ne $state -and $state.pending) { $state.pending = $false; Write-AiRecoveryState $backend $state }
 }
 
 function Read-AiStartOptions {
@@ -365,15 +466,31 @@ function Invoke-AiOllama {
     }
 }
 
+function Show-AiPower {
+    $powercfg = Join-Path $env:SystemRoot 'System32/powercfg.exe'
+    $savedExit = $global:LASTEXITCODE
+    $failures = @()
+    try {
+        foreach ($arguments in @(@('/lastwake'), @('/waketimers'), @('/requests'), @('/devicequery', 'wake_armed'))) {
+            Write-Host "`npowercfg $($arguments -join ' '):"
+            & $powercfg @arguments
+            if ($LASTEXITCODE -ne 0) { $failures += ($arguments -join ' ') }
+        }
+    } finally { $global:LASTEXITCODE = $savedExit }
+    if ($failures.Count) { throw "powercfg не выполнил: $($failures -join ', ')" }
+}
+
 function Show-AiHelp {
     @'
-OmniBox AI 0.2.0 — управление локальными серверами
+OmniBox AI 0.3.0 — управление локальными серверами
 
 ai start [backend] [--context 128k]  Запуск; по умолчанию bonsai. Другой остановится.
 ai stop [bonsai|ollama]        Остановка; без имени — все настроенные серверы.
 ai restart [backend] [--context 128k] Перезапуск, при необходимости с новым контекстом.
 ai context [backend] [128k]   Просмотр/сохранение контекста для следующего запуска.
+ai restore [backend]         Возврат предыдущего XML; сохраняет состояние запуска.
 ai status                    Службы, API, модель, контекст, сон и видеопамять.
+ai power                     Причины пробуждения, таймеры и блокировки сна Windows.
 ai logs [backend] [N] [stream] Последние N строк; stream: all, err, out, wrapper.
 ai endpoint [backend]         OpenAI-совместимый адрес (с localhost самого ПК).
 ai config                    Путь и содержимое конфигурации.
@@ -388,7 +505,9 @@ ai context bonsai 128k — сохранить, без перезапуска р�
 ai restart bonsai --context 128k — сохранить и применить сейчас.
 ai start --context не меняет уже работающую модель: используй restart.
 У Ollama это default OLLAMA_CONTEXT_LENGTH; модель/API могут переопределить num_ctx.
-Автозапуск и таймер простоя не меняются. Перед изменением XML создаётся backup.
+Ошибка запуска после смены контекста: автоматический откат предыдущего XML.
+Ollama проверяется до готовности API; ошибки последующей загрузки модели не отслеживаются.
+Автозапуск и таймер простоя не меняются. Историей XML управляет ai.
 '@
 }
 
@@ -397,7 +516,7 @@ function Invoke-Ai {
     $command = if ($Arguments.Count) { $Arguments[0].ToLowerInvariant() } else { 'help' }
     [string[]]$rest = @(if ($Arguments.Count -gt 1) { $Arguments[1..($Arguments.Count - 1)] })
     if ($command -in @('help', '--help', '-h')) { Show-AiHelp; return }
-    if ($command -in @('version', '--version')) { '0.2.0'; return }
+    if ($command -in @('version', '--version')) { '0.3.0'; return }
     $config = Read-AiConfig $ConfigPath
     switch ($command) {
         { $_ -in @('start', 'stop', 'restart') } {
@@ -420,17 +539,9 @@ function Invoke-Ai {
                     # Validate the XML before stopping a working server.
                     $preparedXml = New-AiContextXml $backend $options.context
                 }
-                switch ($command) {
-                    'start' {
-                        if ($null -ne $preparedXml) { Save-AiServiceXml $backend $preparedXml }
-                        Start-AiBackend $config $name
-                    }
-                    'restart' {
-                        Stop-AiBackend $config $name
-                        if ($null -ne $preparedXml) { Save-AiServiceXml $backend $preparedXml }
-                        Start-AiBackend $config $name
-                    }
-                    'stop' {
+                if ($command -ne 'stop') {
+                    Invoke-AiBackendStart $config $name $command $preparedXml
+                } else {
                         $names = if ($rest.Count) { @($name) } else { @($config.backends.Keys) }
                         # Attempt every backend even if one fails; never hide a failed stop.
                         $failures = @()
@@ -439,8 +550,26 @@ function Invoke-Ai {
                             catch { $failures += "$item`: $($_.Exception.Message)" }
                         }
                         if ($failures.Count) { throw ($failures -join '; ') }
-                    }
                 }
+            }
+        }
+        'restore' {
+            if ($rest.Count -gt 1) { throw 'Использование: ai restore [backend]' }
+            $name = if ($rest.Count) { $rest[0] } else { $config.default_backend }
+            $backend = Get-AiBackend $config $name
+            Assert-AiAdministrator
+            Invoke-AiLocked {
+                $state = Read-AiRecoveryState $backend
+                if ($null -eq $state) { throw 'Нет предыдущих настроек для восстановления.' }
+                if (-not $state.pending -and $state.current_sha256 -ceq $state.previous_sha256) {
+                    Write-Host "$name`: предыдущие настройки уже восстановлены."; return
+                }
+                $service = Get-AiService $backend.service
+                $wasRunning = $null -ne $service -and [string]$service.Status -eq 'Running'
+                Stop-AiBackend $config $name
+                Restore-AiServiceXml $backend
+                if ($wasRunning) { Start-AiBackend $config $name }
+                Write-Host "$name`: предыдущие настройки восстановлены."
             }
         }
         'context' {
@@ -471,6 +600,11 @@ function Invoke-Ai {
             $rows | Format-Table Backend, Engine, Service, Startup, API, Context, Sleeping -AutoSize | Out-Host
             foreach ($row in $rows) { Write-Host "$($row.Backend) model: $($row.Model)" }
             Show-AiGpu
+        }
+        'power' {
+            if ($rest.Count) { throw 'Использование: ai power' }
+            Assert-AiAdministrator
+            Show-AiPower
         }
         'logs' {
             if ($rest.Count -gt 3) { throw 'Использование: ai logs [backend] [N] [all|err|out|wrapper]' }

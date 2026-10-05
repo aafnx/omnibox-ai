@@ -87,7 +87,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.2.0'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.3.0'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -349,7 +349,7 @@ try {
         Assert-True ($xml.service.arguments -like '*-ctk q8_0*')
         Assert-True ($xml.service.arguments -like '*-c 131072')
         Assert-Equal $xml.service.startmode 'Manual'
-        $backup = @(Get-ChildItem -Path ($fixture.bonsai + '.backup-*'))
+        $backup = @(Get-ChildItem -LiteralPath ($fixture.bonsai + '.ai-previous'))
         Assert-Equal $backup.Count 1
         Assert-Equal (Get-Content $backup[0].FullName -Raw) $original
         Assert-Equal ((Get-Calls $m) -join ',') 'admin,lock'
@@ -449,6 +449,195 @@ try {
         Assert-True ($text -like '*function prompt { "keep" }*')
         Assert-Equal ([regex]::Matches($text, [regex]::Escape('# >>> omnibox-ai PATH >>>')).Count) 1
     }
+    Test 'unapplied context edits keep the original restore point' {
+        $m = New-TestModule; $f = New-ContextFixture
+        $original = Get-Content $f.bonsai -Raw
+        Invoke-Ai @('context','bonsai','128k') $f.path
+        Invoke-Ai @('context','bonsai','64k') $f.path
+        Assert-Equal (Get-Content ($f.bonsai + '.ai-previous') -Raw) $original
+        Assert-True (& $m { param($b) (Read-AiRecoveryState $b).pending } $f.config.backends.bonsai)
+    }
+    Test 'successful start commits pending context for next restore point' {
+        $m = New-TestModule; $f = New-ContextFixture
+        Invoke-Ai @('start','--context','128k') $f.path
+        Assert-True (-not (& $m { param($b) (Read-AiRecoveryState $b).pending } $f.config.backends.bonsai))
+        $working = Get-Content $f.bonsai -Raw
+        Invoke-Ai @('context','64k') $f.path
+        Assert-Equal (Get-Content ($f.bonsai + '.ai-previous') -Raw) $working
+    }
+    Test 'failed new context rolls back without waking a previously stopped server' {
+        $m = New-TestModule; $f = New-ContextFixture
+        $original = Get-Content $f.bonsai -Raw
+        & $m { function script:Wait-AiReady { param($Config,$Name) throw 'mock load OOM' } }
+        Assert-Throws { Invoke-Ai @('start','--context','128k') $f.path } '*оставлен остановленным*'
+        Assert-Equal (Get-Content $f.bonsai -Raw) $original
+        Assert-Equal (& $m { [string]$script:services.bonsai.Status }) 'Stopped'
+        Assert-Equal @((Get-Calls $m) | Where-Object { $_ -eq 'start:bonsai' }).Count 1
+    }
+    Test 'failed restart restores and restarts the formerly running configuration' {
+        $m = New-TestModule; $f = New-ContextFixture
+        $original = Get-Content $f.bonsai -Raw
+        & $m {
+            $script:services.bonsai.Status = 'Running'
+            function script:Wait-AiReady {
+                param($Config,$Name)
+                $value = Get-AiConfiguredContext (Get-AiBackend $Config $Name)
+                $script:calls.Add("ready:$value")
+                if ($value -eq '131072') { throw 'mock load OOM' }
+            }
+        }
+        Assert-Throws { Invoke-Ai @('restart','--context','128k') $f.path } '*снова запущен*'
+        Assert-Equal (Get-Content $f.bonsai -Raw) $original
+        Assert-Equal (& $m { [string]$script:services.bonsai.Status }) 'Running'
+        Assert-Equal @((Get-Calls $m) | Where-Object { $_ -eq 'start:bonsai' }).Count 2
+        Assert-True ((Get-Calls $m) -contains 'ready:196608')
+    }
+    Test 'pending context cannot be committed by probing an already running model' {
+        $m = New-TestModule; $f = New-ContextFixture
+        & $m { $script:services.bonsai.Status = 'Running' }
+        Invoke-Ai @('context','128k') $f.path
+        Assert-Throws { Invoke-Ai @('start') $f.path } '*ai restart*'
+        Assert-True (-not ((Get-Calls $m) -like 'stop:*'))
+        Assert-True (& $m { param($b) (Read-AiRecoveryState $b).pending } $f.config.backends.bonsai)
+    }
+    Test 'failed stop prevents overwriting XML during rollback' {
+        $m = New-TestModule; $f = New-ContextFixture
+        Invoke-Ai @('context','128k') $f.path
+        $pendingXml = Get-Content $f.bonsai -Raw
+        & $m { $script:services.bonsai.Status = 'Running'; $script:failStop = 'bonsai' }
+        Assert-Throws { Invoke-Ai @('restart') $f.path } '*mock stop failure*'
+        Assert-Equal (Get-Content $f.bonsai -Raw) $pendingXml
+        Assert-True (-not ((Get-Calls $m) -like 'start:*'))
+    }
+    Test 'manual restore of a stopped backend does not load the model' {
+        $m = New-TestModule; $f = New-ContextFixture
+        $original = Get-Content $f.bonsai -Raw
+        Invoke-Ai @('context','128k') $f.path
+        Invoke-Ai @('restore','bonsai') $f.path
+        Assert-Equal (Get-Content $f.bonsai -Raw) $original
+        Assert-True (-not ((Get-Calls $m) -like 'start:*'))
+        Invoke-Ai @('restore','bonsai') $f.path
+        Assert-True (-not ((Get-Calls $m) -like 'stop:*'))
+    }
+    Test 'manual restore of a running backend restarts restored settings' {
+        $m = New-TestModule; $f = New-ContextFixture
+        Invoke-Ai @('start','--context','128k') $f.path
+        & $m { $script:calls.Clear() }
+        Invoke-Ai @('restore') $f.path
+        Assert-Equal (& $m { param($b) Get-AiConfiguredContext $b } $f.config.backends.bonsai) '196608'
+        Assert-Equal ((Get-Calls $m) -join ',') 'admin,lock,stop:bonsai,start:bonsai,probe:bonsai:/health'
+    }
+    Test 'external XML modifications block restore before touching services' {
+        $m = New-TestModule; $f = New-ContextFixture
+        Invoke-Ai @('context','128k') $f.path
+        Add-Content $f.bonsai '<!-- external edit -->'
+        $changed = Get-Content $f.bonsai -Raw
+        Assert-Throws { Invoke-Ai @('restore') $f.path } '*изменены вне ai*'
+        Assert-Equal (Get-Content $f.bonsai -Raw) $changed
+        Assert-True (-not ((Get-Calls $m) -like 'stop:*'))
+    }
+    Test 'damaged restore point blocks context changes' {
+        $m = New-TestModule; $f = New-ContextFixture
+        Invoke-Ai @('context','128k') $f.path
+        Add-Content ($f.bonsai + '.ai-previous') 'broken'
+        $pendingXml = Get-Content $f.bonsai -Raw
+        Assert-Throws { Invoke-Ai @('context','64k') $f.path } '*изменены вне ai*'
+        Assert-Equal (Get-Content $f.bonsai -Raw) $pendingXml
+    }
+    Test 'failed recovery-state write undoes all context file changes' {
+        $m = New-TestModule; $f = New-ContextFixture
+        $original = Get-Content $f.bonsai -Raw
+        & $m { function script:Write-AiRecoveryState { param($Backend,$State) throw 'mock disk error' } }
+        Assert-Throws { Invoke-Ai @('context','128k') $f.path } '*прежние файлы восстановлены*'
+        Assert-Equal (Get-Content $f.bonsai -Raw) $original
+        Assert-True (-not (Test-Path ($f.bonsai + '.ai-previous')))
+        Assert-True (-not (Test-Path ($f.bonsai + '.ai-state.json')))
+        Assert-Equal @(Get-ChildItem -Path ($f.bonsai + '.tmp-*')).Count 0
+    }
+    Test 'restore without history fails clearly' {
+        $m = New-TestModule; $f = New-ContextFixture
+        Assert-Throws { Invoke-Ai @('restore') $f.path } '*Нет предыдущих настроек*'
+        Assert-True (-not ((Get-Calls $m) -like 'stop:*'))
+    }
+    Test 'power diagnostics are read-only and never touch AI services' {
+        $m = New-TestModule
+        & $m { function script:Show-AiPower { $script:calls.Add('power') } }
+        Invoke-Ai @('power') $example
+        Assert-Equal ((Get-Calls $m) -join ',') 'admin,power'
+    }
+    Test 'setup wizard defaults preserve context and do not start services' {
+        Import-Module (Join-Path $repo 'src/Setup.Helpers.psm1') -Force
+        $c = Get-Content $example -Raw | ConvertFrom-Json -AsHashtable
+        $result = Get-AiSetupOptions -ConfigLoader { param($d) $c } -ContextReader { param($b) '196608' } -ReadAnswer { param($p) '' }
+        Assert-Equal $result.directory 'C:\tools\ai'
+        Assert-Equal $result.backend 'bonsai'
+        Assert-True ($null -eq $result.context)
+        Assert-True (-not $result.start)
+    }
+    Test 'setup wizard accepts backend context and explicit start' {
+        $c = Get-Content $example -Raw | ConvertFrom-Json -AsHashtable
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('C:\tools\ai','ollama','64k','да'))
+        $result = Get-AiSetupOptions -ConfigLoader { param($d) $c } -ContextReader { param($b) '32768' } -ReadAnswer { param($p) $script:answers.Dequeue() }
+        Assert-Equal $result.backend 'ollama'
+        Assert-Equal $result.context 65536
+        Assert-True $result.start
+    }
+    Test 'setup noninteractive mode does not prompt and recognizes unchanged context' {
+        $c = Get-Content $example -Raw | ConvertFrom-Json -AsHashtable
+        $result = Get-AiSetupOptions -NonInteractive -Context 192k -ConfigLoader { param($d) $c } -ContextReader { param($b) '196608' } -ReadAnswer { throw 'must not prompt' }
+        Assert-True ($null -eq $result.context)
+        Assert-True (-not $result.start)
+    }
+    Test 'setup rejects invalid settings before installation' {
+        $c = Get-Content $example -Raw | ConvertFrom-Json -AsHashtable
+        Assert-Throws { Get-AiSetupOptions -NonInteractive -DefaultBackend other -ConfigLoader { param($d) $c } } '*Неизвестный сервер*'
+        Assert-Throws { Get-AiSetupOptions -NonInteractive -Context 999m -ConfigLoader { param($d) $c } -ContextReader { param($b) '196608' } } '*от 1024*'
+    }
+    Test 'documented one-line bootstrap parses and removes its temporary installer' {
+        $doc = Get-Content (Join-Path $repo 'docs/install.md') -Raw
+        $line = [regex]::Match($doc, '(?m)^& \{ \$ErrorActionPreference[^\r\n]+').Value
+        Assert-True ($line.Length -gt 0)
+        $bootstrap = [scriptblock]::Create($line)
+        & {
+            $script:seenHeaders = $null
+            function Read-Host { param($Prompt, [switch]$AsSecureString) ConvertTo-SecureString 'not-a-real-token' -AsPlainText -Force }
+            function Invoke-RestMethod {
+                param($Uri, $Headers, $MaximumRedirection, $TimeoutSec)
+                Assert-Equal $Uri 'https://api.github.com/repos/aafnx/omnibox-ai/contents/dist/install-omnibox-ai.ps1?ref=main'
+                Assert-Equal $MaximumRedirection 0
+                Assert-True ($Headers.Authorization.StartsWith('Bearer '))
+                $script:seenHeaders = $Headers
+                [pscustomobject]@{ type = 'file'; encoding = 'base64'; content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('Write-Output "mock installer executed"')) }
+            }
+            $oldTemp = $env:TEMP; $env:TEMP = $testRoot
+            try {
+                Assert-Equal (& $bootstrap) 'mock installer executed'
+                Assert-Equal $script:seenHeaders.Count 0
+                Assert-Equal @(Get-ChildItem $testRoot -Filter 'omnibox-ai-install-*.ps1').Count 0
+            } finally { $env:TEMP = $oldTemp }
+        }
+    }
+    Test 'bootstrap download failure leaves no token headers or temporary installer' {
+        & {
+            $global:omniboxTestHeaders = $null
+            function Read-Host { param($Prompt, [switch]$AsSecureString) ConvertTo-SecureString 'not-a-real-token' -AsPlainText -Force }
+            function Invoke-RestMethod { param($Uri, $Headers, $MaximumRedirection, $TimeoutSec) $global:omniboxTestHeaders = $Headers; throw 'mock GitHub access denied' }
+            $oldTemp = $env:TEMP; $env:TEMP = $testRoot
+            try {
+                Assert-Throws { & (Join-Path $repo 'scripts/get-install.ps1') } '*access denied*'
+                Assert-Equal $global:omniboxTestHeaders.Count 0
+                Assert-Equal @(Get-ChildItem $testRoot -Filter 'omnibox-ai-install-*.ps1').Count 0
+            } finally { $env:TEMP = $oldTemp; Remove-Variable omniboxTestHeaders -Scope Global }
+        }
+    }
+    Test 'previously saved pending context also rolls back on next start failure' {
+        $m = New-TestModule; $f = New-ContextFixture
+        $original = Get-Content $f.bonsai -Raw
+        Invoke-Ai @('context','128k') $f.path
+        & $m { function script:Wait-AiReady { param($Config,$Name) throw 'mock OOM' } }
+        Assert-Throws { Invoke-Ai @('start') $f.path } '*оставлен остановленным*'
+        Assert-Equal (Get-Content $f.bonsai -Raw) $original
+    }
     Test 'self-contained package matches every current source file' {
         $setup = Join-Path $repo 'dist/install-omnibox-ai.ps1'
         $text = Get-Content $setup -Raw
@@ -457,7 +646,7 @@ try {
         $memory = [IO.MemoryStream]::new([Convert]::FromBase64String($encoded))
         $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Read)
         try {
-            Assert-Equal $archive.Entries.Count 10
+            Assert-Equal $archive.Entries.Count 11
             foreach ($entry in $archive.Entries) {
                 Assert-True ($entry.FullName -notmatch '(^/|\.\.)')
                 $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)

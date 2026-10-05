@@ -1,6 +1,7 @@
 #requires -Version 7.4
 [CmdletBinding()]
-param([string]$InstallDirectory = 'C:\tools\ai', [switch]$NoProfileUpdate)
+param([string]$InstallDirectory = 'C:\tools\ai', [switch]$NoProfileUpdate,
+    [switch]$NonInteractive, [string]$DefaultBackend = '', [string]$Context = '', [switch]$StartServer)
 
 $ErrorActionPreference = 'Stop'
 if (-not $IsWindows) { throw 'Установщик предназначен для Windows.' }
@@ -11,6 +12,21 @@ try {
         throw 'Запусти установку в повышенной SSH-сессии или PowerShell от администратора.'
     }
 } finally { $identity.Dispose() }
+
+Import-Module (Join-Path $PSScriptRoot 'src/Setup.Helpers.psm1') -Force
+$aiModule = Import-Module (Join-Path $PSScriptRoot 'src/OmniBox.Ai.psm1') -Force -PassThru
+$sourceRoot = $PSScriptRoot
+$configLoader = {
+    param($Directory)
+    $path = Join-Path $Directory 'config.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { $path = Join-Path $sourceRoot 'config.example.json' }
+    & $aiModule { param($Path) Read-AiConfig $Path } $path
+}.GetNewClosure()
+$contextReader = { param($Backend) & $aiModule { param($Backend) Get-AiConfiguredContext $Backend } $Backend }.GetNewClosure()
+Write-Host 'OmniBox AI 0.3.0 — установка на этом ПК'
+Write-Host 'Используются уже установленные службы Bonsai и Ollama. Enter сохраняет предложенное значение.'
+$setup = Get-AiSetupOptions -InstallDirectory $InstallDirectory -ConfigLoader $configLoader -ContextReader $contextReader -NonInteractive:$NonInteractive -DefaultBackend $DefaultBackend -Context $Context -StartServer:$StartServer
+$InstallDirectory = $setup.directory
 
 if (-not [IO.Path]::IsPathFullyQualified($InstallDirectory)) { throw 'Укажи абсолютный путь установки.' }
 $destination = [IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\')
@@ -36,7 +52,7 @@ if ($null -ne $existing) {
         throw "Команда ai уже существует: $($existing.Source). Устрани конфликт имени перед установкой."
     }
 }
-$files = @('ai.ps1', 'ai.cmd', 'src/OmniBox.Ai.psm1', 'src/Install.Helpers.psm1', 'config.example.json', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md')
+$files = @('ai.ps1', 'ai.cmd', 'src/OmniBox.Ai.psm1', 'src/Install.Helpers.psm1', 'src/Setup.Helpers.psm1', 'config.example.json', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md')
 foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $file) -PathType Leaf)) { throw "Нет файла исходников: $file" }
 }
@@ -63,11 +79,13 @@ foreach ($file in $files) {
 $configPath = Join-Path $destination 'config.json'
 if (-not (Test-Path -LiteralPath $configPath)) {
     Copy-Item -LiteralPath (Join-Path $destination 'config.example.json') -Destination $configPath
-} else { Write-Host 'Существующий config.json сохранён без изменений.' }
+} else { Write-Host 'Существующие параметры config.json сохранены; сервер по умолчанию — по выбору мастера.' }
+$setup.config.default_backend = $setup.backend
+Set-Content -LiteralPath $configPath -Value ($setup.config | ConvertTo-Json -Depth 10) -Encoding utf8
 # Exact PowerShell location; %* preserves the user's command-line quoting in cmd.
 $launcher = "@echo off`r`n`"$pwsh`" -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"%~dp0ai.ps1`" %*`r`nexit /b %errorlevel%`r`n"
 Set-Content -LiteralPath (Join-Path $destination 'ai.cmd') -Value $launcher -Encoding ascii -NoNewline
-Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.2.0' -Encoding utf8
+Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.3.0' -Encoding utf8
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $entries = @($userPath -split ';' | Where-Object { $_ })
@@ -85,7 +103,12 @@ if (-not $NoProfileUpdate) {
     Update-AiPowerShellProfile -ProfilePath $PROFILE.CurrentUserAllHosts -InstallDirectory $destination -BackupDirectory (Join-Path $destination 'backups/profiles')
 }
 Write-Host "Установлено: $destination"
-Write-Host 'Службы, XML, модели, контекст, автозапуск и таймер простоя не изменены.'
+if ($null -ne $setup.context) { Invoke-Ai -Arguments @('context', $setup.backend, [string]$setup.context) -ConfigPath $configPath }
+if ($setup.start) {
+    $service = Get-Service -Name $setup.config.backends[$setup.backend].service -ErrorAction Stop
+    $action = if ([string]$service.Status -eq 'Stopped') { 'start' } else { 'restart' }
+    Invoke-Ai -Arguments @($action, $setup.backend) -ConfigPath $configPath
+} else { Write-Host 'Запуск не выбран. Новый контекст, если задан, применится при следующем запуске.' }
+Write-Host 'Автозапуск и таймер простоя сохранены. Перед игрой: ai stop'
 Write-Host 'В этом процессе PATH обновлён. Если установщик запущен через дочерний pwsh, переподключись по SSH или добавь путь в прежнюю сессию вручную.'
-Write-Host 'Проверка: ai help; ai status'
 Write-Host 'Проверка: ai help; ai context bonsai; ai status'

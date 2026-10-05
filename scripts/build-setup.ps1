@@ -3,7 +3,7 @@
 param([string]$OutputPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'dist/install-omnibox-ai.ps1'))
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$files = @('ai.ps1', 'ai.cmd', 'src/OmniBox.Ai.psm1', 'src/Install.Helpers.psm1', 'config.example.json', 'install.ps1', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md')
+$files = @('ai.ps1', 'ai.cmd', 'src/OmniBox.Ai.psm1', 'src/Install.Helpers.psm1', 'src/Setup.Helpers.psm1', 'config.example.json', 'install.ps1', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md')
 $memory = [IO.MemoryStream]::new()
 try {
     $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Create, $true)
