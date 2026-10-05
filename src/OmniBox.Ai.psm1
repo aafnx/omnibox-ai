@@ -50,6 +50,131 @@ function Get-AiBackend {
     return $Config.backends[$Name]
 }
 
+function ConvertTo-AiContext {
+    param([string]$Value)
+    if ($Value -notmatch '^(?<number>[0-9]+)(?<unit>[kKmM]?)$') { throw 'Контекст: целое число токенов или 32k/128k/192k.' }
+    $number = [long]$Matches.number
+    $factor = switch ($Matches.unit.ToLowerInvariant()) { 'k' { 1024 } 'm' { 1048576 } default { 1 } }
+    if ($number -lt 1 -or $number -gt 1048576) { throw 'Контекст должен быть от 1024 до 1048576 токенов.' }
+    $tokens = $number * $factor
+    if ($tokens -lt 1024 -or $tokens -gt 1048576) { throw 'Контекст должен быть от 1024 до 1048576 токенов.' }
+    return [int]$tokens
+}
+
+function Read-AiServiceXml {
+    param($Backend)
+    $path = $Backend.service_config
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Нет XML службы: $path" }
+    $settings = [Xml.XmlReaderSettings]::new()
+    $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
+    $settings.XmlResolver = $null
+    $reader = [Xml.XmlReader]::Create($path, $settings)
+    try {
+        $xml = [Xml.XmlDocument]::new()
+        $xml.PreserveWhitespace = $true
+        $xml.Load($reader)
+    } finally { $reader.Dispose() }
+    $ids = @($xml.SelectNodes('/service/id'))
+    if ($ids.Count -ne 1 -or $ids[0].InnerText -cne $Backend.service) {
+        throw "XML не принадлежит службе '$($Backend.service)'; изменения отменены."
+    }
+    return ,$xml
+}
+
+function Get-AiPrismArguments {
+    param([Xml.XmlDocument]$Xml)
+    $nodes = @($Xml.SelectNodes('/service/arguments'))
+    if ($nodes.Count -ne 1) { throw 'Для изменения контекста нужен один элемент <arguments> в XML.' }
+    # Keep quoted paths/prompts intact: do not match -c embedded in a quoted filename.
+    return @([regex]::Matches($nodes[0].InnerText, '"(?:[^"]|"")*"|\S+') | ForEach-Object Value)
+}
+
+function Get-AiConfiguredContext {
+    param($Backend)
+    $xml = Read-AiServiceXml $Backend
+    if ($Backend.type -eq 'ollama') {
+        $settings = @($xml.SelectNodes('/service/env') | Where-Object { $_.GetAttribute('name') -eq 'OLLAMA_CONTEXT_LENGTH' })
+        if ($settings.Count -gt 1) { throw 'В XML повторяется OLLAMA_CONTEXT_LENGTH.' }
+        if ($settings.Count) { return $settings[0].GetAttribute('value') }
+        return '(runtime default)'
+    }
+    $tokens = @(Get-AiPrismArguments $xml)
+    $value = '(model default)'
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+        if ($tokens[$i] -in @('-c', '--ctx-size')) {
+            if ($i + 1 -ge $tokens.Count) { throw 'В XML у параметра контекста нет значения.' }
+            $value = $tokens[++$i].Trim('"')
+        } elseif ($tokens[$i] -match '^--ctx-size=(.+)$') { $value = $Matches[1].Trim('"') }
+    }
+    return $value
+}
+
+function New-AiContextXml {
+    param($Backend, [int]$Context)
+    $xml = Read-AiServiceXml $Backend
+    if ($Backend.type -eq 'ollama') {
+        $settings = @($xml.SelectNodes('/service/env') | Where-Object { $_.GetAttribute('name') -eq 'OLLAMA_CONTEXT_LENGTH' })
+        if ($settings.Count -gt 1) { throw 'В XML повторяется OLLAMA_CONTEXT_LENGTH; изменения отменены.' }
+        $node = if ($settings.Count) { $settings[0] } else { $xml.CreateElement('env') }
+        $node.SetAttribute('name', 'OLLAMA_CONTEXT_LENGTH')
+        $node.SetAttribute('value', [string]$Context)
+        if (-not $settings.Count) { $null = $xml.DocumentElement.AppendChild($node) }
+    } else {
+        $tokens = @(Get-AiPrismArguments $xml)
+        $updated = [Collections.Generic.List[string]]::new()
+        for ($i = 0; $i -lt $tokens.Count; $i++) {
+            if ($tokens[$i] -in @('-c', '--ctx-size')) {
+                if ($i + 1 -ge $tokens.Count -or $tokens[$i + 1].Trim('"') -notmatch '^\d+$') {
+                    throw 'Некорректный параметр контекста в XML; изменения отменены.'
+                }
+                $i++
+            } elseif ($tokens[$i] -match '^--ctx-size=(.*)$') {
+                if ($Matches[1].Trim('"') -notmatch '^\d+$') { throw 'Некорректный параметр контекста в XML; изменения отменены.' }
+            } else { $updated.Add($tokens[$i]) }
+        }
+        $updated.Add('-c'); $updated.Add([string]$Context)
+        $xml.SelectSingleNode('/service/arguments').InnerText = $updated -join ' '
+    }
+    return ,$xml
+}
+
+function Save-AiServiceXml {
+    param($Backend, [Xml.XmlDocument]$Xml)
+    $path = [IO.Path]::GetFullPath($Backend.service_config)
+    $directory = Split-Path $path -Parent
+    $suffix = (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N')
+    $backup = "$path.backup-$suffix"
+    $temp = Join-Path $directory ('.omnibox-ai-xml-' + [Guid]::NewGuid().ToString('N') + '.tmp')
+    try {
+        $settings = [Xml.XmlWriterSettings]::new()
+        $settings.Encoding = [Text.UTF8Encoding]::new($false)
+        $writer = [Xml.XmlWriter]::Create($temp, $settings)
+        try { $Xml.Save($writer) } finally { $writer.Dispose() }
+        # Replace atomically and keep the original XML as backup; all paths are same-volume.
+        [IO.File]::Replace($temp, $path, $backup)
+        Write-Host "Резервная копия XML: $backup"
+    } finally {
+        if (Test-Path -LiteralPath $temp) { Remove-Item -LiteralPath $temp -Force }
+    }
+}
+
+function Read-AiStartOptions {
+    param([string[]]$Arguments, [string]$DefaultBackend)
+    $name = $DefaultBackend; $named = $false; $context = $null
+    for ($i = 0; $i -lt $Arguments.Count; $i++) {
+        $arg = $Arguments[$i]
+        if ($arg -in @('--context', '-c')) {
+            if ($null -ne $context -or $i + 1 -ge $Arguments.Count) { throw 'Укажи --context один раз со значением, например --context 128k.' }
+            $context = ConvertTo-AiContext $Arguments[++$i]
+        } elseif ($arg -match '^--context=(.*)$') {
+            if ($null -ne $context) { throw 'Укажи --context только один раз.' }
+            $context = ConvertTo-AiContext $Matches[1]
+        } elseif ($arg.StartsWith('-') -or $named) { throw "Неизвестный аргумент '$arg'. Использование: ai start/restart [backend] [--context 128k]" }
+        else { $name = $arg; $named = $true }
+    }
+    return @{ name = $name; context = $context }
+}
+
 # OS adapters are intentionally small; unit tests substitute them without Windows/GPU.
 function Assert-AiAdministrator {
     if (-not $IsWindows) { throw 'Управление службами доступно только в Windows.' }
@@ -242,11 +367,12 @@ function Invoke-AiOllama {
 
 function Show-AiHelp {
     @'
-OmniBox AI 0.1.0 — управление локальными серверами
+OmniBox AI 0.2.0 — управление локальными серверами
 
-ai start [bonsai|ollama]       Запуск; по умолчанию bonsai. Другой сервер остановится.
+ai start [backend] [--context 128k]  Запуск; по умолчанию bonsai. Другой остановится.
 ai stop [bonsai|ollama]        Остановка; без имени — все настроенные серверы.
-ai restart [bonsai|ollama]     Перезапуск выбранного сервера.
+ai restart [backend] [--context 128k] Перезапуск, при необходимости с новым контекстом.
+ai context [backend] [128k]   Просмотр/сохранение контекста для следующего запуска.
 ai status                    Службы, API, модель, контекст, сон и видеопамять.
 ai logs [backend] [N] [stream] Последние N строк; stream: all, err, out, wrapper.
 ai endpoint [backend]         OpenAI-совместимый адрес (с localhost самого ПК).
@@ -257,7 +383,12 @@ ai version                   Версия ai.
 ai help                      Эта справка.
 
 Перед игрой: ai stop. Статус и журналы не загружают модель.
-ai не меняет автозапуск, контекст и таймер простоя существующих служб.
+Контекст: 32k=32768, 128k=131072, 192k=196608 токенов.
+ai context bonsai 128k — сохранить, без перезапуска работающего сервера.
+ai restart bonsai --context 128k — сохранить и применить сейчас.
+ai start --context не меняет уже работающую модель: используй restart.
+У Ollama это default OLLAMA_CONTEXT_LENGTH; модель/API могут переопределить num_ctx.
+Автозапуск и таймер простоя не меняются. Перед изменением XML создаётся backup.
 '@
 }
 
@@ -266,18 +397,39 @@ function Invoke-Ai {
     $command = if ($Arguments.Count) { $Arguments[0].ToLowerInvariant() } else { 'help' }
     [string[]]$rest = @(if ($Arguments.Count -gt 1) { $Arguments[1..($Arguments.Count - 1)] })
     if ($command -in @('help', '--help', '-h')) { Show-AiHelp; return }
-    if ($command -in @('version', '--version')) { '0.1.0'; return }
+    if ($command -in @('version', '--version')) { '0.2.0'; return }
     $config = Read-AiConfig $ConfigPath
     switch ($command) {
         { $_ -in @('start', 'stop', 'restart') } {
-            if ($rest.Count -gt 1) { throw "Использование: ai $command [backend]" }
-            $name = if ($rest.Count) { $rest[0] } else { $config.default_backend }
-            $null = Get-AiBackend $config $name
+            if ($command -eq 'stop') {
+                if ($rest.Count -gt 1) { throw 'Использование: ai stop [backend]' }
+                $options = @{ name = $(if ($rest.Count) { $rest[0] } else { $config.default_backend }); context = $null }
+            } else { $options = Read-AiStartOptions $rest $config.default_backend }
+            $name = $options.name
+            $backend = Get-AiBackend $config $name
             Assert-AiAdministrator
             Invoke-AiLocked {
+                $preparedXml = $null
+                if ($null -ne $options.context) {
+                    $service = Get-AiService $backend.service
+                    if ($null -eq $service) { throw "Служба '$($backend.service)' не установлена." }
+                    if ([string]$service.StartType -eq 'Disabled') { throw 'Целевая служба отключена; XML не изменён.' }
+                    if ($command -eq 'start' -and [string]$service.Status -ne 'Stopped') {
+                        throw "Сервер уже работает или меняет состояние. Для нового контекста: ai restart $name --context $($options.context)"
+                    }
+                    # Validate the XML before stopping a working server.
+                    $preparedXml = New-AiContextXml $backend $options.context
+                }
                 switch ($command) {
-                    'start' { Start-AiBackend $config $name }
-                    'restart' { Stop-AiBackend $config $name; Start-AiBackend $config $name }
+                    'start' {
+                        if ($null -ne $preparedXml) { Save-AiServiceXml $backend $preparedXml }
+                        Start-AiBackend $config $name
+                    }
+                    'restart' {
+                        Stop-AiBackend $config $name
+                        if ($null -ne $preparedXml) { Save-AiServiceXml $backend $preparedXml }
+                        Start-AiBackend $config $name
+                    }
                     'stop' {
                         $names = if ($rest.Count) { @($name) } else { @($config.backends.Keys) }
                         # Attempt every backend even if one fails; never hide a failed stop.
@@ -288,6 +440,28 @@ function Invoke-Ai {
                         }
                         if ($failures.Count) { throw ($failures -join '; ') }
                     }
+                }
+            }
+        }
+        'context' {
+            if ($rest.Count -gt 2) { throw 'Использование: ai context [backend] [128k]' }
+            $name = $config.default_backend; $value = $null
+            if ($rest.Count -eq 2) { $name = $rest[0]; $value = $rest[1] }
+            elseif ($rest.Count -eq 1) {
+                if ($config.backends.Contains($rest[0])) { $name = $rest[0] }
+                elseif ($rest[0] -match '^\d') { $value = $rest[0] }
+                else { throw "Неизвестный сервер '$($rest[0])'." }
+            }
+            $backend = Get-AiBackend $config $name
+            if ($null -eq $value) {
+                Write-Host "$name`: настроенный контекст = $(Get-AiConfiguredContext $backend) токенов. Фактический: ai status / ai ollama ps."
+            } else {
+                $tokens = ConvertTo-AiContext $value
+                Assert-AiAdministrator
+                Invoke-AiLocked {
+                    $preparedXml = New-AiContextXml $backend $tokens
+                    Save-AiServiceXml $backend $preparedXml
+                    Write-Host "$name`: сохранено $tokens токенов для следующего запуска. Работающий сервер не перезапущен. Применить сейчас: ai restart $name"
                 }
             }
         }

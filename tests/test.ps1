@@ -64,6 +64,17 @@ function Save-TestConfig($Config) {
     $Config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $path -Encoding utf8
     return $path
 }
+function New-ContextFixture([string]$Arguments = '-m "C:\ai\models\-c 77 model.gguf" --port 18080 -c 196608 -ctk q8_0 --sleep-idle-seconds 1800') {
+    $config = Get-Content $example -Raw | ConvertFrom-Json -AsHashtable
+    $bonsaiPath = Join-Path $testRoot ([Guid]::NewGuid().ToString('N') + '-bonsai.xml')
+    $ollamaPath = Join-Path $testRoot ([Guid]::NewGuid().ToString('N') + '-ollama.xml')
+    $argumentText = [Security.SecurityElement]::Escape($Arguments)
+    "<service><id>bonsai</id><arguments>$argumentText</arguments><startmode>Manual</startmode><logpath>C:\ai\logs\bonsai</logpath></service>" | Set-Content -LiteralPath $bonsaiPath
+    '<service><id>ollama</id><env name="OLLAMA_CONTEXT_LENGTH" value="32768"/><env name="OLLAMA_KEEP_ALIVE" value="30m"/><startmode>Manual</startmode></service>' | Set-Content -LiteralPath $ollamaPath
+    $config.backends.bonsai.service_config = $bonsaiPath
+    $config.backends.ollama.service_config = $ollamaPath
+    return @{ path = (Save-TestConfig $config); config = $config; bonsai = $bonsaiPath; ollama = $ollamaPath }
+}
 
 try {
     Test 'all PowerShell files parse' {
@@ -76,7 +87,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.1.0'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.2.0'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -310,6 +321,165 @@ try {
             $env:OLLAMA_MODELS = $previousModels
             $global:LASTEXITCODE = 0
         }
+    }
+    Test 'context accepts tokens and binary K suffix' {
+        $m = New-TestModule
+        Assert-Equal (& $m { ConvertTo-AiContext '192k' }) 196608
+        Assert-Equal (& $m { ConvertTo-AiContext '128K' }) 131072
+        Assert-Equal (& $m { ConvertTo-AiContext '32768' }) 32768
+        Assert-Throws { & $m { ConvertTo-AiContext '0' } } '*от 1024*'
+        Assert-Throws { & $m { ConvertTo-AiContext '2m' } } '*от 1024*'
+        Assert-Throws { & $m { ConvertTo-AiContext '1.5k' } } '*Контекст*'
+    }
+    Test 'context read has no service/admin side effects' {
+        $m = New-TestModule
+        $fixture = New-ContextFixture
+        Invoke-Ai -Arguments @('context', 'bonsai') -ConfigPath $fixture.path
+        Assert-Equal (& $m { param($b); Get-AiConfiguredContext $b } $fixture.config.backends.bonsai) '196608'
+        Assert-Equal @(Get-Calls $m).Count 0
+    }
+    Test 'context save creates exact backup and preserves other arguments' {
+        $m = New-TestModule
+        $fixture = New-ContextFixture
+        $original = Get-Content $fixture.bonsai -Raw
+        Invoke-Ai -Arguments @('context', 'bonsai', '128k') -ConfigPath $fixture.path
+        $xml = [xml](Get-Content $fixture.bonsai -Raw)
+        Assert-True ($xml.service.arguments -like '*"C:\ai\models\-c 77 model.gguf"*')
+        Assert-True ($xml.service.arguments -like '*--sleep-idle-seconds 1800*')
+        Assert-True ($xml.service.arguments -like '*-ctk q8_0*')
+        Assert-True ($xml.service.arguments -like '*-c 131072')
+        Assert-Equal $xml.service.startmode 'Manual'
+        $backup = @(Get-ChildItem -Path ($fixture.bonsai + '.backup-*'))
+        Assert-Equal $backup.Count 1
+        Assert-Equal (Get-Content $backup[0].FullName -Raw) $original
+        Assert-Equal ((Get-Calls $m) -join ',') 'admin,lock'
+    }
+    Test 'Ollama context changes default env but preserves idle' {
+        $m = New-TestModule
+        $fixture = New-ContextFixture
+        Invoke-Ai -Arguments @('context', 'ollama', '64k') -ConfigPath $fixture.path
+        Assert-Equal (& $m { param($b); Get-AiConfiguredContext $b } $fixture.config.backends.ollama) '65536'
+        $xml = [xml](Get-Content $fixture.ollama -Raw)
+        Assert-Equal (($xml.service.env | Where-Object name -eq 'OLLAMA_KEEP_ALIVE').value) '30m'
+        Assert-Equal ((Get-Calls $m) -join ',') 'admin,lock'
+    }
+    Test 'Ollama context env is added if missing' {
+        $m = New-TestModule
+        $fixture = New-ContextFixture
+        '<service><id>ollama</id><env name="OLLAMA_KEEP_ALIVE" value="30m"/></service>' | Set-Content $fixture.ollama
+        Invoke-Ai -Arguments @('context', 'ollama', '32k') -ConfigPath $fixture.path
+        Assert-Equal (& $m { param($b); Get-AiConfiguredContext $b } $fixture.config.backends.ollama) '32768'
+    }
+    Test 'start context saves before launch' {
+        $m = New-TestModule
+        $fixture = New-ContextFixture
+        Invoke-Ai -Arguments @('start', 'bonsai', '--context', '128k') -ConfigPath $fixture.path
+        Assert-Equal (& $m { param($b); Get-AiConfiguredContext $b } $fixture.config.backends.bonsai) '131072'
+        Assert-Equal ((Get-Calls $m) -join ',') 'admin,lock,stop:ollama,start:bonsai,probe:bonsai:/health'
+    }
+    Test 'start context refuses an already running model without XML changes' {
+        $m = New-TestModule
+        & $m { $script:services.bonsai.Status = 'Running' }
+        $fixture = New-ContextFixture
+        $old = Get-Content $fixture.bonsai -Raw
+        Assert-Throws { Invoke-Ai -Arguments @('start', '--context=128k') -ConfigPath $fixture.path } '*ai restart*'
+        Assert-Equal (Get-Content $fixture.bonsai -Raw) $old
+        Assert-True (-not ((Get-Calls $m) -like 'stop:*'))
+    }
+    Test 'restart context stops then writes then reloads' {
+        $m = New-TestModule
+        & $m { $script:services.bonsai.Status = 'Running'; $script:services.ollama.Status = 'Stopped' }
+        $fixture = New-ContextFixture
+        Invoke-Ai -Arguments @('restart', 'bonsai', '--context=64k') -ConfigPath $fixture.path
+        Assert-Equal (& $m { param($b); Get-AiConfiguredContext $b } $fixture.config.backends.bonsai) '65536'
+        Assert-Equal ((Get-Calls $m) -join ',') 'admin,lock,stop:bonsai,start:bonsai,probe:bonsai:/health'
+    }
+    Test 'invalid context never stops a service' {
+        $m = New-TestModule
+        Assert-Throws { Invoke-Ai -Arguments @('restart', '--context', '999m') -ConfigPath $example } '*от 1024*'
+        Assert-Equal @(Get-Calls $m).Count 0
+    }
+    Test 'invalid XML is checked before stopping a working server' {
+        $m = New-TestModule
+        & $m { $script:services.bonsai.Status = 'Running' }
+        $fixture = New-ContextFixture '-m model.gguf -c nonsense'
+        Assert-Throws { Invoke-Ai -Arguments @('restart', '--context', '128k') -ConfigPath $fixture.path } '*Некорректный параметр*'
+        Assert-True (-not ((Get-Calls $m) -like 'stop:*'))
+    }
+    Test 'XML service identity mismatch prevents writes' {
+        $m = New-TestModule
+        $fixture = New-ContextFixture
+        '<service><id>another</id><arguments>-c 1234</arguments></service>' | Set-Content $fixture.bonsai
+        Assert-Throws { Invoke-Ai -Arguments @('context', '128k') -ConfigPath $fixture.path } '*не принадлежит*'
+    }
+    Test 'duplicate context flags are normalized, quoted paths are preserved' {
+        $m = New-TestModule
+        $fixture = New-ContextFixture '-m "path -c 12.gguf" -c 32768 --ctx-size=65536 --port 18080'
+        Invoke-Ai -Arguments @('context', '192k') -ConfigPath $fixture.path
+        $xml = [xml](Get-Content $fixture.bonsai -Raw)
+        Assert-Equal $xml.service.arguments '-m "path -c 12.gguf" --port 18080 -c 196608'
+    }
+    Test 'PATH profile update preserves prompt and is idempotent' {
+        Import-Module (Join-Path $repo 'src/Install.Helpers.psm1') -Force
+        $profile = Join-Path $testRoot 'profiles/profile.ps1'
+        $null = New-Item -ItemType Directory -Path (Split-Path $profile -Parent)
+        $prompt = 'function prompt { "my prompt λ" }'
+        Set-Content -LiteralPath $profile -Value $prompt -NoNewline
+        $backups = Join-Path $testRoot 'profile-backups'
+        Update-AiPowerShellProfile $profile 'C:\tools\ai' $backups
+        $first = Get-Content $profile -Raw
+        Assert-True ($first.StartsWith($prompt))
+        $tokens = $null; $errors = $null
+        $null = [Management.Automation.Language.Parser]::ParseFile($profile, [ref]$tokens, [ref]$errors)
+        Assert-Equal $errors.Count 0
+        Update-AiPowerShellProfile $profile 'C:\tools\ai' $backups
+        Assert-Equal (Get-Content $profile -Raw) $first
+        Assert-Equal @(Get-ChildItem $backups).Count 1
+        Assert-Equal (Get-Content @(Get-ChildItem $backups)[0].FullName -Raw) $prompt
+    }
+    Test 'PATH profile update modifies only owned marker block' {
+        Import-Module (Join-Path $repo 'src/Install.Helpers.psm1') -Force
+        $profile = Join-Path $testRoot 'profile-other.ps1'
+        $backups = Join-Path $testRoot 'profile-other-backups'
+        Update-AiPowerShellProfile $profile 'C:\tools\ai' $backups
+        Add-Content -LiteralPath $profile -Value 'function prompt { "keep" }'
+        Update-AiPowerShellProfile $profile 'C:\tools\ai2' $backups
+        $text = Get-Content $profile -Raw
+        Assert-True ($text -like '*C:\tools\ai2*')
+        Assert-True ($text -like '*function prompt { "keep" }*')
+        Assert-Equal ([regex]::Matches($text, [regex]::Escape('# >>> omnibox-ai PATH >>>')).Count) 1
+    }
+    Test 'self-contained package matches every current source file' {
+        $setup = Join-Path $repo 'dist/install-omnibox-ai.ps1'
+        $text = Get-Content $setup -Raw
+        $encoded = [regex]::Match($text, '(?m)^\$payload = ''([^'']+)''').Groups[1].Value
+        Assert-True ($encoded.Length -gt 0)
+        $memory = [IO.MemoryStream]::new([Convert]::FromBase64String($encoded))
+        $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Read)
+        try {
+            Assert-Equal $archive.Entries.Count 10
+            foreach ($entry in $archive.Entries) {
+                Assert-True ($entry.FullName -notmatch '(^/|\.\.)')
+                $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)
+                try { $embedded = $reader.ReadToEnd() } finally { $reader.Dispose() }
+                Assert-Equal $embedded (Get-Content -LiteralPath (Join-Path $repo $entry.FullName) -Raw)
+            }
+        } finally { $archive.Dispose(); $memory.Dispose() }
+        $exe = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
+        $output = & $exe -NoLogo -NoProfile -File $setup -CheckOnly
+        Assert-Equal $global:LASTEXITCODE 0
+        Assert-True ($output -like '*payload OK*')
+    }
+    Test 'self-contained package corruption is rejected before installation' {
+        $text = Get-Content (Join-Path $repo 'dist/install-omnibox-ai.ps1') -Raw
+        $encoded = [regex]::Match($text, '(?m)^\$payload = ''([^'']+)''').Groups[1].Value
+        $changed = $(if ($encoded[0] -eq 'A') { 'B' } else { 'A' }) + $encoded.Substring(1)
+        $tampered = Join-Path $testRoot 'tampered-setup.ps1'
+        $text.Replace($encoded, $changed) | Set-Content -LiteralPath $tampered -Encoding utf8BOM
+        $exe = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
+        $null = & $exe -NoLogo -NoProfile -File $tampered -CheckOnly 2>$null
+        Assert-Equal $global:LASTEXITCODE 1
+        $global:LASTEXITCODE = 0
     }
 } finally {
     Remove-Module OmniBox.Ai -ErrorAction SilentlyContinue
