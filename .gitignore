@@ -1,0 +1,9 @@
+config.json
+.omnibox-ai-install
+backups/
+*.log
+*.zip
+*.gguf
+*.exe
+*.dll
+.test-output/

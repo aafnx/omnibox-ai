@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "default_backend": "bonsai",
+  "exclusive": true,
+  "startup_timeout_seconds": 180,
+  "stop_timeout_seconds": 30,
+  "backends": {
+    "bonsai": {
+      "type": "prism",
+      "service": "bonsai",
+      "base_url": "http://127.0.0.1:18080",
+      "service_config": "C:\\tools\\bonsai\\bonsai-service.xml",
+      "log_directory": "C:\\ai\\logs\\bonsai",
+      "log_prefix": "bonsai-service"
+    },
+    "ollama": {
+      "type": "ollama",
+      "service": "ollama",
+      "base_url": "http://127.0.0.1:11434",
+      "executable": "C:\\tools\\ollama\\ollama.exe",
+      "service_config": "C:\\tools\\ollama\\ollama-service.xml",
+      "log_directory": "C:\\ai\\logs",
+      "log_prefix": "ollama-service"
+    }
+  }
+}
