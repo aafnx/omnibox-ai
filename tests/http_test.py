@@ -472,6 +472,37 @@ class GatewayTests(unittest.TestCase):
         finally:path.write_text(original)
 
 
+    def test_22_optional_content_journal_and_viewer(self):
+        secret='content journal fixture text'
+        content=self.fixture.root/'logs'/'requests'/'content.jsonl'
+        self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b','messages':[{'role':'user','content':'metadata only'}]})
+        self.assertFalse(content.exists())
+        self.assertEqual(self.call('/api/storage',{'action':'save','request_log':'content'},csrf=self.csrf)[0],200)
+        self.assertEqual(self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b','messages':[{'role':'user','content':secret}]})[0],200)
+        connection=http.client.HTTPConnection('127.0.0.1',self.fixture.api_port,timeout=10)
+        try:
+            connection.request('POST','/v1/chat/completions',body=json.dumps({'model':'bonsai-2-27b','stream':True,'messages':[{'role':'user','content':'stream question'}]}).encode(),headers={'Authorization':'Bearer '+API_KEY,'Content-Type':'application/json'})
+            response=connection.getresponse();self.assertEqual(response.status,200);response.read()
+        finally:connection.close()
+        text=content.read_text();lines=[json.loads(line) for line in text.splitlines()]
+        self.assertEqual(len(lines),2)
+        self.assertEqual(lines[0]['request']['messages'][0]['content'],secret)
+        self.assertEqual(lines[0]['response']['choices'][0]['message']['content'],'fixture')
+        self.assertEqual(lines[1]['request']['messages'][0]['content'],'stream question')
+        self.assertEqual(lines[1]['response_text'],'first')
+        self.assertNotIn(API_KEY,text);self.assertNotIn('stream_options',text)
+        self.assertNotIn(secret,(self.fixture.root/'logs'/'requests'/'requests.jsonl').read_text())
+        newest=self.call('/api/activity')[1]['requests'][0]['id']
+        code,data,_=self.call('/api/request-content?id='+newest);self.assertEqual(code,200);self.assertEqual(data['response_text'],'first')
+        self.assertEqual(self.call('/api/request-content?id='+newest,auth=False)[0],401)
+        self.assertEqual(self.call('/api/request-content?id=../../panel.json')[0],400)
+        self.assertEqual(self.call('/api/storage')[1]['request_log'],'content')
+        self.assertEqual(self.call('/api/storage',{'action':'save','request_log':'metadata'},csrf=self.csrf)[0],200)
+        self.assertFalse(content.exists())
+        self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b','messages':[{'role':'user','content':'after disable'}]})
+        self.assertFalse(content.exists())
+        self.assertEqual(self.call('/api/storage',{'action':'save','request_log':'everything'},csrf=self.csrf)[0],400)
+
 class ProxyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

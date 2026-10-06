@@ -26,13 +26,14 @@ namespace OmniBox {
         }
         private sealed class UsageReader {
             private readonly RequestStat Record;
+            private readonly ContentCapture Capture;
             private readonly bool SSE;
             private readonly Decoder Decoder = Encoding.UTF8.GetDecoder();
             private readonly StringBuilder Text = new StringBuilder();
             private readonly StringBuilder Event = new StringBuilder();
             private bool Overflow;
             public bool Done;
-            public UsageReader(RequestStat record, bool sse) { Record=record; SSE=sse; }
+            public UsageReader(RequestStat record, bool sse, ContentCapture capture) { Record=record; SSE=sse; Capture=capture; }
             public void Feed(byte[] bytes, int count) {
                 var chars=new char[count+4]; int n=Decoder.GetChars(bytes,0,count,chars,0,false);
                 if(!SSE) { if(!Overflow && Text.Length+n<=4*1024*1024) Text.Append(chars,0,n); else { Overflow=true; Text.Clear(); } return; }
@@ -43,7 +44,7 @@ namespace OmniBox {
                         if(!Overflow && Event.Length>0) {
                             string data=Event.ToString();
                             if(data=="[DONE]")Done=true;
-                            else { InferenceStats.Observe(Record,data); if(data.Contains("\"response.completed\""))Done=true; }
+                            else { InferenceStats.Observe(Record,data); Capture?.ObserveEvent(data); if(data.Contains("\"response.completed\""))Done=true; }
                         }
                         Event.Clear(); Overflow=false;
                     } else if(line.StartsWith("data:",StringComparison.Ordinal) && !Overflow) {
@@ -52,14 +53,14 @@ namespace OmniBox {
                     }
                 }
             }
-            public void Finish() { if(!SSE && !Overflow)InferenceStats.Observe(Record,Text.ToString()); }
+            public void Finish() { if(!SSE && !Overflow){string text=Text.ToString();InferenceStats.Observe(Record,text);Capture?.SetBody(text);} }
         }
         public static Task Handle(HttpListenerContext ctx, string baseUrl, bool requireKey, string hash, string upstreamKey,
             string backend, string selectedModel, int contextLimit, string engineType, string placement = "auto") {
             return Task.Run(async () => {
                 using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(30));
                 bool acquired=false, started=false, completed=false;
-                int status=502; RequestStat record=null;
+                int status=502; RequestStat record=null; ContentCapture capture=null;
                 try {
                     var req=ctx.Request; var path=req.Url.AbsolutePath;
                     bool allowed=(req.HttpMethod=="GET" && path=="/v1/models") ||
@@ -85,6 +86,8 @@ namespace OmniBox {
                                 while((n=await req.InputStream.ReadAsync(b,0,b.Length,timeout.Token))>0){if(memory.Length+n>BodyLimit){await Error(ctx,413,"Request exceeds 8 MiB.");return;}memory.Write(b,0,n);}
                                 body=memory.ToArray();
                             }
+                            // The client's own body, before OmniBox adds engine options; embeddings carry no readable text.
+                            string clientBody=InferenceStats.ContentLogging && path!="/v1/embeddings" ? Encoding.UTF8.GetString(body) : null;
                             JsonObject json;
                             try{json=JsonNode.Parse(body) as JsonObject;if(json==null)throw new JsonException();}
                             catch(JsonException){await Error(ctx,400,"A JSON object is required.");return;}
@@ -107,6 +110,7 @@ namespace OmniBox {
                             }
                             record=InferenceStats.Begin(backend,selectedModel,path,contextLimit,req.Headers["X-Omnibox-Session"],timeout);
                             if(record==null){await Error(ctx,409,"The model is busy or a control operation is running. Retry after completion.");return;}
+                            if(clientBody!=null)capture=new ContentCapture(clientBody);
                             bool streaming=json["stream"] is JsonValue sv && sv.TryGetValue<bool>(out bool flag) && flag;
                             if(streaming && (path=="/v1/chat/completions"||path=="/v1/completions")) {
                                 var options=json["stream_options"] as JsonObject;
@@ -130,7 +134,7 @@ namespace OmniBox {
                             ctx.Response.StatusCode=status;ctx.Response.ContentType=response.Content.Headers.ContentType?.ToString()??"application/json";
                             ctx.Response.Headers["Cache-Control"]="no-store";ctx.Response.Headers["X-Accel-Buffering"]="no";ctx.Response.Headers["X-Content-Type-Options"]="nosniff";ctx.Response.SendChunked=true;
                             bool sse=ctx.Response.ContentType.StartsWith("text/event-stream",StringComparison.OrdinalIgnoreCase);
-                            var observer=new UsageReader(record,sse);
+                            var observer=new UsageReader(record,sse,capture);
                             using(var stream=await response.Content.ReadAsStreamAsync(timeout.Token)) {
                                 var buffer=new byte[8192];int n;
                                 while((n=await stream.ReadAsync(buffer,0,buffer.Length,timeout.Token))>0) {
@@ -144,7 +148,7 @@ namespace OmniBox {
                 }catch(HttpRequestException){status=503;if(!started){try{await Error(ctx,503,"Backend unavailable. Start the selected engine in OmniBox AI.");}catch{}}}
                 catch(OperationCanceledException){status=504;if(!started){try{await Error(ctx,504,"Backend request timed out or was stopped.");}catch{}}}
                 catch{status=502;if(!started){try{await Error(ctx,502,"Proxy request failed.");}catch{}}}
-                finally{if(acquired)Interlocked.Decrement(ref Active);InferenceStats.Finish(record,status,completed);try{ctx.Response.Close();}catch{}}
+                finally{if(acquired)Interlocked.Decrement(ref Active);InferenceStats.Finish(record,status,completed,capture);try{ctx.Response.Close();}catch{}}
             });
         }
     }

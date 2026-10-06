@@ -130,7 +130,7 @@ function renderSample(s) {
 function tableRow(values) {const row=document.createElement('tr');values.forEach(value=>{const cell=document.createElement('td');cell.textContent=value;row.append(cell);});return row;}
 function renderActivity() {
   if(!activity||!snapshot)return;
-  $('request-history').replaceChildren();(activity.requests||[]).forEach(r=>{$('request-history').append(tableRow([new Date(r.started).toLocaleString('ru-RU'),r.session_id.slice(0,8),r.model,`${r.state==='completed'?'Готово':'Ошибка'} · ${r.status}`,fmt(r.duration_seconds),fmt(r.input_tokens),fmt(r.output_tokens),fmt(r.total_tokens)]));});
+  $('request-history').replaceChildren();(activity.requests||[]).forEach(r=>{const row=tableRow([new Date(r.started).toLocaleString('ru-RU'),r.session_id.slice(0,8),r.model,`${r.state==='completed'?'Готово':'Ошибка'} · ${r.status}`,fmt(r.duration_seconds),fmt(r.input_tokens),fmt(r.output_tokens),fmt(r.total_tokens)]);row.append(contentCell(r));$('request-history').append(row);});
   $('session-history').replaceChildren();(activity.sessions||[]).forEach(s=>{$('session-history').append(tableRow([s.id.slice(0,8),s.model,`${s.requests}${s.missing_usage?' · без usage: '+s.missing_usage:''}`,fmt(s.input_tokens),fmt(s.output_tokens),fmt(s.total_tokens)]));});
   $('journal-status').textContent=activity.journal_error||'Журнал содержит только метаданные запросов через /v1 OMNIBOX AI.';
   const running=snapshot.backends.find(b=>['Running','StartPending'].includes(b.service));
@@ -226,12 +226,25 @@ async function showCatalogFiles(repository) {
   }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
 }
 // Disk usage is computed only on login and on the Logs tab, never on the status poll.
-let storageDirty=false;
+let storageDirty=false,requestLog='metadata';
+// Request text is stored only in content mode; metadata rows offer nothing to open.
+function contentCell(r){const cell=document.createElement('td');if(requestLog!=='content'){cell.textContent='—';return cell;}const button=document.createElement('button');button.type='button';button.className='text-button small';button.textContent='Открыть';button.addEventListener('click',()=>showRequestContent(r.id).catch(e=>notice(e.message,true)));cell.append(button);return cell;}
+function formatRequestContent(c){
+  const parts=[`${c.model} · ${c.route} · ${new Date(c.started).toLocaleString('ru-RU')} · ${c.status}${c.truncated?' · сокращено':''}`];
+  const messages=c.request?.messages||c.request?.input;
+  parts.push('ЗАПРОС',Array.isArray(messages)?messages.map(m=>`[${m.role||m.type||'?'}] ${typeof m.content==='string'?m.content:JSON.stringify(m.content,null,2)}`).join('\n\n'):JSON.stringify(c.request??null,null,2));
+  if(c.reasoning_text)parts.push('РАЗМЫШЛЕНИЯ',c.reasoning_text);
+  parts.push('ОТВЕТ',c.response!==undefined?JSON.stringify(c.response,null,2):(c.response_text||'—'));
+  return parts.join('\n\n');
+}
+async function showRequestContent(id){const c=await api(`/api/request-content?id=${encodeURIComponent(id)}`);$('request-content').textContent=formatRequestContent(c);$('request-content-box').hidden=false;}
 function formatMb(bytes){return `${((bytes||0)/1024**2).toFixed(1)} МБ`;}
 function renderStorage(u){
-  $('storage-summary').textContent=`Журналы: ${formatMb(u.logs_bytes)} (файлов: ${u.log_files}) · резервные копии: ${formatMb(u.backups_bytes)} · обновления: ${formatMb(u.updates_bytes)}${u.temp_bytes?` · временные файлы: ${formatMb(u.temp_bytes)}`:''}`;
+  requestLog=u.request_log||'metadata';
+  $('storage-summary').textContent=`Журналы: ${formatMb(u.logs_bytes)} (файлов: ${u.log_files}${u.content_bytes?`, содержимое запросов: ${formatMb(u.content_bytes)}`:''}) · резервные копии: ${formatMb(u.backups_bytes)} · обновления: ${formatMb(u.updates_bytes)}${u.temp_bytes?` · временные файлы: ${formatMb(u.temp_bytes)}`:''}`;
   $('storage-warning').hidden=!u.logs_over_limit;$('storage-warning').textContent=`Журналы занимают больше ${u.log_warn_mb} МБ. Сократите срок хранения или удалите устаревшие.`;
-  if(!storageDirty){const select=$('log-retention');if(![...select.options].some(o=>o.value===String(u.log_retention_days)))select.add(new Option(`${u.log_retention_days} дн.`,String(u.log_retention_days)));select.value=String(u.log_retention_days);$('log-warn').value=u.log_warn_mb;}
+  if(!storageDirty){const select=$('log-retention');if(![...select.options].some(o=>o.value===String(u.log_retention_days)))select.add(new Option(`${u.log_retention_days} дн.`,String(u.log_retention_days)));select.value=String(u.log_retention_days);$('log-warn').value=u.log_warn_mb;$('request-log').value=requestLog;}
+  if(activity&&snapshot)renderActivity();
 }
 async function refreshStorage(notify){const u=await api('/api/storage');renderStorage(u);if(notify&&u.logs_over_limit)notice(`Журналы занимают ${formatMb(u.logs_bytes)} — больше порога ${u.log_warn_mb} МБ. Настройка хранения — в разделе «Журналы».`,true);return u;}
 async function refreshLogs() { if(!snapshot)return; const data=await api('/api/logs');$('logs').replaceChildren();data.logs.forEach(log=>{const h=document.createElement('h3');h.textContent=log.stream;const pre=document.createElement('pre');pre.textContent=log.text;$('logs').append(h,pre);}); }
@@ -256,7 +269,8 @@ $('download-form').addEventListener('submit',e=>{e.preventDefault();const b=back
 $('refresh-logs').addEventListener('click',()=>refreshLogs().catch(e=>notice(e.message,true)));
 $('placement').addEventListener('change',()=>syncKvOffload(true));
 $('storage-form').addEventListener('input',()=>storageDirty=true);
-$('storage-form').addEventListener('submit',async e=>{e.preventDefault();try{const u=await api('/api/storage',{action:'save',log_retention_days:Number($('log-retention').value),log_warn_mb:Number($('log-warn').value)});storageDirty=false;renderStorage(u);notice('Настройки хранения журналов сохранены.');}catch(error){notice(error.message,true);}});
+$('storage-form').addEventListener('submit',async e=>{e.preventDefault();if(requestLog==='content'&&$('request-log').value==='metadata'&&!window.confirm('Выключить запись содержимого? Уже сохранённые запросы и ответы будут удалены.'))return;try{const u=await api('/api/storage',{action:'save',log_retention_days:Number($('log-retention').value),log_warn_mb:Number($('log-warn').value),request_log:$('request-log').value});$('request-content-box').hidden=true;storageDirty=false;renderStorage(u);notice('Настройки хранения журналов сохранены.');}catch(error){notice(error.message,true);}});
+$('request-content-close').addEventListener('click',()=>{$('request-content-box').hidden=true;$('request-content').textContent='';});
 $('storage-clean').addEventListener('click',async()=>{try{const u=await api('/api/storage',{action:'cleanup'});renderStorage(u);notice(`Удалено файлов: ${u.cleanup.removed}, освобождено ${formatMb(u.cleanup.freed_bytes)}.`);}catch(error){notice(error.message,true);}});
 $('mode-basic').addEventListener('click',()=>setSettingsMode('basic'));$('mode-pro').addEventListener('click',()=>setSettingsMode('pro'));
 $('api-settings-form').addEventListener('input',()=>gatewayDirty=true);

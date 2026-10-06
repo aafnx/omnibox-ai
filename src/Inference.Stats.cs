@@ -5,10 +5,11 @@ using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Threading;
 
 namespace OmniBox {
-    // This DTO is the ONLY payload written to the request journal.
+    // This DTO is the only payload of the metadata journal. Request text goes to content.jsonl, and only when the owner enables it.
     public sealed class RequestStat {
         public string id { get; set; }
         public string session_id { get; set; }
@@ -42,6 +43,54 @@ namespace OmniBox {
         public long total_tokens { get; set; }
         public int missing_usage { get; set; }
     }
+    // Request and response text for the optional content journal; never created unless the owner enables it.
+    public sealed class ContentCapture {
+        private const int TextLimit = 1024 * 1024;
+        private readonly string Request;
+        private readonly StringBuilder Content = new StringBuilder(), Reasoning = new StringBuilder();
+        private string Body;
+        private bool Truncated;
+        public ContentCapture(string request) { if (request.Length <= TextLimit) Request = request; else Truncated = true; }
+        private void Append(StringBuilder target, string text) {
+            if (String.IsNullOrEmpty(text)) return;
+            if (target.Length + text.Length > TextLimit) { Truncated = true; return; }
+            target.Append(text);
+        }
+        private static string Text(JsonElement obj, string key) {
+            return obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(key, out var value) && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
+        }
+        // Streaming events: chat and completion deltas, and Responses API text deltas.
+        public void ObserveEvent(string json) {
+            try {
+                using var document = JsonDocument.Parse(json);
+                var root = document.RootElement;
+                string type = Text(root, "type");
+                if (type != null) {
+                    if (type == "response.output_text.delta") Append(Content, Text(root, "delta"));
+                    else if (type.StartsWith("response.reasoning", StringComparison.Ordinal) && type.EndsWith(".delta", StringComparison.Ordinal)) Append(Reasoning, Text(root, "delta"));
+                    return;
+                }
+                if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("choices", out var choices) || choices.ValueKind != JsonValueKind.Array) return;
+                foreach (var choice in choices.EnumerateArray()) {
+                    if (choice.ValueKind != JsonValueKind.Object) continue;
+                    if (choice.TryGetProperty("delta", out var delta)) { Append(Content, Text(delta, "content")); Append(Reasoning, Text(delta, "reasoning_content") ?? Text(delta, "reasoning")); }
+                    Append(Content, Text(choice, "text"));
+                }
+            } catch (JsonException) { }
+        }
+        public void SetBody(string text) { if (text.Length <= TextLimit) Body = text; else Truncated = true; }
+        private static JsonNode Parse(string text) {
+            if (text == null) return null;
+            try { return JsonNode.Parse(text); } catch (JsonException) { return JsonValue.Create(text); }
+        }
+        public string Serialize(RequestStat record) {
+            var line = new JsonObject { ["id"] = record.id, ["session_id"] = record.session_id, ["backend"] = record.backend, ["model"] = record.model,
+                ["route"] = record.route, ["started"] = record.started, ["status"] = record.status, ["truncated"] = Truncated, ["request"] = Parse(Request) };
+            if (Body != null) line["response"] = Parse(Body);
+            else { line["response_text"] = Content.ToString(); if (Reasoning.Length > 0) line["reasoning_text"] = Reasoning.ToString(); }
+            return line.ToJsonString();
+        }
+    }
     public static class InferenceStats {
         private static readonly object Sync = new object();
         private static readonly Queue<RequestStat> Recent = new Queue<RequestStat>();
@@ -51,7 +100,31 @@ namespace OmniBox {
         private static bool Control;
         private static CancellationTokenSource Cancellation;
         private static string DirectoryPath, JournalError;
-        private const long FileLimit = 4 * 1024 * 1024;
+        private const long FileLimit = 4 * 1024 * 1024, ContentFileLimit = 16 * 1024 * 1024;
+        private static bool ContentEnabled;
+        public static bool ContentLogging { get { lock (Sync) { return ContentEnabled; } } }
+        public static void SetContentLogging(bool enabled) { lock (Sync) { ContentEnabled = enabled; } }
+        private static void Rotate(string path, long limit) {
+            if(File.Exists(path) && new FileInfo(path).Length >= limit) {
+                if(File.Exists(path+".2")) File.Delete(path+".2");
+                if(File.Exists(path+".1")) File.Move(path+".1",path+".2");
+                File.Move(path,path+".1");
+            }
+        }
+        // Returns one stored content record; the id comes from the metadata journal.
+        public static string FindContent(string id) {
+            if (id == null || id.Length != 32 || !id.All(Uri.IsHexDigit)) return null;
+            string marker = "{\"id\":\"" + id + "\"";
+            lock (Sync) {
+                if (DirectoryPath == null) return null;
+                foreach (string suffix in new[] { "", ".1", ".2" }) {
+                    string path = Path.Combine(DirectoryPath, "content.jsonl" + suffix);
+                    if (!File.Exists(path)) continue;
+                    foreach (string line in File.ReadLines(path)) if (line.StartsWith(marker, StringComparison.Ordinal)) return line;
+                }
+            }
+            return null;
+        }
 
         public static void Configure(string directory) {
             lock (Sync) {
@@ -158,7 +231,8 @@ namespace OmniBox {
             session.input_tokens += record.input_tokens ?? 0; session.output_tokens += record.output_tokens ?? 0; session.total_tokens += record.total_tokens ?? 0;
             if(!record.input_tokens.HasValue || !record.output_tokens.HasValue) session.missing_usage++;
         }
-        public static void Finish(RequestStat record, int status, bool completed) {
+        public static void Finish(RequestStat record, int status, bool completed) { Finish(record, status, completed, null); }
+        public static void Finish(RequestStat record, int status, bool completed, ContentCapture content) {
             if (record == null) return;
             lock (Sync) {
                 record.ended = DateTime.UtcNow.ToString("o"); record.status = status;
@@ -167,13 +241,17 @@ namespace OmniBox {
                 Add(record);
                 try {
                     string path=Path.Combine(DirectoryPath,"requests.jsonl");
-                    if(File.Exists(path) && new FileInfo(path).Length >= FileLimit) {
-                        if(File.Exists(path+".2")) File.Delete(path+".2");
-                        if(File.Exists(path+".1")) File.Move(path+".1",path+".2");
-                        File.Move(path,path+".1");
-                    }
+                    Rotate(path, FileLimit);
                     File.AppendAllText(path, JsonSerializer.Serialize(record)+"\n", new UTF8Encoding(false));
                 } catch { JournalError = "Request journal could not be written."; }
+                // Content is written only while the owner keeps the content journal enabled.
+                if (content != null && ContentEnabled) {
+                    try {
+                        string path=Path.Combine(DirectoryPath,"content.jsonl");
+                        Rotate(path, ContentFileLimit);
+                        File.AppendAllText(path, content.Serialize(record)+"\n", new UTF8Encoding(false));
+                    } catch { JournalError = "Request content could not be written."; }
+                }
                 if (ReferenceEquals(Current,record)) { Current=null; Cancellation=null; }
             }
         }

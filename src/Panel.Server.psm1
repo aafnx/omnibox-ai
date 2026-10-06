@@ -11,7 +11,7 @@ function Send-AiHttpResponse {
     $response.Headers['X-Frame-Options'] = 'DENY'
     $response.Headers['Referrer-Policy'] = 'no-referrer'
     $response.Headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-    $text = if ($ContentType.StartsWith('application/json')) { ConvertTo-Json -InputObject $Value -Depth 20 -Compress } else { [string]$Value }
+    $text = if ($Value -is [byte[]]) { '' } elseif ($ContentType.StartsWith('application/json')) { ConvertTo-Json -InputObject $Value -Depth 20 -Compress } else { [string]$Value }
     $bytes = if($Value -is [byte[]]){$Value}else{[Text.Encoding]::UTF8.GetBytes($text)}
     $response.ContentLength64 = $bytes.Length
     try { $response.OutputStream.Write($bytes, 0, $bytes.Length) } finally { $response.Close() }
@@ -95,6 +95,7 @@ function Start-OmniBoxPanel {
     if (-not ('OmniBox.OpenAiProxy' -as [type])) { Add-Type -Path @((Join-Path $PSScriptRoot 'Inference.Stats.cs'),(Join-Path $PSScriptRoot 'OpenAi.Proxy.cs')) }
     [OmniBox.InferenceStats]::Configure((Join-Path $Root 'logs/requests'))
     # Panel start (normally Windows boot) is the only automatic cleanup point: no timers.
+    [OmniBox.InferenceStats]::SetContentLogging((Read-AiStorageSettings $Root).request_log -eq 'content')
     try { $null = Invoke-AiStorageCleanup $Root (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable) } catch { Write-Host "Очистка журналов пропущена: $($_.Exception.Message)" }
     $listener = [Net.HttpListener]::new()
     foreach ($hostName in $panel.allowed_hosts) { $listener.Prefixes.Add("http://${hostName}:$($panel.port)/") }
@@ -229,11 +230,21 @@ function Start-OmniBoxPanel {
                         $body = Read-AiHttpJson $request
                         $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
                         $result = $null
-                        if ($body.action -eq 'save') { $changes = @{}; foreach ($key in @($body.Keys | Where-Object { $_ -ne 'action' })) { $changes[$key] = $body[$key] }; $null = Save-AiStorageSettings $Root $changes }
+                        if ($body.action -eq 'save') {
+                            $changes = @{}; foreach ($key in @($body.Keys | Where-Object { $_ -ne 'action' })) { $changes[$key] = $body[$key] }
+                            $saved = Save-AiStorageSettings $Root $changes
+                            [OmniBox.InferenceStats]::SetContentLogging($saved.request_log -eq 'content')
+                            if ($saved.request_log -eq 'metadata') { $null = Remove-AiRequestContent $Root }
+                        }
                         elseif ($body.action -eq 'cleanup') { $result = Invoke-AiStorageCleanup $Root $config }
                         else { throw 'Неизвестное действие с журналами.' }
                         $usage = Get-AiStorageUsage $Root $config; $usage.cleanup = $result
                         Send-AiHttpResponse $context 200 $usage
+                    }
+                    'GET /api/request-content' {
+                        $line = [OmniBox.InferenceStats]::FindContent([string]$request.QueryString['id'])
+                        if ($null -eq $line) { throw 'Содержимое этого запроса не сохранено.' }
+                        Send-AiHttpResponse $context 200 ([Text.Encoding]::UTF8.GetBytes($line))
                     }
                     'GET /api/logs' {
                         $config = Get-Content $configPath -Raw | ConvertFrom-Json -AsHashtable
