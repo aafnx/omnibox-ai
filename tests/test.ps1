@@ -1108,6 +1108,52 @@ try {
         $d=Get-AiDashboard $f.path;$row=$d.backends|Where-Object name -eq 'bonsai'
         Assert-Equal $row.residency.mode 'hybrid';Assert-Equal $row.residency.cpu_moe_layers 24;Assert-Equal $row.settings.n_cpu_moe '24'
     }
+    Test 'Prism generation and memory defaults write only filled arguments and clear them when emptied' {
+        $m=New-TestModule;$f=New-WebModelFixture;$b=$f.config.backends.bonsai
+        $values=[ordered]@{reasoning='off';reasoning_effort='high';reasoning_budget='0';temperature='0.6';top_k='20';top_p='0.95';min_p='0';repeat_penalty='1.05';presence_penalty='-0.5';frequency_penalty='0.2';max_tokens='4096';seed='42';threads='8';load_mode='mmap+mlock'}
+        $x=& $m {param($b,$v)New-AiLaunchXml $b $v} $b $values;$x.Save($b.service_config)
+        $s=& $m {param($b)Get-AiLaunchSettings $b} $b
+        foreach($key in $values.Keys){Assert-Equal $s[$key] $values[$key] $key}
+        $args=[string]$x.service.arguments
+        Assert-True ($args.Contains('--reasoning off') -and $args.Contains('--temp 0.6') -and $args.Contains('-n 4096') -and $args.Contains('--load-mode mmap+mlock'))
+        Assert-True ($args.Contains('--port 18080 --jinja'))
+        $empty=[ordered]@{};foreach($key in $values.Keys){$empty[$key]=''}
+        $x=& $m {param($b,$v)New-AiLaunchXml $b $v} $b $empty;$args=[string]$x.service.arguments
+        foreach($flag in @('--reasoning','--reasoning-effort','--reasoning-budget','--temp','--top-k','--top-p','--min-p','--repeat-penalty','--presence-penalty','--frequency-penalty','-n','-s','-t','--load-mode')){Assert-True (-not (@($args -split ' ') -contains $flag)) $flag}
+        Assert-True ($args.Contains('-c 196608') -and $args.Contains('--port 18080 --jinja'))
+    }
+    Test 'Prism generation settings reject injection, out-of-range values and Ollama' {
+        $m=New-TestModule;$f=New-WebModelFixture;$b=$f.config.backends.bonsai
+        foreach($bad in @(@{temperature='0.6 --host 0.0.0.0'},@{temperature='3'},@{top_k='1.5'},@{top_p='-0.1'},@{reasoning='maybe'},@{load_mode='mlock --host x'},@{seed='4294967296'},@{threads='0'},@{max_tokens='-2'},@{reasoning_effort='HIGH'})){
+            Assert-Throws {& $m {param($b,$v)New-AiLaunchXml $b $v} $b $bad} "*$(@($bad.Keys)[0])*"
+        }
+        Assert-Throws {Invoke-AiPanelAction $f.path @{action='save';backend='ollama';settings=@{temperature='0.6'}}} '*Неизвестная настройка*'
+    }
+    Test 'Prism load mode replaces legacy mlock and mmap flags' {
+        $m=New-TestModule;$f=New-WebModelFixture;$b=$f.config.backends.bonsai
+        $x=& $m {param($b)Read-AiServiceXml $b} $b;$x.service.arguments=[string]$x.service.arguments+' --mlock --no-mmap';$x.Save($b.service_config)
+        $x=& $m {param($b)New-AiLaunchXml $b @{load_mode='mmap'}} $b;$tokens=@(([string]$x.service.arguments) -split ' ')
+        Assert-True (-not ($tokens -contains '--mlock') -and -not ($tokens -contains '--no-mmap'));Assert-True ($tokens -contains '--load-mode')
+    }
+    Test 'Prism KV offload toggle respects CPU placement' {
+        $m=New-TestModule;$f=New-WebModelFixture;$b=$f.config.backends.bonsai
+        $count={param($x)@(([string]$x.service.arguments -split ' ')|Where-Object{$_ -eq '--no-kv-offload'}).Count}
+        $x=& $m {param($b)New-AiLaunchXml $b @{kv_offload='off'}} $b;Assert-Equal (& $count $x) 1;$x.Save($b.service_config)
+        Assert-Equal (& $m {param($b)(Get-AiLaunchSettings $b).kv_offload} $b) 'off'
+        $x=& $m {param($b)New-AiLaunchXml $b @{kv_offload='off'}} $b;Assert-Equal (& $count $x) 1
+        $x=& $m {param($b)New-AiLaunchXml $b @{kv_offload='on'}} $b;Assert-Equal (& $count $x) 0
+        $x=& $m {param($b)New-AiLaunchXml $b @{placement='gpu';kv_offload='off'}} $b;Assert-Equal (& $count $x) 1
+        $x=& $m {param($b)New-AiLaunchXml $b @{placement='cpu';kv_offload='on'}} $b;Assert-Equal (& $count $x) 1
+        Assert-Throws {& $m {param($b)New-AiLaunchXml $b @{kv_offload='maybe'}} $b} '*KV*'
+    }
+    Test 'Prism KV cache accepts every llama-server quantized type and model list shows file quant' {
+        $m=New-TestModule;$f=New-WebModelFixture;$b=$f.config.backends.bonsai
+        foreach($type in @('bf16','q5_1','iq4_nl')){$x=& $m {param($b,$t)New-AiLaunchXml $b @{cache_key=$t;cache_value=$t}} $b $type;Assert-True ([string]$x.service.arguments).Contains("-ctk $type")}
+        Assert-Throws {& $m {param($b)New-AiLaunchXml $b @{cache_key='f32'}} $b} '*Кеш*'
+        $cases=[ordered]@{'Ornith-1.5-35B-A3B-Q4_K_M.gguf'='Q4_K_M';'model-IQ3_XXS.gguf'='IQ3_XXS';'bonsai-2-27b-pq2_0.gguf'='PQ2_0';'x-UD-Q4_K_XL-00001-of-00003.gguf'='UD-Q4_K_XL';'plain-model.gguf'='';'m.Q8_0.gguf'='Q8_0';'m-BF16.gguf'='BF16'}
+        foreach($name in $cases.Keys){Assert-Equal (& $m {param($n)Get-AiGgufQuant $n} $name) $cases[$name] $name}
+        Assert-True (@(& $m {param($b)Get-AiPrismModels $b} $b|Where-Object{$_.Contains('quant')}).Count -eq 2)
+    }
     Test 'Ollama CPU placement disables GPU discovery and automatic placement restores prior masks' {
         $f=New-ContextFixture;$m=New-TestModule;$b=$f.config.backends.ollama
         $x=& $m {param($b)New-AiLaunchXml $b @{placement='cpu'}} $b

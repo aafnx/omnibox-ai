@@ -32,6 +32,10 @@ function run(code){return vm.runInContext(code,context);}
   run("applyTheme('system')");assert.equal(context.document.documentElement.dataset.theme,'light');
   run("snapshot={backends:[{name:'bonsai',type:'prism',service:'Running',api:'Ready',sleeping:false,loaded_model:'model.gguf',selected_model:'model',settings:{context:32768,alias:'model'},models:[],errors:[]}],operations:[]};selectedBackend='bonsai';renderEngines();");
   assert.equal(nodes.engines.children[0].querySelector('start').hidden,true);assert.equal(nodes.engines.children[0].querySelector('stop').hidden,false);
+  // CPU placement keeps the KV cache in RAM; leaving it restores GPU offload.
+  nodes.placement.value='cpu';run("syncKvOffload(true)");assert.equal(nodes['kv-offload'].value,'off');assert.equal(nodes['kv-offload'].disabled,true);
+  nodes.placement.value='gpu';run("syncKvOffload(true)");assert.equal(nodes['kv-offload'].value,'on');assert.equal(nodes['kv-offload'].disabled,false);
+  nodes['kv-offload'].value='off';run("syncKvOffload(false)");assert.equal(nodes['kv-offload'].value,'off');
   run("renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'model.gguf');assert.ok(nodes['kpi-model-caption'].textContent.startsWith('bonsai · '));
   // Stopping everything interrupts generation, so a running server needs confirmation.
   let asked=0;context.window.confirm=()=>{asked++;return false;};const sent=requests.length;
@@ -71,5 +75,5 @@ function run(code){return vm.runInContext(code,context);}
   nodes['update-token'].value='one-use-secret';context.fetch=async(path,options)=>{requests.push({path,body:options.body});return{ok:true,status:202,json:async()=>({current:'0.9.4',phase:'checking',message:'Checking',gh_available:true,authenticated:false,code:''})}};
   nodes['update-token-form'].listeners.submit[0]({preventDefault:()=>{}});assert.equal(nodes['update-token'].value,'');await new Promise(setImmediate);
   assert.equal(JSON.parse(requests.at(-1).body).token,'one-use-secret');assert.ok([...store.values()].every(v=>!String(v).includes('secret')));
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

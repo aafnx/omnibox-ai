@@ -41,6 +41,33 @@ function Remove-AiArgument {
     $Xml.SelectSingleNode('/service/arguments').InnerText = $next -join ' '
 }
 
+# Optional llama-server arguments: an empty value removes the argument so the
+# binary's own default applies and older builds without the flag still start.
+$script:AiPrismOptions = [ordered]@{
+    reasoning         = @{ names = @('--reasoning','-rea'); values = @('on','off','auto') }
+    reasoning_effort  = @{ names = @('--reasoning-effort'); values = @('minimal','low','medium','high','xhigh','max') }
+    reasoning_budget  = @{ names = @('--reasoning-budget'); min = -1; max = 1000000 }
+    temperature       = @{ names = @('--temp','--temperature'); min = 0; max = 2; decimal = $true }
+    top_k             = @{ names = @('--top-k'); min = 0; max = 1000 }
+    top_p             = @{ names = @('--top-p'); min = 0; max = 1; decimal = $true }
+    min_p             = @{ names = @('--min-p'); min = 0; max = 1; decimal = $true }
+    repeat_penalty    = @{ names = @('--repeat-penalty'); min = 0; max = 2; decimal = $true }
+    presence_penalty  = @{ names = @('--presence-penalty'); min = -2; max = 2; decimal = $true }
+    frequency_penalty = @{ names = @('--frequency-penalty'); min = -2; max = 2; decimal = $true }
+    max_tokens        = @{ names = @('-n','--predict','--n-predict'); min = -1; max = 1000000 }
+    seed              = @{ names = @('-s','--seed'); min = -1; max = 4294967295 }
+    threads           = @{ names = @('-t','--threads'); min = 1; max = 256 }
+    load_mode         = @{ names = @('--load-mode','-lm'); values = @('auto','none','mmap','mlock','mmap+mlock'); flags = @('--mlock','--mmap','--no-mmap') }
+}
+$script:AiCacheTypes = @('f16','bf16','q8_0','q5_1','q5_0','q4_1','iq4_nl','q4_0')
+$script:AiKvOffloadFlags = @('--no-kv-offload','-nkvo','--kv-offload','-kvo')
+
+function Get-AiGgufQuant {
+    param([string]$Name)
+    if ($Name -match '(?i)(?:^|[-_.])((?:UD-)?(?:I?Q\d_[A-Z0-9_]+?|Q\d_\d|T?Q\d_\d|PQ\d_\d|PTQ\d(?:_\d)?|MXFP4|NVFP4|BF16|F16|F32))(?:[-_.](?:\d{5}-of-\d{5}\.)?gguf$|\.gguf$)') { return $Matches[1].ToUpperInvariant() }
+    return ''
+}
+
 function Get-AiXmlEnv {
     param([Xml.XmlDocument]$Xml, [string]$Name, [string]$Default)
     $nodes = @($Xml.SelectNodes('/service/env') | Where-Object { $_.GetAttribute('name') -eq $Name })
@@ -75,6 +102,8 @@ function Get-AiLaunchSettings {
         # --cpu-moe keeps every expert in RAM; 999 layers means the same for any model.
         $settings.n_cpu_moe = if ($tokens | Where-Object { $_ -in @('--cpu-moe','-cmoe') }) { '999' } else { Get-AiArgumentValue $tokens @('--n-cpu-moe','-ncmoe') '0' }
         $settings.idle_minutes = [math]::Round([double](Get-AiArgumentValue $tokens @('--sleep-idle-seconds') '-1') / 60, 2)
+        foreach ($key in $script:AiPrismOptions.Keys) { $settings[$key] = Get-AiArgumentValue $tokens $script:AiPrismOptions[$key].names '' }
+        $settings.kv_offload = if ($tokens | Where-Object { $_ -in @('--no-kv-offload','-nkvo') }) { 'off' } else { 'on' }
     } else {
         $settings.placement=Get-AiXmlEnv $xml 'OMNIBOX_PLACEMENT' 'auto'
         $settings.keep_alive = Get-AiXmlEnv $xml 'OLLAMA_KEEP_ALIVE' '5m'
@@ -93,13 +122,13 @@ function Get-AiPrismModels {
     if (-not (Test-Path -LiteralPath $directory -PathType Container)) { return @() }
     return @(Get-ChildItem -LiteralPath $directory -File -Filter '*.gguf' |
         Where-Object { $_.Name -notmatch '(?i)mmproj|projector' -and -not $_.LinkType } |
-        Sort-Object Name | ForEach-Object { @{ name = $_.Name; id = $_.FullName; bytes = $_.Length } })
+        Sort-Object Name | ForEach-Object { @{ name = $_.Name; id = $_.FullName; bytes = $_.Length; quant = Get-AiGgufQuant $_.Name } })
 }
 
 function New-AiLaunchXml {
     param($Backend, [System.Collections.IDictionary]$Settings)
     $allowed = @('context','idle_minutes','placement')
-    if ($Backend.type -eq 'prism') { $allowed += @('model','alias','gpu_layers','n_cpu_moe','cache_key','cache_value','flash_attention','batch','ubatch') }
+    if ($Backend.type -eq 'prism') { $allowed += @('model','alias','gpu_layers','n_cpu_moe','cache_key','cache_value','flash_attention','batch','ubatch','kv_offload') + @($script:AiPrismOptions.Keys) }
     foreach ($key in $Settings.Keys) { if ($key -notin $allowed) { throw "Неизвестная настройка: $key" } }
     $xml = if ($Settings.Contains('context')) { New-AiContextXml $Backend (ConvertTo-AiContext ([string]$Settings.context)) } else { Read-AiServiceXml $Backend }
     if ($Settings.Contains('placement')) {
@@ -154,7 +183,7 @@ function New-AiLaunchXml {
         }
         foreach ($key in @('cache_key','cache_value')) {
             if ($Settings.Contains($key)) {
-                if ($Settings[$key] -notin @('f16','q8_0','q4_0')) { throw 'Кеш: f16, q8_0 или q4_0.' }
+                if ($Settings[$key] -cnotin $script:AiCacheTypes) { throw "Кеш: $($script:AiCacheTypes -join ', ')." }
                 $names = if ($key -eq 'cache_key') { @('-ctk','--cache-type-k') } else { @('-ctv','--cache-type-v') }
                 Set-AiArgumentValue $xml $names ([string]$Settings[$key])
             }
@@ -168,6 +197,27 @@ function New-AiLaunchXml {
             elseif($Settings.placement -in @('gpu','auto')){Set-AiArgumentValue $xml @('-ngl','--gpu-layers','--n-gpu-layers') '999'}
             if($Settings.placement -ne 'cpu'){$xml.service.arguments=(@(Get-AiPrismArguments $xml)|Where-Object{$_ -ne '--no-kv-offload'}) -join ' '}
             if($Settings.placement -eq 'hybrid' -and (-not $Settings.Contains('gpu_layers') -or [int]$Settings.gpu_layers -lt 1 -or [int]$Settings.gpu_layers -ge 99)){throw 'Для RAM + VRAM укажи от 1 до 98 слоёв GPU.'}
+        }
+        foreach ($key in $script:AiPrismOptions.Keys) {
+            if (-not $Settings.Contains($key)) { continue }
+            $option = $script:AiPrismOptions[$key]; $value = ([string]$Settings[$key]).Trim()
+            if ($value) {
+                if ($option.Contains('values')) {
+                    if ($value -cnotin $option.values) { throw "${key}: допустимо $($option.values -join ', ') или пусто." }
+                } else {
+                    $pattern = if ($option.Contains('decimal')) { '^-?\d{1,7}(\.\d{1,4})?$' } else { '^-?\d{1,10}$' }
+                    if ($value -notmatch $pattern -or [double]::Parse($value, [Globalization.CultureInfo]::InvariantCulture) -lt $option.min -or [double]::Parse($value, [Globalization.CultureInfo]::InvariantCulture) -gt $option.max) { throw "${key}: от $($option.min) до $($option.max) или пусто." }
+                }
+            }
+            Remove-AiArgument $xml $option.names $(if ($option.Contains('flags')) { $option.flags } else { @() })
+            if ($value) { Set-AiArgumentValue $xml $option.names $value }
+        }
+        # CPU placement always keeps the KV cache in RAM; otherwise honour the explicit choice.
+        $cpuPlacement = [string](Get-AiArgumentValue @(Get-AiPrismArguments $xml) @('-ngl','--gpu-layers','--n-gpu-layers') '99') -eq '0'
+        if ($Settings.Contains('kv_offload') -and -not $cpuPlacement) {
+            if ([string]$Settings.kv_offload -notin @('on','off')) { throw 'KV-кеш на GPU: on или off.' }
+            Remove-AiArgument $xml @() $script:AiKvOffloadFlags
+            if ($Settings.kv_offload -eq 'off') { $xml.service.arguments = [string]$xml.service.arguments + ' --no-kv-offload' }
         }
         $tokens = @(Get-AiPrismArguments $xml)
         if ([int](Get-AiArgumentValue $tokens @('-ub','--ubatch-size') '128') -gt [int](Get-AiArgumentValue $tokens @('-b','--batch-size') '512')) { throw 'ubatch не может быть больше batch.' }
