@@ -3,7 +3,7 @@ Set-StrictMode -Version Latest
 # Disk housekeeping for files OmniBox AI writes itself. Cleanup runs only on panel start,
 # at install and on user request; it never runs on a timer and only touches known name patterns.
 
-$script:StorageDefaults = [ordered]@{ log_retention_days = 30; log_warn_mb = 200 }
+$script:StorageDefaults = [ordered]@{ log_retention_days = 30; log_warn_mb = 200; request_log = 'metadata' }
 $script:LogStreams = '(?:out|err|host|wrapper|bootstrap)'
 
 function Read-AiStorageSettings {
@@ -24,6 +24,10 @@ function Read-AiStorageSettings {
 function Test-AiStorageValue {
     param([string]$Key, $Value)
     $text = [string]$Value
+    if ($Key -eq 'request_log') {
+        if ($text -cnotin @('metadata', 'content')) { throw 'Журнал запросов: metadata или content.' }
+        return $text
+    }
     if ($text -notmatch '^\d{1,6}$') { throw 'Срок хранения и порог объёма — целые числа.' }
     $number = [int]$text
     if ($Key -eq 'log_retention_days' -and $number -gt 365) { throw 'Срок хранения журналов: от 0 (не удалять) до 365 дней.' }
@@ -61,7 +65,7 @@ function Get-AiLogFiles {
     $add = { param($items) foreach ($item in $items) { $files[$item.FullName] = $item } }
     $streamFile = "^[A-Za-z0-9_.-]+\.$script:LogStreams(?:\.\d+)?\.log(?:\.\d+|\.old)?$"
     & $add (Get-AiMatchingFiles (Join-Path $Root 'logs') $streamFile)
-    & $add (Get-AiMatchingFiles (Join-Path $Root 'logs/requests') '^requests\.jsonl(?:\.\d+)?$')
+    & $add (Get-AiMatchingFiles (Join-Path $Root 'logs/requests') '^(?:requests|content)\.jsonl(?:\.\d+)?$')
     if ($null -ne $Config) {
         foreach ($backend in $Config.backends.Values) {
             # Indexers: a partial config (missing keys) must not throw under strict mode.
@@ -115,8 +119,9 @@ function Get-AiStorageUsage {
     foreach ($item in Get-AiStaleTempItems ([TimeSpan]::Zero)) {
         $tempBytes += if ($item -is [IO.DirectoryInfo]) { Get-AiDirectorySize $item.FullName } else { $item.Length }
     }
+    $contentBytes = 0L; foreach ($file in @(Get-AiMatchingFiles (Join-Path $Root 'logs/requests') '^content\.jsonl(?:\.\d+)?$')) { $contentBytes += $file.Length }
     $usage = [ordered]@{
-        logs_bytes = $logBytes; log_files = $logs.Count
+        logs_bytes = $logBytes; log_files = $logs.Count; content_bytes = $contentBytes; request_log = $settings.request_log
         backups_bytes = Get-AiDirectorySize (Join-Path $Root 'backups')
         updates_bytes = Get-AiDirectorySize (Join-Path $Root 'updates') @('auth')
         temp_bytes = $tempBytes
@@ -146,6 +151,16 @@ function Invoke-AiStorageCleanup {
     return [ordered]@{ removed = $removed; freed_bytes = $freed }
 }
 
+# Turning the content journal off also removes the request text already stored.
+function Remove-AiRequestContent {
+    param([string]$Root)
+    $removed = 0
+    foreach ($file in @(Get-AiMatchingFiles (Join-Path $Root 'logs/requests') '^content\.jsonl(?:\.\d+)?$')) {
+        try { Remove-Item -LiteralPath $file.FullName -Force -ErrorAction Stop; $removed++ } catch { }
+    }
+    return $removed
+}
+
 # Keeps the newest install snapshots; never removes the one an unfinished transaction still needs.
 function Remove-AiOldBackups {
     param([string]$Root, [int]$Keep = 3, [string[]]$Protect = @())
@@ -172,4 +187,4 @@ function Remove-AiOldBackups {
     return $removed
 }
 
-Export-ModuleMember -Function Read-AiStorageSettings, Save-AiStorageSettings, Get-AiLogFiles, Get-AiStorageUsage, Invoke-AiStorageCleanup, Remove-AiOldBackups, Get-AiStaleTempItems
+Export-ModuleMember -Function Read-AiStorageSettings, Save-AiStorageSettings, Remove-AiRequestContent, Get-AiLogFiles, Get-AiStorageUsage, Invoke-AiStorageCleanup, Remove-AiOldBackups, Get-AiStaleTempItems

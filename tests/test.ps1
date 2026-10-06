@@ -1119,6 +1119,11 @@ try {
         Assert-Throws {Save-AiStorageSettings $root @{log_warn_mb='5'}} '*10*'
         Assert-Throws {Save-AiStorageSettings $root @{log_retention_days='7 --x'}} '*целые*'
         Assert-Throws {Save-AiStorageSettings $root @{path='C:\'}} '*Неизвестная*'
+        Assert-Equal (Read-AiStorageSettings $root).request_log 'metadata'
+        Assert-Throws {Save-AiStorageSettings $root @{request_log='all'}} '*metadata*'
+        $null=New-Item -ItemType Directory -Path "$root/logs/requests" -Force;Set-Content -LiteralPath "$root/logs/requests/content.jsonl" -Value ('x'*1024);Set-Content -LiteralPath "$root/logs/requests/content.jsonl.1" -Value 'x'
+        $null=Save-AiStorageSettings $root @{request_log='content'};$u=Get-AiStorageUsage $root $null;Assert-Equal $u.request_log 'content';Assert-True ($u.content_bytes -ge 1024)
+        Assert-Equal (Remove-AiRequestContent $root) 2;Assert-True (-not (Test-Path -LiteralPath "$root/logs/requests/content.jsonl"))
         $log=Join-Path $root 'logs/panel-service.out.log';Set-Content -LiteralPath $log -Value ('x'*2048);(Get-Item $log).LastWriteTimeUtc=[DateTime]::UtcNow.AddDays(-400)
         Assert-Equal (Invoke-AiStorageCleanup $root $null).removed 0;Assert-True (Test-Path -LiteralPath $log)
         $usage=Get-AiStorageUsage $root $null;Assert-True ($usage.logs_bytes -ge 2048);Assert-Equal $usage.log_files 1;Assert-True (-not $usage.logs_over_limit)
