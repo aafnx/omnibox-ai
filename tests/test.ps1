@@ -1156,6 +1156,86 @@ try {
         Assert-True (& $m {$script:updateToken})
         Assert-Throws {Invoke-Ai -Arguments @('update','--wrong') -ConfigPath 'missing'} '*ai update*'
     }
+    Test 'install settings compare values: formatting and documented migrations are not differences' {
+        $t = Import-Module (Join-Path $repo 'src/Install.Transaction.psm1') -Force -PassThru
+        $dir = Join-Path $testRoot 'settings-values'; $null = New-Item -ItemType Directory -Path (Join-Path $dir 'updates/auth') -Force
+        $xmlPath = Join-Path $dir 'bonsai.xml'
+        Set-Content -LiteralPath $xmlPath -Value '<service><id>bonsai</id><arguments>-m model.gguf  -c 32768</arguments><env name="A" value="1"/></service>'
+        Set-Content -LiteralPath ($xmlPath + '.ai-previous') -Value '<service><id>bonsai</id></service>'
+        Set-Content -LiteralPath ($xmlPath + '.ai-state.json') -Value '{"pending":false}'
+        Set-Content -LiteralPath (Join-Path $dir 'updates/auth/github.dpapi') -Value 'encrypted'
+        $config = [ordered]@{ schema_version = 1; default_backend = 'bonsai'; exclusive = $true; backends = [ordered]@{ bonsai = [ordered]@{ type = 'prism'; service = 'bonsai'; service_config = $xmlPath; active_model = 'm' } } }
+        $config | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $dir 'config.json')
+        $credential = @{ salt = 's'; hash = 'h'; iterations = 210000 }
+        @{ schema_version = 1; port = 18090; allowed_hosts = @('192.168.1.77', 'Custom.Example'); credential = $credential; ssh_target = 'u@h'; remote_addresses = @('LocalSubnet') } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $dir 'panel.json')
+        @{ schema_version = 1; enabled = $true; port = 18090; base_url = 'https://llm.example/v1/'; backend = 'bonsai'; require_key = $true; key_hash = ('a' * 64) } | ConvertTo-Json | Set-Content (Join-Path $dir 'gateway.json')
+        $before = Get-AiInstallSettings $dir
+        $expected = Get-AiExpectedInstallSettings $before @{ 'allowed_hosts.extra' = @('localhost') }
+        # Rewrite everything as the installer would: other key order and formatting, added defaults and runtime_path.
+        $config.backends.bonsai.runtime_path = $xmlPath + '.runtime.json'
+        $reordered = [ordered]@{ backends = $config.backends; exclusive = $true; default_backend = 'bonsai'; schema_version = 1 }
+        [IO.File]::WriteAllText((Join-Path $dir 'config.json'), ($reordered | ConvertTo-Json -Depth 8 -Compress))
+        @{ trusted_proxy_addresses = @(); public_origin = ''; remote_addresses = @('LocalSubnet'); ssh_target = 'u@h'; credential = @{ iterations = 210000; hash = 'h'; salt = 's' }; allowed_hosts = @('custom.example', '192.168.1.77', 'localhost'); port = 18090; schema_version = 1 } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $dir 'panel.json')
+        @{ key_hash = ('a' * 64); require_key = $true; backend = 'bonsai'; base_url = 'https://llm.example/v1'; port = 18090; enabled = $true; schema_version = 1 } | ConvertTo-Json | Set-Content (Join-Path $dir 'gateway.json')
+        Set-Content -LiteralPath $xmlPath -Value "<?xml version=`"1.0`"?>`n<service>`n  <id>bonsai</id>`n  <arguments>-m model.gguf -c 32768</arguments>`n  <env value=`"1`" name=`"A`" />`n</service>"
+        Assert-Equal (@(Compare-AiInstallSettings $expected (Get-AiInstallSettings $dir)).Count) 0
+        Assert-AiInstallSettings $expected $dir
+    }
+    Test 'install settings detect lost hosts, changed secrets, model settings and touched history' {
+        $dir = Join-Path $testRoot 'settings-values'
+        $base = Get-AiInstallSettings $dir
+        $expected = Get-AiExpectedInstallSettings $base
+        $cases = @(
+            @{ file = 'panel.json'; change = { param($v) $v.allowed_hosts = @('192.168.1.77') }; pattern = '*allowed_hosts*custom.example*' },
+            @{ file = 'panel.json'; change = { param($v) $v.credential.hash = 'other' }; pattern = '*panel.credential*' },
+            @{ file = 'gateway.json'; change = { param($v) $v.key_hash = ('b' * 64) }; pattern = '*gateway.key_hash*' },
+            @{ file = 'gateway.json'; change = { param($v) $v.require_key = $false }; pattern = '*gateway.require_key*' },
+            @{ file = 'config.json'; change = { param($v) $v.backends.bonsai.active_model = 'other' }; pattern = '*config.backends*' }
+        )
+        foreach ($case in $cases) {
+            $path = Join-Path $dir $case.file; $original = [IO.File]::ReadAllBytes($path)
+            try {
+                $value = Get-Content $path -Raw | ConvertFrom-Json -AsHashtable; & $case.change $value
+                $value | ConvertTo-Json -Depth 8 | Set-Content $path
+                Assert-Throws { Assert-AiInstallSettings $expected $dir } $case.pattern
+            } finally { [IO.File]::WriteAllBytes($path, $original) }
+        }
+        $xmlPath = Join-Path $dir 'bonsai.xml'
+        foreach ($path in @($xmlPath, ($xmlPath + '.ai-state.json'), (Join-Path $dir 'updates/auth/github.dpapi'))) {
+            $original = [IO.File]::ReadAllBytes($path)
+            try {
+                if ($path -eq $xmlPath) { Set-Content $path '<service><id>bonsai</id><arguments>-m model.gguf -c 65536</arguments><env name="A" value="1"/></service>' }
+                else { [IO.File]::AppendAllText($path, ' ') }
+                Assert-Throws { Assert-AiInstallSettings $expected $dir } '*не пройдена*'
+            } finally { [IO.File]::WriteAllBytes($path, $original) }
+        }
+        # Settings the user asked to change are expected to change.
+        $port = Get-AiExpectedInstallSettings $base @{ 'panel.port' = 18091 }
+        $panel = Get-Content (Join-Path $dir 'panel.json') -Raw | ConvertFrom-Json -AsHashtable; $panel.port = 18091
+        $original = [IO.File]::ReadAllBytes((Join-Path $dir 'panel.json'))
+        try { $panel | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $dir 'panel.json'); Assert-AiInstallSettings $port $dir }
+        finally { [IO.File]::WriteAllBytes((Join-Path $dir 'panel.json'), $original) }
+    }
+    Test 'install lock refuses a second installer and is re-entrant for the owning thread' {
+        $t = Import-Module (Join-Path $repo 'src/Install.Transaction.psm1') -Force -PassThru
+        $exe = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
+        $ready = Join-Path $testRoot 'lock-ready'
+        $holder = Start-Process -FilePath $exe -ArgumentList @('-NoLogo', '-NoProfile', '-Command', "`$m=[Threading.Mutex]::new(`$false,'Global\omnibox-ai-install-v1');`$null=`$m.WaitOne();Set-Content '$ready' x;Start-Sleep 30") -PassThru
+        try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(30); while (-not (Test-Path $ready) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
+            Assert-True (Test-Path $ready) 'Lock holder did not start'
+            Assert-Throws { Enter-AiInstallLock -TimeoutSeconds 1 } '*Уже выполняется другая установка*'
+        } finally { $holder.Kill(); $holder.WaitForExit() }
+        $lock = Enter-AiInstallLock -TimeoutSeconds 5
+        try {
+            Enter-AiControlLock $lock -TimeoutSeconds 1
+            # The web worker owns both locks and runs the installer in the same thread.
+            $nested = Enter-AiInstallLock -TimeoutSeconds 1; Enter-AiControlLock $nested -TimeoutSeconds 1; Exit-AiInstallLock $nested
+            $m = New-TestModule; & $m { function script:Assert-AiAdministrator {} }
+            Assert-Equal (& $m { Invoke-AiLocked { 'control inside install' } }) 'control inside install'
+        } finally { Exit-AiInstallLock $lock }
+        $again = Enter-AiInstallLock -TimeoutSeconds 1; Exit-AiInstallLock $again
+    }
     Test 'VERSION is the single source of the application version' {
         Assert-True ($version -match '^\d+\.\d+\.\d+$') 'VERSION must be x.y.z'
         $sources = @($manifest.Files + $manifest.InstallerFiles + @('scripts/setup.template.ps1', 'scripts/build-setup.ps1') | Where-Object { $_ -match '\.(ps1|psm1|psd1|cs|js|html)$' })

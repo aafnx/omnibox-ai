@@ -151,8 +151,9 @@ try{
         function Start-Service {param($Name,$ErrorAction)$global:fixtureWorkerCalls.Add('start:'+ $Name)}
         function Remove-Service {param($Name,$ErrorAction)$global:fixtureWorkerCalls.Add('remove:'+ $Name)}
         try{
-            foreach($failure in @($false,$true)){
-                $installed=Join-Path $dir ('worker-'+$failure);$stage=Join-Path $installed 'updates/run-fixture'
+            foreach($scenario in @('success','failure','rolled-back','busy')){
+                $failure=$scenario -ne 'success'
+                $installed=Join-Path $dir ('worker-'+$scenario);$stage=Join-Path $installed 'updates/run-fixture'
                 $null=New-Item -ItemType Directory -Path $stage,(Join-Path $installed 'src'),(Join-Path $installed 'models'),(Join-Path $installed 'updates/auth') -Force
                 Copy-Item (Join-Path $root 'scripts/update-worker.ps1') $stage
                 Copy-Item (Join-Path $root 'src/Service.Install.psm1') (Join-Path $installed 'src')
@@ -166,13 +167,28 @@ try{
                 $originalCommand=New-AiLegacyServiceCommand (Get-Process -Id $PID).Path $installed (Join-Path $installed 'panel-service.xml')
                 $global:fixtureWorkerService=[pscustomobject]@{Name='omnibox-ai';ProcessId=0;State='Stopped';PathName=$originalCommand;StartMode='Auto'}
                 $installer='param($InstallDirectory,[switch]$NonInteractive,[switch]$NoProfileUpdate); if(-not $NonInteractive -or -not $NoProfileUpdate){throw "Bad invocation"}; Set-Content (Join-Path $InstallDirectory "ai.ps1") "updated app"; Set-AiServiceCommand -Name omnibox-ai -Command (New-AiNativeServiceCommand (Get-Process -Id $PID).Path $InstallDirectory (Join-Path $InstallDirectory "panel-service.xml")); '
-                if($failure){$installer+='throw "fixture installer failure secret must not appear in status"'}
+                if($scenario -eq 'failure'){$installer+='throw "fixture installer failure secret must not appear in status"'}
+                # A transactional installer restores everything itself and reports it; the worker must not restore again.
+                if($scenario -eq 'rolled-back'){$installer='param($InstallDirectory,[switch]$NonInteractive,[switch]$NoProfileUpdate); $global:OmniBoxInstallResult=@{status="rolled-back"}; throw "fixture rollback secret must not appear in status"'}
+                if($scenario -eq 'busy'){$installer='throw "installer must not run while another installation holds the lock"'}
                 Set-Content (Join-Path $stage 'installer.ps1') $installer
-                & (Join-Path $stage 'update-worker.ps1') -Root $installed -ServiceName 'omnibox-ai-update-fixture' -Version '9.9.9'
+                $holder=$null
+                if($scenario -eq 'busy'){
+                    $ready=Join-Path $installed 'lock-ready'
+                    $holder=Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoLogo','-NoProfile','-Command',"`$m=[Threading.Mutex]::new(`$false,'Global\omnibox-ai-install-v1');`$null=`$m.WaitOne();Set-Content '$ready' x;Start-Sleep 60") -PassThru
+                    $deadline=[DateTime]::UtcNow.AddSeconds(30);while(-not(Test-Path $ready) -and [DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 100}
+                }
+                $changesBefore=@($global:fixtureWorkerCalls|Where-Object {$_ -like 'change:*'}).Count
+                try{& (Join-Path $stage 'update-worker.ps1') -Root $installed -ServiceName 'omnibox-ai-update-fixture' -Version '9.9.9'}
+                finally{if($null -ne $holder){$holder.Kill();$holder.WaitForExit()}}
+                $changes=@($global:fixtureWorkerCalls|Where-Object {$_ -like 'change:*'}).Count-$changesBefore
                 $result=Get-Content (Join-Path $installed 'updates/result.json') -Raw|ConvertFrom-Json
                 Assert ($result.phase -eq $(if($failure){'failed'}else{'done'})) 'Wrong worker outcome'
                 Assert ((Get-Content (Join-Path $installed 'ai.ps1')).Trim() -eq $(if($failure){'previous app'}else{'updated app'})) 'Wrong restoration'
                 if($failure){Assert ($global:fixtureWorkerService.PathName -eq $originalCommand) 'SCM command was not restored'}
+                if($scenario -in @('rolled-back','busy')){Assert ($changes -eq 0) "Worker changed services after $scenario"}
+                if($scenario -eq 'rolled-back'){Assert ($result.message -like '*восстановлены установщиком*') 'Installer rollback not reported'}
+                if($scenario -eq 'busy'){Assert ($result.message -like '*Уже выполняется другая установка*') 'Busy installation not reported'}
                 Assert ($result.message -notlike '*secret*') 'Raw error leaked'
                 Assert ((Get-Content (Join-Path $installed 'gateway.json')) -like '*fixture-key-hash*') 'API key changed'
                 Assert ((Get-Content (Join-Path $installed 'models/model.gguf')).Trim() -eq 'untouched weights') 'Model weights touched'

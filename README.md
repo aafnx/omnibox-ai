@@ -101,13 +101,14 @@ pwsh -NoProfile -File .\tests\update_test.ps1
 pwsh -NoProfile -File .\tests\install_flow_test.ps1
 pwsh -NoProfile -File .\tests\native_host_test.ps1
 pwsh -NoProfile -File .\tests\scm_test.ps1
+$env:OMNIBOX_AI_REAL_INSTALL_TEST='1'; pwsh -NoProfile -File .\tests\real_install_test.ps1   # только на одноразовой машине
 ```
 
 ```powershell
 python -m unittest discover -s tests -p http_test.py -v
 ```
 
-`native_host_test.ps1` и `scm_test.ps1` на Windows регистрируют временные службы и требуют повышенного PowerShell; на других ОС реальные SCM-проверки пропускаются. `scm_test.ps1` проверяет запуск/остановку через SCM, `Win32_Service.Change`, аварийное завершение дочернего процесса и очистку всего дерева процессов.
+`real_install_test.ps1` выполняет настоящую установку со службой `omnibox-ai`, принудительными сбоями обновления и откатом; он запускается только по флагу и отказывается работать там, где omnibox-ai уже установлен. `native_host_test.ps1` и `scm_test.ps1` на Windows регистрируют временные службы и требуют повышенного PowerShell; на других ОС реальные SCM-проверки пропускаются. `scm_test.ps1` проверяет запуск/остановку через SCM, `Win32_Service.Change`, аварийное завершение дочернего процесса и очистку всего дерева процессов.
 
 Python нужен только для HTTP-тестов. Поведение JS-интерфейса дополнительно проверяется `node tests/web_test.cjs` с адаптером DOM; это не визуальный браузерный тест. Набор HTTP-тестов проверяет настоящий HTTP-сервер PowerShell, вход, CSRF/Origin, ограничения запросов, журналы и фоновые операции с тестовым адаптером движков. Тесты управления проверяют XML, откат, эксклюзивность и модели без GPU. ACL и Firewall на серверном ПК проверяются после установки.
 

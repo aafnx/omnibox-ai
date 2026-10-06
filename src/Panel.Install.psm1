@@ -112,7 +112,7 @@ function Protect-AiPanelDirectory {
 }
 
 function Install-AiPanelService {
-    param([string]$Directory, [string]$PwshPath, $Config, $Options, $GatewayOptions)
+    param([string]$Directory, [string]$PwshPath, $Config, $Options, $GatewayOptions, [scriptblock]$BeforeStart)
     $service = Get-Service -Name 'omnibox-ai' -ErrorAction SilentlyContinue
     if ($null -ne $service -and [string]$service.Status -ne 'Stopped') {
         Stop-Service -Name 'omnibox-ai' -NoWait -ErrorAction Stop
@@ -138,6 +138,7 @@ function Install-AiPanelService {
     $null = New-NetFirewallRule -Name 'omnibox-ai-panel' -DisplayName 'OmniBox AI panel' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort $Options.port -Profile Any -RemoteAddress $Options.remote_addresses
     Get-NetFirewallRule -Name 'omnibox-ai-api' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
     if($GatewayOptions.enabled -and $GatewayOptions.port -ne $Options.port){$null=New-NetFirewallRule -Name 'omnibox-ai-api' -DisplayName 'OmniBox OpenAI API' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort $GatewayOptions.port -Profile Any -RemoteAddress $Options.remote_addresses}
+    if ($null -ne $BeforeStart) { & $BeforeStart }
     Start-Service -Name 'omnibox-ai' -ErrorAction Stop
     $hostName = $Options.allowed_hosts[0]
     $ready = $false

@@ -40,6 +40,11 @@ jobs:
       - name: Real SCM tests
         if: ${{ !cancelled() }}
         run: ./tests/scm_test.ps1
+      - name: Real installation, forced failure and rollback
+        if: ${{ !cancelled() }}
+        env:
+          OMNIBOX_AI_REAL_INSTALL_TEST: '1'
+        run: ./tests/real_install_test.ps1
       - name: HTTP integration tests
         if: ${{ !cancelled() }}
         run: python tests/http_test.py
