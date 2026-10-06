@@ -33,7 +33,7 @@ function Get-Settings {
     $panel = Get-Content (Join-Path $destination 'panel.json') -Raw | ConvertFrom-Json -AsHashtable
     $gateway = Get-Content (Join-Path $destination 'gateway.json') -Raw | ConvertFrom-Json -AsHashtable
     $config = Get-Content (Join-Path $destination 'config.json') -Raw | ConvertFrom-Json -AsHashtable
-    return @{ password = $panel.credential.hash; hosts = (@($panel.allowed_hosts) -join ','); port = $panel.port; key = $gateway.key_hash; base = $gateway.base_url; model = $config.backends.bonsai.active_model }
+    return @{ password = $panel.credential.hash; hosts = (@($panel.allowed_hosts | ForEach-Object { ([string]$_).ToLowerInvariant() } | Sort-Object -Unique) -join ','); port = $panel.port; key = $gateway.key_hash; base = $gateway.base_url; model = $config.backends.bonsai.active_model }
 }
 
 try {
