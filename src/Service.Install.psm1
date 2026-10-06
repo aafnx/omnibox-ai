@@ -38,7 +38,7 @@ function Install-AiNativeServices {
   foreach($change in $changes){try{if($null -ne $change.old){Set-Service -Name $change.service -BinaryPathName $change.old.PathName -ErrorAction Stop}else{Remove-Service $change.service -ErrorAction Stop}}catch{Write-Warning "Cannot restore service $($change.service): $_"}}
   throw
  }
- $legacyWrappers|ConvertTo-Json -AsArray|Set-Content -LiteralPath (Join-Path $backup 'legacy-wrappers.json')
+ ConvertTo-Json -InputObject @($legacyWrappers)|Set-Content -LiteralPath (Join-Path $backup 'legacy-wrappers.json')
  return $backup
 }
 Export-ModuleMember -Function New-AiNativeServiceCommand,Install-AiNativeServices

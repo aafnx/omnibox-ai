@@ -1,8 +1,9 @@
 Set-StrictMode -Version Latest
-Import-Module (Join-Path $PSScriptRoot 'Panel.Security.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'Setup.Helpers.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'Gateway.Helpers.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'Service.Install.psm1') -Force
+# Reuse shared dependencies: forcing a nested reload removes their caller-scope exports.
+Import-Module (Join-Path $PSScriptRoot 'Panel.Security.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Setup.Helpers.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Gateway.Helpers.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Service.Install.psm1')
 
 function Get-AiGatewayInstallOptions {
     param([string]$Directory, [string]$HostName, [string]$Backend = 'bonsai', [switch]$NonInteractive, [int]$Port = 18090, [string]$BaseUrl = '', [switch]$NoApi, [int]$PanelPort = 18090, [string]$PublicUrl = '')

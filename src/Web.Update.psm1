@@ -139,7 +139,7 @@ function Get-AiWebUpdateStatus {
         if($Manager.shared.phase -in @('checking','login')){$Manager.shared.phase='failed';$Manager.shared.message='Операция прервана. Повторите проверку.'}
         Remove-Job $Manager.job -Force;$Manager.job=$null
     }
-    $current='0.9.0';$marker=Join-Path $Manager.root '.omnibox-ai-install'
+    $current='0.9.1';$marker=Join-Path $Manager.root '.omnibox-ai-install'
     if(Test-Path -LiteralPath $marker){$match=[regex]::Match((Get-Content -LiteralPath $marker -Raw),'\d+\.\d+\.\d+');if($match.Success){$current=$match.Value}}
     $result=@{current=$current;latest=$Manager.shared.latest;phase=$Manager.shared.phase;message=$Manager.shared.message;code=$Manager.shared.code;gh_available=[bool](Get-AiUpdateGh);authenticated=(Test-Path -LiteralPath (Join-Path $Manager.root 'updates/auth/github.dpapi'))}
     $file=Join-Path $Manager.root 'updates/result.json'
