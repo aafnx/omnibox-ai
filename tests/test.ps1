@@ -99,7 +99,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.8.0'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.8.1'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -615,42 +615,29 @@ try {
         Assert-Throws { Get-AiSetupOptions -NonInteractive -DefaultBackend other -ConfigLoader { param($d) $c } } '*Неизвестный сервер*'
         Assert-Throws { Get-AiSetupOptions -NonInteractive -Context 999m -ConfigLoader { param($d) $c } -ContextReader { param($b) '196608' } } '*от 1024*'
     }
-    Test 'documented one-line bootstrap parses and removes its temporary installer' {
-        $doc = Get-Content (Join-Path $repo 'docs/install.md') -Raw
-        $line = [regex]::Match($doc, '(?m)^& \{ \$ErrorActionPreference[^\r\n]+').Value
+    Test 'documented gh bootstrap parses, uses gh API and removes its temporary installer' {
+        $doc=Get-Content (Join-Path $repo 'docs/install.md') -Raw
+        $line=[regex]::Match($doc,'(?m)^& \{ \$ErrorActionPreference[^\r\n]+').Value
         Assert-True ($line.Length -gt 0)
-        $bootstrap = [scriptblock]::Create($line)
+        $bootstrap=[scriptblock]::Create($line)
         & {
-            $script:seenHeaders = $null
-            function Read-Host { param($Prompt, [switch]$AsSecureString) ConvertTo-SecureString 'not-a-real-token' -AsPlainText -Force }
-            function Invoke-RestMethod {
-                param($Uri, $Headers, $MaximumRedirection, $TimeoutSec)
-                Assert-Equal $Uri 'https://api.github.com/repos/aafnx/omnibox-ai/contents/dist/install-omnibox-ai.ps1?ref=main'
-                Assert-Equal $MaximumRedirection 0
-                Assert-True ($Headers.Authorization.StartsWith('Bearer '))
-                $script:seenHeaders = $Headers
-                [pscustomobject]@{ type = 'file'; encoding = 'base64'; content = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('Write-Output "mock installer executed"')) }
+            function gh {
+                Assert-True (($args -join ' ').Contains('repos/aafnx/omnibox-ai/contents/dist/install-omnibox-ai.ps1?ref=main'))
+                $global:LASTEXITCODE=0
+                @{type='file';encoding='base64';content=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('Write-Output "mock installer executed"'))}|ConvertTo-Json
             }
-            $oldTemp = $env:TEMP; $env:TEMP = $testRoot
-            try {
-                Assert-Equal (& $bootstrap) 'mock installer executed'
-                Assert-Equal $script:seenHeaders.Count 0
-                Assert-Equal @(Get-ChildItem $testRoot -Filter 'omnibox-ai-install-*.ps1').Count 0
-            } finally { $env:TEMP = $oldTemp }
+            $oldTemp=$env:TEMP;$env:TEMP=$testRoot
+            try{Assert-Equal (& $bootstrap) 'mock installer executed';Assert-Equal @(Get-ChildItem $testRoot -Filter 'omnibox-ai-*.ps1').Count 0}finally{$env:TEMP=$oldTemp}
         }
     }
     Test 'bootstrap download failure leaves no token headers or temporary installer' {
-        & {
-            $global:omniboxTestHeaders = $null
-            function Read-Host { param($Prompt, [switch]$AsSecureString) ConvertTo-SecureString 'not-a-real-token' -AsPlainText -Force }
-            function Invoke-RestMethod { param($Uri, $Headers, $MaximumRedirection, $TimeoutSec) $global:omniboxTestHeaders = $Headers; throw 'mock GitHub access denied' }
-            $oldTemp = $env:TEMP; $env:TEMP = $testRoot
-            try {
-                Assert-Throws { & (Join-Path $repo 'scripts/get-install.ps1') } '*access denied*'
-                Assert-Equal $global:omniboxTestHeaders.Count 0
-                Assert-Equal @(Get-ChildItem $testRoot -Filter 'omnibox-ai-install-*.ps1').Count 0
-            } finally { $env:TEMP = $oldTemp; Remove-Variable omniboxTestHeaders -Scope Global }
+        $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
+        & $u {
+            function script:Read-Host {param($Prompt,[switch]$AsSecureString)ConvertTo-SecureString 'not-a-real-token' -AsPlainText -Force}
+            function script:Invoke-RestMethod {param($Uri,$Headers,$MaximumRedirection,$TimeoutSec)$script:failedHeaders=$Headers;throw 'mock GitHub access denied'}
         }
+        Assert-Throws {Get-AiInstallerBytes -UseToken} '*access denied*'
+        Assert-Equal (& $u {$script:failedHeaders.Count}) 0
     }
     Test 'previously saved pending context also rolls back on next start failure' {
         $m = New-TestModule; $f = New-ContextFixture
@@ -1056,6 +1043,63 @@ try {
             Assert-True ($x.OuterXml.Contains('#7C6CFF') -or $x.OuterXml.Contains('#7c6cff'))
         }
     }
+    Test 'updater uses gh credentials without asking for a token' {
+        $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
+        $expected=[Text.Encoding]::UTF8.GetBytes("#requires -Version 7.4`n"+('#'*200))
+        & $u {
+            param($Encoded)
+            $script:encoded=$Encoded
+            function script:Get-Command {param($Name,$CommandType,$ErrorAction)if($Name -eq 'gh'){[pscustomobject]@{Source='fake-gh'}}}
+            function script:Invoke-AiGhContents {param($Executable)$script:executable=$Executable;@{type='file';encoding='base64';content=$script:encoded}}
+            function script:Read-Host {throw 'Unexpected token prompt'}
+        } ([Convert]::ToBase64String($expected))
+        $actual=Get-AiInstallerBytes
+        Assert-Equal ([Convert]::ToBase64String($actual)) ([Convert]::ToBase64String($expected))
+        Assert-Equal (& $u {$script:executable}) 'fake-gh'
+    }
+    Test 'updater token alternative clears headers and disposes its secure input' {
+        $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
+        & $u {
+            $script:secret=ConvertTo-SecureString 'fixture-read-token' -AsPlainText -Force
+            function script:Read-Host {param($Prompt,[switch]$AsSecureString)$script:secret}
+            function script:Invoke-RestMethod {param($Uri,$Headers,$MaximumRedirection,$TimeoutSec)$script:headers=$Headers;$script:hadAuth=$Headers.Authorization -eq 'Bearer fixture-read-token';@{type='file';encoding='base64';content=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("#requires -Version 7.4`n"+('#'*200)))}}
+        }
+        $null=Get-AiInstallerBytes -UseToken
+        Assert-True (& $u {$script:hadAuth})
+        Assert-Equal (& $u {$script:headers.Count}) 0
+        Assert-Throws {& $u {$script:secret.AppendChar([char]'x')}} '*disposed*'
+    }
+    Test 'updater refuses failed or malformed gh downloads before executing installer' {
+        $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
+        & $u {
+            function script:Get-Command {param($Name,$CommandType,$ErrorAction)[pscustomobject]@{Source='fake-gh'}}
+            function script:Invoke-AiGhContents {param($Executable)throw 'download denied'}
+            function script:Invoke-AiDownloadedInstaller {throw 'Should not execute installer'}
+        }
+        Assert-Throws {Invoke-AiUpdate '/installed/ai'} '*download denied*'
+        & $u {function script:Invoke-AiGhContents {param($Executable)@{type='file';encoding='base64';content=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('not an installer'))}}}
+        Assert-Throws {Get-AiInstallerBytes} '*Некорректный установочный файл*'
+    }
+    Test 'updater executes exact installer check payload and deletes the temporary script' {
+        $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
+        $before=@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count
+        $output=Invoke-AiDownloadedInstaller -Bytes ([IO.File]::ReadAllBytes((Join-Path $repo 'dist/install-omnibox-ai.ps1'))) -CheckOnly
+        Assert-True ($output -like '*0.8.1 payload OK*')
+        Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before
+        Assert-Throws {Invoke-AiDownloadedInstaller -Bytes ([Text.Encoding]::UTF8.GetBytes("throw 'fixture installer error'"))} '*fixture installer error*'
+        Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before
+    }
+    Test 'ai update dispatch uses its installed directory and validates arguments' {
+        $m=New-TestModule
+        & $m {
+            function script:Import-Module {param($Name,[switch]$Force)}
+            function script:Invoke-AiUpdate {param($InstallDirectory,[switch]$UseToken)$script:updateRoot=$InstallDirectory;$script:updateToken=[bool]$UseToken}
+        }
+        Invoke-Ai -Arguments @('update','--token') -ConfigPath 'missing'
+        Assert-Equal (& $m {$script:updateRoot}) $repo
+        Assert-True (& $m {$script:updateToken})
+        Assert-Throws {Invoke-Ai -Arguments @('update','--wrong') -ConfigPath 'missing'} '*ai update*'
+    }
     Test 'self-contained package matches every current source file' {
         $setup = Join-Path $repo 'dist/install-omnibox-ai.ps1'
         $text = Get-Content $setup -Raw
@@ -1064,7 +1108,7 @@ try {
         $memory = [IO.MemoryStream]::new([Convert]::FromBase64String($encoded))
         $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Read)
         try {
-            Assert-Equal $archive.Entries.Count 40
+            Assert-Equal $archive.Entries.Count 42
             foreach ($entry in $archive.Entries) {
                 Assert-True ($entry.FullName -notmatch '(^/|\.\.)')
                 $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)

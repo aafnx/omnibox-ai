@@ -1,6 +1,6 @@
 # OmniBox AI
 
-Универсальная панель со светлой, тёмной и системной темами управления локальными ИИ-серверами на Windows. Версия **0.8.0**. Открывай её с ноутбука или смартфона, запускай движки, меняй настройки и управляй загрузкой моделей. Для работы с нейросетью используется отдельный клиент через API.
+Универсальная панель со светлой, тёмной и системной темами управления локальными ИИ-серверами на Windows. Версия **0.8.1**. Открывай её с ноутбука или смартфона, запускай движки, меняй настройки и управляй загрузкой моделей. Для работы с нейросетью используется отдельный клиент через API.
 
 ## Возможности
 
@@ -29,11 +29,39 @@
 
 ## Установка одним скриптом на ПК
 
-Запусти строку в повышенной SSH-сессии **на серверном ПК**, в PowerShell 7. Репозиторий приватный: создай [GitHub token](https://github.com/settings/personal-access-tokens/new?name=omnibox-ai-install&target_name=aafnx&expires_in=1&contents=read) только для `omnibox-ai`, с **Contents: Read-only**. Токен вводится скрыто и не сохраняется.
+Рекомендуемый способ — GitHub CLI на серверном ПК. Git не требуется. Выполни команды в повышенной SSH-сессии PowerShell 7 под тем Windows-пользователем, который будет обновлять программу.
+
+Один раз установи `gh`:
 
 ```powershell
-& { $ErrorActionPreference = 'Stop'; $token = Read-Host 'GitHub token (omnibox-ai: Contents Read)' -AsSecureString; $headers = @{}; $file = Join-Path $env:TEMP ('omnibox-ai-install-' + [Guid]::NewGuid().ToString('N') + '.ps1'); try {     $headers.Authorization = 'Bearer ' + ([pscredential]::new('github', $token)).GetNetworkCredential().Password; $headers.Accept = 'application/vnd.github+json'; $package = Invoke-RestMethod -Uri 'https://api.github.com/repos/aafnx/omnibox-ai/contents/dist/install-omnibox-ai.ps1?ref=main' -Headers $headers -MaximumRedirection 0 -TimeoutSec 60; if ($package.type -ne 'file' -or $package.encoding -ne 'base64') { throw 'GitHub не вернул установочный файл.' }; [IO.File]::WriteAllBytes($file, [Convert]::FromBase64String($package.content)); $headers.Clear(); & $file } finally {     $headers.Clear(); $token.Dispose(); if ([IO.File]::Exists($file)) { [IO.File]::Delete($file) } } }
+winget install --id GitHub.cli --exact --source winget
 ```
+
+Если после установки команда `gh` не найдена, переподключись по SSH. Затем войди:
+
+```powershell
+gh auth login --hostname github.com --git-protocol https --web
+```
+
+Войди в аккаунт с доступом к `aafnx/omnibox-ai`. URL и код подтверждения из SSH можно использовать в браузере ноутбука или телефона. Авторизацией и её хранением управляет `gh`, приложение не копирует его токен. Службы SYSTEM этим входом не пользуются: обновление выполняется пользователем через CLI. [Установка gh](https://github.com/cli/cli/blob/trunk/docs/install_windows.md), [авторизация](https://cli.github.com/manual/gh_auth_login).
+
+Установка или первое обновление старой версии — одна строка:
+
+```powershell
+& { $ErrorActionPreference='Stop'; $p=gh api --hostname github.com 'repos/aafnx/omnibox-ai/contents/dist/install-omnibox-ai.ps1?ref=main' | ConvertFrom-Json; if($LASTEXITCODE -ne 0 -or $p.encoding -ne 'base64'){throw 'Не удалось скачать установщик'}; $f=Join-Path $env:TEMP ('omnibox-ai-'+[guid]::NewGuid().ToString('N')+'.ps1'); try{[IO.File]::WriteAllBytes($f,[Convert]::FromBase64String($p.content)); & $f}finally{if(Test-Path -LiteralPath $f){Remove-Item -LiteralPath $f -Force}} }
+```
+
+После перехода на 0.8.1 дальнейшие обновления:
+
+```powershell
+ai update
+```
+
+Команда использует текущую авторизацию `gh`, скачивает `main` и запускает мастер для папки установленного приложения. Учётная запись должна по-прежнему иметь доступ к репозиторию. Настройки NAS, панели, моделей и ключей сохраняются. На время обновления службы останавливаются, панель запускается снова; ИИ-движок запускается только по выбору в мастере. Фоновых проверок обновлений нет.
+
+Если нужен ручной ввод токена: `ai update --token`. Без установленного `gh` загрузчик также использует ввод токена. Если `gh` найден, но доступ не работает, программа завершает скачивание с ошибкой до запуска установщика: проверь `gh auth status --hostname github.com`, при необходимости `gh auth switch --hostname github.com --user aafnx`.
+
+Ручной способ через токен описан в [инструкции установки](docs/install.md).
 
 Мастер спросит папку (`C:\tools\ai`), сервер по умолчанию, контекст, запуск сейчас, адрес/порт панели, разрешённые сети и пароль, а также порт/Base URL сетевого API и использование ключа. Подтверждения: `yes/no` или `y/n`; Enter сохраняет предложенное значение. Proxy можно оставить выключенным до настройки NAS. По умолчанию ИИ-сервер не запускается. Панель устанавливается отдельной службой `omnibox-ai` с автоматическим запуском.
 

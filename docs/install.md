@@ -6,6 +6,40 @@
 
 Требования: Windows, PowerShell 7.4+, уже установленные службы Bonsai/PrismML и Ollama. Установщик устанавливает веб-панель и CLI `ai` поверх текущей рабочей конфигурации: движки, модели и драйверы уже находятся на ПК.
 
+Рекомендуемый способ — GitHub CLI на серверном ПК. Git не требуется. Выполни команды в повышенной SSH-сессии PowerShell 7 под тем Windows-пользователем, который будет обновлять программу.
+
+Один раз установи `gh`:
+
+```powershell
+winget install --id GitHub.cli --exact --source winget
+```
+
+Если после установки команда `gh` не найдена, переподключись по SSH. Затем войди:
+
+```powershell
+gh auth login --hostname github.com --git-protocol https --web
+```
+
+Войди в аккаунт с доступом к `aafnx/omnibox-ai`. URL и код подтверждения из SSH можно использовать в браузере ноутбука или телефона. Авторизацией и её хранением управляет `gh`, приложение не копирует его токен. Службы SYSTEM этим входом не пользуются: обновление выполняется пользователем через CLI. [Установка gh](https://github.com/cli/cli/blob/trunk/docs/install_windows.md), [авторизация](https://cli.github.com/manual/gh_auth_login).
+
+Установка или первое обновление старой версии — одна строка:
+
+```powershell
+& { $ErrorActionPreference='Stop'; $p=gh api --hostname github.com 'repos/aafnx/omnibox-ai/contents/dist/install-omnibox-ai.ps1?ref=main' | ConvertFrom-Json; if($LASTEXITCODE -ne 0 -or $p.encoding -ne 'base64'){throw 'Не удалось скачать установщик'}; $f=Join-Path $env:TEMP ('omnibox-ai-'+[guid]::NewGuid().ToString('N')+'.ps1'); try{[IO.File]::WriteAllBytes($f,[Convert]::FromBase64String($p.content)); & $f}finally{if(Test-Path -LiteralPath $f){Remove-Item -LiteralPath $f -Force}} }
+```
+
+После перехода на 0.8.1 дальнейшие обновления:
+
+```powershell
+ai update
+```
+
+Команда использует текущую авторизацию `gh`, скачивает `main` и запускает мастер для папки установленного приложения. Учётная запись должна по-прежнему иметь доступ к репозиторию. Настройки NAS, панели, моделей и ключей сохраняются. На время обновления службы останавливаются, панель запускается снова; ИИ-движок запускается только по выбору в мастере. Фоновых проверок обновлений нет.
+
+Если нужен ручной ввод токена: `ai update --token`. Без установленного `gh` загрузчик также использует ввод токена. Если `gh` найден, но доступ не работает, программа завершает скачивание с ошибкой до запуска установщика: проверь `gh auth status --hostname github.com`, при необходимости `gh auth switch --hostname github.com --user aafnx`.
+
+## Вариант без GitHub CLI
+
 Репозиторий приватный. Один раз создай [fine-grained GitHub token](https://github.com/settings/personal-access-tokens/new?name=omnibox-ai-install&target_name=aafnx&expires_in=1&contents=read): Resource owner `aafnx`, **Only select repositories → omnibox-ai**, **Contents: Read-only**, срок один день. Другие разрешения не нужны. Не вводи токен в команду; скрипт попросит его скрытым вводом. [GitHub: токены](https://docs.github.com/en/authentication/keeping-your-account-and-data-secure/managing-your-personal-access-tokens), [Contents API](https://docs.github.com/en/rest/repos/contents).
 
 Скопируй одну строку в SSH-сессию на ПК:
@@ -14,7 +48,7 @@
 & { $ErrorActionPreference = 'Stop'; $token = Read-Host 'GitHub token (omnibox-ai: Contents Read)' -AsSecureString; $headers = @{}; $file = Join-Path $env:TEMP ('omnibox-ai-install-' + [Guid]::NewGuid().ToString('N') + '.ps1'); try {     $headers.Authorization = 'Bearer ' + ([pscredential]::new('github', $token)).GetNetworkCredential().Password; $headers.Accept = 'application/vnd.github+json'; $package = Invoke-RestMethod -Uri 'https://api.github.com/repos/aafnx/omnibox-ai/contents/dist/install-omnibox-ai.ps1?ref=main' -Headers $headers -MaximumRedirection 0 -TimeoutSec 60; if ($package.type -ne 'file' -or $package.encoding -ne 'base64') { throw 'GitHub не вернул установочный файл.' }; [IO.File]::WriteAllBytes($file, [Convert]::FromBase64String($package.content)); $headers.Clear(); & $file } finally {     $headers.Clear(); $token.Dispose(); if ([IO.File]::Exists($file)) { [IO.File]::Delete($file) } } }
 ```
 
-Исходник загрузчика: [scripts/get-install.ps1](../scripts/get-install.ps1). Он скачивает установочный файл через HTTPS GitHub Contents API с токеном только в памяти. Токен не сохраняется в файлы, настройки, переменные окружения или историю команды. Заголовок авторизации очищается перед запуском установщика; временный установочный файл удаляется после завершения или ошибки. Установщик содержит всю программу и проверяет SHA256 встроенного пакета; hash обнаруживает повреждение, а доверенный источник самого скрипта — твой репозиторий.
+Исходники загрузчика: [scripts/get-install.ps1](../scripts/get-install.ps1), [Update.Helpers.psm1](../src/Update.Helpers.psm1). При наличии `gh` используется его API-клиент без извлечения токена; `-UseToken` включает ручной способ. В показанной выше строке ручного способа токен существует только в памяти. Токен не сохраняется в файлы, настройки, переменные окружения или историю команды. Заголовок авторизации очищается перед запуском установщика; временный установочный файл удаляется после завершения или ошибки. Установщик содержит всю программу и проверяет SHA256 встроенного пакета; hash обнаруживает повреждение, а доверенный источник самого скрипта — твой репозиторий.
 
 Если установочный файл уже есть на ПК, интернет и токен не нужны:
 
@@ -111,7 +145,7 @@ if (@($env:Path -split ';' | Where-Object { $_.TrimEnd('\') -ieq 'C:\tools\ai' }
 
 ## Обновление и восстановление
 
-Повтори ту же команду загрузки на ПК и ответь на вопросы. Службы панели и движков останавливаются на время обновления runtime. Панель запускается снова; движок запускается только при выборе запуска в мастере. Контекст, NAS, пароль, ключ API и журнал сохраняются. Для исходников с Git: `git pull --ff-only`, затем `install.ps1`.
+Используй `ai update` в повышенной SSH-сессии под пользователем с авторизованным `gh` и ответь на вопросы мастера. Для версии до 0.8.1 один раз повтори строку установки через gh выше. Службы панели и движков останавливаются на время обновления runtime. Панель запускается снова; движок запускается только при выборе запуска в мастере. Контекст, NAS, пароль, ключ API и журнал сохраняются. Для исходников с Git: `git pull --ff-only`, затем `install.ps1`.
 
 Предыдущие настройки модели восстанавливаются без поиска файлов:
 

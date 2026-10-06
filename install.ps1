@@ -26,7 +26,7 @@ $configLoader = {
     & $aiModule { param($Path) Read-AiConfig $Path } $path
 }.GetNewClosure()
 $contextReader = { param($Backend) & $aiModule { param($Backend) Get-AiConfiguredContext $Backend } $Backend }.GetNewClosure()
-Write-Host 'OmniBox AI 0.8.0 — установка на этом ПК'
+Write-Host 'OmniBox AI 0.8.1 — установка на этом ПК'
 Write-Host 'Используются уже установленные службы Bonsai и Ollama. Enter сохраняет предложенное значение.'
 $setup = Get-AiSetupOptions -InstallDirectory $InstallDirectory -ConfigLoader $configLoader -ContextReader $contextReader -NonInteractive:$NonInteractive -DefaultBackend $DefaultBackend -Context $Context -StartServer:$StartServer
 $InstallDirectory = $setup.directory
@@ -57,7 +57,7 @@ if ($null -ne $existing) {
         throw "Команда ai уже существует: $($existing.Source). Устрани конфликт имени перед установкой."
     }
 }
-$files = @('ai.ps1', 'ai.cmd', 'panel.ps1', 'service.ps1', 'src/Service.Host.cs', 'src/Service.Install.psm1', 'scripts/build-service.ps1', 'src/OmniBox.Ai.psm1', 'src/Panel.Engine.ps1', 'src/Panel.Cli.ps1', 'src/Telemetry.ps1', 'src/Inference.Stats.cs', 'src/Gateway.Helpers.psm1', 'src/OpenAi.Proxy.cs', 'src/Model.Catalog.psm1', 'src/Panel.Server.psm1', 'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Setup.Helpers.psm1', 'web/index.html', 'web/style.css', 'web/app.js', 'web/favicon.svg', 'web/brand-light.svg', 'web/brand-dark.svg', 'web/inter-400.woff.base64', 'web/inter-600.woff.base64', 'web/inter-license.txt', 'config.example.json', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md', 'docs/web-panel.md', 'docs/reverse-proxy.md', 'docs/model-api.md', 'docs/models.md', 'docs/monitoring.md')
+$files = @('ai.ps1', 'ai.cmd', 'panel.ps1', 'service.ps1', 'src/Service.Host.cs', 'src/Service.Install.psm1', 'scripts/build-service.ps1', 'src/OmniBox.Ai.psm1', 'src/Panel.Engine.ps1', 'src/Panel.Cli.ps1', 'src/Telemetry.ps1', 'src/Inference.Stats.cs', 'src/Gateway.Helpers.psm1', 'src/OpenAi.Proxy.cs', 'src/Model.Catalog.psm1', 'src/Panel.Server.psm1', 'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Update.Helpers.psm1', 'scripts/get-install.ps1', 'src/Setup.Helpers.psm1', 'web/index.html', 'web/style.css', 'web/app.js', 'web/favicon.svg', 'web/brand-light.svg', 'web/brand-dark.svg', 'web/inter-400.woff.base64', 'web/inter-600.woff.base64', 'web/inter-license.txt', 'config.example.json', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md', 'docs/web-panel.md', 'docs/reverse-proxy.md', 'docs/model-api.md', 'docs/models.md', 'docs/monitoring.md')
 foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $file) -PathType Leaf)) { throw "Нет файла исходников: $file" }
 }
@@ -114,7 +114,7 @@ Set-Content -LiteralPath $configPath -Value ($setup.config | ConvertTo-Json -Dep
 # Exact PowerShell location; %* preserves the user's command-line quoting in cmd.
 $launcher = "@echo off`r`n`"$pwsh`" -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"%~dp0ai.ps1`" %*`r`nexit /b %errorlevel%`r`n"
 Set-Content -LiteralPath (Join-Path $destination 'ai.cmd') -Value $launcher -Encoding ascii -NoNewline
-Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.8.0' -Encoding utf8
+Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.8.1' -Encoding utf8
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $entries = @($userPath -split ';' | Where-Object { $_ })
@@ -128,7 +128,7 @@ if (@($env:Path -split ';' | Where-Object { $_.TrimEnd('\') -ieq $destination })
 if (-not $NoProfileUpdate) {
     # New SSH shells read this PATH-only snippet even when sshd inherits an old environment.
     # Preserve the existing prompt and every other profile statement; backup before editing.
-    Import-Module (Join-Path $destination 'src/Install.Helpers.psm1') -Force
+    Import-Module (Join-Path $destination 'src/Install.Helpers.psm1', 'src/Update.Helpers.psm1', 'scripts/get-install.ps1') -Force
     Update-AiPowerShellProfile -ProfilePath $PROFILE.CurrentUserAllHosts -InstallDirectory $destination -BackupDirectory (Join-Path $destination 'backups/profiles')
 }
 Write-Host "Установлено: $destination"

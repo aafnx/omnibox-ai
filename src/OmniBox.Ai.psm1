@@ -511,7 +511,7 @@ function Show-AiPower {
 
 function Show-AiHelp {
     @'
-OmniBox AI 0.8.0 — управление локальными серверами
+OmniBox AI 0.8.1 — управление локальными серверами
 
 ai start [backend] [--context 128k]  Запуск; по умолчанию bonsai. Другой остановится.
 ai stop [bonsai|ollama]        Остановка; без имени — все настроенные серверы.
@@ -523,6 +523,7 @@ ai power                     Причины пробуждения, таймер
 ai logs [backend] [N] [stream] Последние N строк; stream: all, err, out, host.
 ai endpoint [backend]         OpenAI-совместимый адрес (с localhost самого ПК).
 ai config                    Путь и содержимое конфигурации.
+ai update [--token]           Обновление через gh; --token — ввод токена вручную.
 ai access                    Адреса панели/API, режим ключа, доверенный NAS.
 ai password reset [--generate] Сброс пароля панели; Enter — генерация.
 ai panel info/reset-password  Те же команды восстановления панели.
@@ -548,12 +549,20 @@ function Invoke-Ai {
     $command = if ($Arguments.Count) { $Arguments[0].ToLowerInvariant() } else { 'help' }
     [string[]]$rest = @(if ($Arguments.Count -gt 1) { $Arguments[1..($Arguments.Count - 1)] })
     if ($command -in @('help', '--help', '-h')) { Show-AiHelp; return }
-    if ($command -in @('version', '--version')) { '0.8.0'; return }
+    if ($command -in @('version', '--version')) { '0.8.1'; return }
     if ($command -in @('access','panel','password')) {
         $root=Split-Path ([IO.Path]::GetFullPath($ConfigPath)) -Parent
         if($command -eq 'access'){if($rest.Count){throw 'Использование: ai access'};$rest=@('info')}
         if($command -eq 'password'){if(-not $rest.Count -or $rest[0] -ne 'reset'){throw 'ai password reset [--generate]'};$rest=@('reset-password')+@($rest|Select-Object -Skip 1)}
         Invoke-AiPanelCli -Arguments $rest -Root $root
+        return
+    }
+    if($command -eq 'update'){
+        if($rest.Count -gt 1 -or ($rest.Count -eq 1 -and $rest[0] -ne '--token')){throw 'Использование: ai update [--token]'}
+        Assert-AiAdministrator
+        $root=Split-Path $PSScriptRoot -Parent
+        Import-Module (Join-Path $PSScriptRoot 'Update.Helpers.psm1') -Force
+        Invoke-AiUpdate -InstallDirectory $root -UseToken:($rest.Count -eq 1)
         return
     }
     $config = Read-AiConfig $ConfigPath

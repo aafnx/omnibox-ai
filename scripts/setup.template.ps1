@@ -21,7 +21,7 @@ $payload = '__PAYLOAD_BASE64__'
 $payloadBytes = [Convert]::FromBase64String($payload)
 $actualSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($payloadBytes)).ToLowerInvariant()
 if ($actualSha -cne $expectedSha) { throw 'Встроенный пакет повреждён: SHA256 не совпадает.' }
-if ($CheckOnly) { Write-Output "OmniBox AI 0.8.0 payload OK ($($payloadBytes.Length) bytes)"; return }
+if ($CheckOnly) { Write-Output "OmniBox AI 0.8.1 payload OK ($($payloadBytes.Length) bytes)"; return }
 if (-not $IsWindows) { throw 'Установщик предназначен для Windows.' }
 
 $temporaryDirectory = Join-Path $env:TEMP ('omnibox-ai-package-' + [Guid]::NewGuid().ToString('N'))
