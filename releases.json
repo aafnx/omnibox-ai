@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "releases": [
+    {
+      "version": "0.9.6",
+      "commit": null,
+      "date": "2026-10-06",
+      "note": "выбор версии: ai update --list и ai update <версия>"
+    },
+    {
+      "version": "0.9.5",
+      "commit": "bb763637e095b280069d49ff37cd71d86b9df504",
+      "date": "2026-10-06",
+      "note": "CI, транзакционная установка с автооткатом"
+    },
+    {
+      "version": "0.9.4",
+      "commit": "01727ebeb86c0e1088f1d9ec397f77f4df5ddb6c",
+      "date": "2026-10-06",
+      "note": "миграция служб через Win32_Service.Change; без автоотката установки"
+    }
+  ]
+}

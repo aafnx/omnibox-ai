@@ -103,6 +103,41 @@ try {
         foreach ($path in @(($bonsaiXml + '.ai-previous'), ($bonsaiXml + '.ai-state.json'))) { Assert ((Get-FileHash $path).Hash -eq $hashes[$path]) "Update changed $path" }
         Assert ((Get-Panel) -eq 200) 'Updated panel does not answer'
     }
+
+    # ai update <version>: downgrade to the oldest installable release and back, through the real
+    # Invoke-AiUpdate. Only GitHub is replaced: releases.json and installers come from git history.
+    $releases = Get-Content (Join-Path $repo 'releases.json') -Raw | ConvertFrom-Json
+    $oldest = @($releases.releases)[-1]
+    $updater = Import-Module (Join-Path $destination 'src/Update.Helpers.psm1') -Force -PassThru
+    & $updater {
+        param($Repo)
+        $script:repo = $Repo
+        function script:New-AiGitHubSource { @{ gh = 'git-history'; secret = $null } }
+        function script:Get-AiGitHubFile {
+            param($Source, [string]$Path, [string]$Ref)
+            if ($Path -eq 'releases.json' -or $Ref -eq 'main') { return ,[IO.File]::ReadAllBytes((Join-Path $script:repo $Path)) }
+            $info = [Diagnostics.ProcessStartInfo]::new('git'); $info.UseShellExecute = $false; $info.RedirectStandardOutput = $true
+            foreach ($a in @('-C', $script:repo, 'show', "$($Ref):$Path")) { $info.ArgumentList.Add($a) }
+            $p = [Diagnostics.Process]::Start($info); $memory = [IO.MemoryStream]::new()
+            try { $p.StandardOutput.BaseStream.CopyTo($memory); $p.WaitForExit(); if ($p.ExitCode -ne 0) { throw "git show $Ref failed" }; return ,$memory.ToArray() } finally { $p.Dispose(); $memory.Dispose() }
+        }
+    } $repo
+    Test "ai update $($oldest.version) downgrades and keeps settings; panel works on the old version" {
+        Invoke-AiUpdate -InstallDirectory $destination -Version $oldest.version
+        Assert ((Get-Content (Join-Path $destination '.omnibox-ai-install') -Raw) -match [regex]::Escape($oldest.version)) 'Old version marker missing'
+        Assert ((Get-Panel) -eq 200) 'Downgraded panel does not answer'
+        $after = Get-Settings
+        foreach ($key in $settings.Keys) { Assert ($after[$key] -ceq $settings[$key]) "Downgrade changed $key" }
+        foreach ($service in $backends.Values) { Assert ((Get-Service $service).Status -eq 'Stopped') "$service started by the downgrade" }
+    }
+    Test 'ai update <current> returns from the old version to the newest one' {
+        Invoke-AiUpdate -InstallDirectory $destination -Version (Get-Content (Join-Path $repo 'VERSION') -Raw).Trim()
+        Assert ($global:OmniBoxInstallResult.status -eq 'installed') 'Upgrade from the old version not committed'
+        Assert ((Get-Content (Join-Path $destination 'VERSION') -Raw).Trim() -eq (Get-Content (Join-Path $repo 'VERSION') -Raw).Trim()) 'Newest version not installed'
+        $after = Get-Settings
+        foreach ($key in $settings.Keys) { Assert ($after[$key] -ceq $settings[$key]) "Upgrade changed $key" }
+        Assert ((Get-Panel) -eq 200) 'Panel does not answer after returning to the newest version'
+    }
     Write-Host "Real installation tests: $script:passed passed"
 } finally {
     foreach ($service in @('omnibox-ai') + @($backends.Values)) {

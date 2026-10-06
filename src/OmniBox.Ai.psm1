@@ -525,7 +525,9 @@ ai power                     Причины пробуждения, таймер
 ai logs [backend] [N] [stream] Последние N строк; stream: all, err, out, host.
 ai endpoint [backend]         OpenAI-совместимый адрес (с localhost самого ПК).
 ai config                    Путь и содержимое конфигурации.
-ai update [--token]           Обновление через gh; --token — ввод токена вручную.
+ai update [--token]           Установка последней версии через gh; --token — ввод токена вручную.
+ai update --list              Доступные версии с примечаниями; отмечены последняя и установленная.
+ai update 0.9.5               Установка указанной версии: обновление, переустановка или откат.
 ai access                    Адреса панели/API, режим ключа, доверенный NAS.
 ai password reset [--generate] Сброс пароля панели; Enter — генерация.
 ai panel info/reset-password  Те же команды восстановления панели.
@@ -560,11 +562,21 @@ function Invoke-Ai {
         return
     }
     if($command -eq 'update'){
-        if($rest.Count -gt 1 -or ($rest.Count -eq 1 -and $rest[0] -ne '--token')){throw 'Использование: ai update [--token]'}
-        Assert-AiAdministrator
+        $usage='Использование: ai update [версия | --list] [--token]'
+        $useToken=@($rest|Where-Object{$_ -eq '--token'}).Count
+        $other=@($rest|Where-Object{$_ -ne '--token'})
+        if($useToken -gt 1 -or $other.Count -gt 1){throw $usage}
+        $list=$false;$version=''
+        if($other.Count){
+            if($other[0] -in @('--list','list')){$list=$true}
+            elseif($other[0] -match '^v?\d+\.\d+\.\d+$'){$version=$other[0].TrimStart('v')}
+            else{throw $usage}
+        }
+        # Listing only reads GitHub; installing changes services and needs elevation.
+        if(-not $list){Assert-AiAdministrator}
         $root=Split-Path $PSScriptRoot -Parent
         Import-Module (Join-Path $PSScriptRoot 'Update.Helpers.psm1') -Force
-        Invoke-AiUpdate -InstallDirectory $root -UseToken:($rest.Count -eq 1)
+        Invoke-AiUpdate -InstallDirectory $root -UseToken:([bool]$useToken) -Version $version -List:$list
         return
     }
     $config = Read-AiConfig $ConfigPath

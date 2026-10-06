@@ -23,6 +23,9 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Release commits from releases.json are checked and installed in tests.
+          fetch-depth: 0
       - name: PowerShell version
         run: $PSVersionTable.PSVersion.ToString(); if ($PSVersionTable.PSVersion -lt [version]'7.4') { throw 'PowerShell 7.4+ required' }
       - name: Core tests
@@ -66,6 +69,9 @@ jobs:
         shell: pwsh
     steps:
       - uses: actions/checkout@v5
+        with:
+          # Release commits from releases.json are checked and installed in tests.
+          fetch-depth: 0
       - name: Core tests
         if: ${{ !cancelled() }}
         run: ./tests/test.ps1
