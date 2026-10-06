@@ -246,7 +246,9 @@ function Write-AiInstallJournal {
     $value = [ordered]@{ schema_version = 1; state = $Transaction.state; snapshot = $Transaction.snapshot; started = $Transaction.started; steps = @($Transaction.steps); error = $Transaction.error; recovery = $Transaction.recovery }
     $json = ConvertTo-Json -InputObject $value -Depth 6
     foreach ($path in @((Join-Path $Transaction.snapshot 'journal.json'), $Transaction.journal)) {
-        if ($path -eq $Transaction.journal -and $Transaction.state -ne 'running') {
+        # The journal in the installation stays until the installation or its rollback is complete,
+        # so an interrupted or incomplete rollback is retried by the next installer run.
+        if ($path -eq $Transaction.journal -and $Transaction.state -in @('committed', 'rolled-back')) {
             if ([IO.File]::Exists($path)) { [IO.File]::Delete($path) }
             continue
         }
@@ -319,12 +321,12 @@ function Complete-AiInstallTransaction {
 }
 
 function Get-AiInterruptedInstallTransaction {
-    # A journal left in the running state means the previous installer process died midway.
+    # A journal left behind means the previous installer died midway or could not finish its rollback.
     param([string]$Directory)
     $path = Join-Path $Directory $script:JournalName
     if (-not [IO.File]::Exists($path)) { return $null }
     $journal = Read-AiJsonFile $path
-    if ($journal.state -ne 'running') { [IO.File]::Delete($path); return $null }
+    if ($journal.state -notin @('running', 'rolling-back', 'rollback-failed')) { [IO.File]::Delete($path); return $null }
     $snapshot = [IO.Path]::GetFullPath([string]$journal.snapshot)
     $backups = [IO.Path]::GetFullPath((Join-Path $Directory 'backups')) + [IO.Path]::DirectorySeparatorChar
     if (-not $snapshot.StartsWith($backups, [StringComparison]::OrdinalIgnoreCase)) { throw 'Журнал прерванной установки указывает за пределы backups; восстановление отменено.' }

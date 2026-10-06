@@ -48,7 +48,7 @@ function global:Start-Service {param($Name,$ErrorAction)
  $s=$global:FlowServices[$Name];$s.Status='Running';$s.State='Running';$global:FlowCalls.Add('start:'+ $Name)
  if($s.PathName -match '-Profile "([^"]+)"$'){Set-Content -LiteralPath ($Matches[1]+'.runtime.json') -Value '{"pid":null}';Set-Content -LiteralPath ($Matches[1]+'.ready') -Value 'ready'}
 }
-function global:Stop-Service {param($Name,$ErrorAction,[switch]$NoWait)$s=$global:FlowServices[$Name];$s.Status='Stopped';$s.State='Stopped';$global:FlowCalls.Add('stop:'+ $Name)}
+function global:Stop-Service {param($Name,$ErrorAction,[switch]$NoWait)if($global:FlowFailStop -eq $Name){if($global:FlowFailStopSkip -gt 0){$global:FlowFailStopSkip--}else{throw 'Fixture service stop failure'}};$s=$global:FlowServices[$Name];$s.Status='Stopped';$s.State='Stopped';$global:FlowCalls.Add('stop:'+ $Name)}
 function global:Remove-Service {param($Name,$ErrorAction)$global:FlowServices.Remove($Name);$global:FlowCalls.Add('remove:'+ $Name)}
 function global:Unblock-File {param($LiteralPath)}
 function global:Get-NetTCPConnection {param($LocalPort,$State,$ErrorAction)return $null}
@@ -198,6 +198,20 @@ try{
  Assert ((Get-Service 'bonsai').PathName -match 'src[\\/]Service\.Host\.exe') 'Backend command not migrated after recovery'
  Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Panel not running after recovery and installation'
  Write-Host 'PASS interrupted installation is rolled back before the next installation completes'
+ # An incomplete rollback keeps the journal; the next installer run retries the rollback first.
+ # The installer stops the running panel once before the snapshot; the rollback stop then fails.
+ $env:OMNIBOX_AI_INSTALL_FAIL_STEP='panel-started';$global:FlowFailStop='omnibox-ai';$global:FlowFailStopSkip=1
+ $failed=$null
+ try{& (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate}catch{$failed=$_.Exception.Message}
+ finally{$env:OMNIBOX_AI_INSTALL_FAIL_STEP=$null;$global:FlowFailStop=$null}
+ Assert ($global:OmniBoxInstallResult.status -eq 'rollback-failed') "Expected incomplete rollback, got $($global:OmniBoxInstallResult.status): $failed"
+ Assert ($failed -like '*неполное*') 'Incomplete rollback not reported'
+ Assert (Test-Path -LiteralPath $marker) 'Journal removed after an incomplete rollback'
+ & (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate
+ Assert ($global:OmniBoxInstallResult.status -eq 'installed') 'Retry after incomplete rollback did not install'
+ Assert (-not (Test-Path -LiteralPath $marker)) 'Journal remained after retry'
+ Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Panel not running after retry'
+ Write-Host 'PASS incomplete rollback keeps the journal and is retried before the next installation'
 
  # The web worker owns both locks and runs the installer in its own thread.
  $workerLock=Enter-AiInstallLock;Enter-AiControlLock $workerLock
@@ -248,6 +262,6 @@ try{
  $env:USERPROFILE=$oldUserProfile;$env:Path=$oldPath;$env:USERNAME=$oldUsername
  if($IsWindows){[Environment]::SetEnvironmentVariable("Path",$oldUserPath,"User")}
  $env:OMNIBOX_AI_INSTALL_FAIL_STEP=$null
- Remove-Variable FlowServices,FlowCalls,FlowFailProbe,FlowFailChange,FlowFailFirewall,OmniBoxInstallResult -Scope Global -ErrorAction SilentlyContinue
+ Remove-Variable FlowServices,FlowCalls,FlowFailProbe,FlowFailChange,FlowFailFirewall,FlowFailStop,FlowFailStopSkip,OmniBoxInstallResult -Scope Global -ErrorAction SilentlyContinue
  if(Test-Path $fixture){Remove-Item -LiteralPath $fixture -Recurse -Force}
 }
