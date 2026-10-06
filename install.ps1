@@ -16,7 +16,7 @@ try {
 } finally { $identity.Dispose() }
 
 Import-Module (Join-Path $PSScriptRoot 'src/Setup.Helpers.psm1') -Force
-Import-Module (Join-Path $PSScriptRoot 'src/Service.Install.psm1', 'scripts/build-service.ps1') -Force
+Import-Module (Join-Path $PSScriptRoot 'src/Service.Install.psm1') -Force
 $aiModule = Import-Module (Join-Path $PSScriptRoot 'src/OmniBox.Ai.psm1') -Force -PassThru
 $sourceRoot = $PSScriptRoot
 $configLoader = {
@@ -26,7 +26,7 @@ $configLoader = {
     & $aiModule { param($Path) Read-AiConfig $Path } $path
 }.GetNewClosure()
 $contextReader = { param($Backend) & $aiModule { param($Backend) Get-AiConfiguredContext $Backend } $Backend }.GetNewClosure()
-Write-Host 'OmniBox AI 0.8.1 — установка на этом ПК'
+Write-Host 'OmniBox AI 0.9.0 — установка на этом ПК'
 Write-Host 'Используются уже установленные службы Bonsai и Ollama. Enter сохраняет предложенное значение.'
 $setup = Get-AiSetupOptions -InstallDirectory $InstallDirectory -ConfigLoader $configLoader -ContextReader $contextReader -NonInteractive:$NonInteractive -DefaultBackend $DefaultBackend -Context $Context -StartServer:$StartServer
 $InstallDirectory = $setup.directory
@@ -57,7 +57,7 @@ if ($null -ne $existing) {
         throw "Команда ai уже существует: $($existing.Source). Устрани конфликт имени перед установкой."
     }
 }
-$files = @('ai.ps1', 'ai.cmd', 'panel.ps1', 'service.ps1', 'src/Service.Host.cs', 'src/Service.Install.psm1', 'scripts/build-service.ps1', 'src/OmniBox.Ai.psm1', 'src/Panel.Engine.ps1', 'src/Panel.Cli.ps1', 'src/Telemetry.ps1', 'src/Inference.Stats.cs', 'src/Gateway.Helpers.psm1', 'src/OpenAi.Proxy.cs', 'src/Model.Catalog.psm1', 'src/Panel.Server.psm1', 'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Update.Helpers.psm1', 'scripts/get-install.ps1', 'src/Setup.Helpers.psm1', 'web/index.html', 'web/style.css', 'web/app.js', 'web/favicon.svg', 'web/brand-light.svg', 'web/brand-dark.svg', 'web/inter-400.woff.base64', 'web/inter-600.woff.base64', 'web/inter-license.txt', 'config.example.json', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md', 'docs/web-panel.md', 'docs/reverse-proxy.md', 'docs/model-api.md', 'docs/models.md', 'docs/monitoring.md')
+$files = @('ai.ps1', 'ai.cmd', 'panel.ps1', 'service.ps1', 'src/Service.Host.cs', 'src/Service.Install.psm1', 'scripts/build-service.ps1', 'src/OmniBox.Ai.psm1', 'src/Panel.Engine.ps1', 'src/Panel.Cli.ps1', 'src/Telemetry.ps1', 'src/Inference.Stats.cs', 'src/Gateway.Helpers.psm1', 'src/OpenAi.Proxy.cs', 'src/Model.Catalog.psm1', 'src/Panel.Server.psm1', 'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Update.Helpers.psm1', 'src/Web.Update.psm1', 'scripts/update-worker.ps1', 'scripts/get-install.ps1', 'src/Setup.Helpers.psm1', 'web/index.html', 'web/style.css', 'web/app.js', 'web/favicon.svg', 'web/brand-light.svg', 'web/brand-dark.svg', 'web/inter-400.woff.base64', 'web/inter-600.woff.base64', 'web/inter-license.txt', 'config.example.json', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md', 'docs/web-panel.md', 'docs/reverse-proxy.md', 'docs/model-api.md', 'docs/models.md', 'docs/monitoring.md')
 foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $file) -PathType Leaf)) { throw "Нет файла исходников: $file" }
 }
@@ -105,7 +105,7 @@ $configPath = Join-Path $destination 'config.json'
 if (-not (Test-Path -LiteralPath $configPath)) {
     Copy-Item -LiteralPath (Join-Path $destination 'config.example.json') -Destination $configPath
 } else { Write-Host 'Существующие параметры config.json сохранены; сервер по умолчанию — по выбору мастера.' }
-Import-Module (Join-Path $destination 'src/Service.Install.psm1', 'scripts/build-service.ps1') -Force
+Import-Module (Join-Path $destination 'src/Service.Install.psm1') -Force
 $serviceBackup=Install-AiNativeServices -Directory $destination -PwshPath $pwsh -Config $setup.config
 $oldPanelWrapper=Join-Path $destination 'panel-service.exe'
 if($null -ne $panelService -and $panelService.PathName.Trim().Trim('"') -ieq $oldPanelWrapper -and (Test-Path -LiteralPath $oldPanelWrapper)){Copy-Item -LiteralPath $oldPanelWrapper -Destination (Join-Path $serviceBackup 'panel-winsw.exe')}
@@ -114,7 +114,7 @@ Set-Content -LiteralPath $configPath -Value ($setup.config | ConvertTo-Json -Dep
 # Exact PowerShell location; %* preserves the user's command-line quoting in cmd.
 $launcher = "@echo off`r`n`"$pwsh`" -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"%~dp0ai.ps1`" %*`r`nexit /b %errorlevel%`r`n"
 Set-Content -LiteralPath (Join-Path $destination 'ai.cmd') -Value $launcher -Encoding ascii -NoNewline
-Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.8.1' -Encoding utf8
+Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.9.0' -Encoding utf8
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $entries = @($userPath -split ';' | Where-Object { $_ })
@@ -128,7 +128,7 @@ if (@($env:Path -split ';' | Where-Object { $_.TrimEnd('\') -ieq $destination })
 if (-not $NoProfileUpdate) {
     # New SSH shells read this PATH-only snippet even when sshd inherits an old environment.
     # Preserve the existing prompt and every other profile statement; backup before editing.
-    Import-Module (Join-Path $destination 'src/Install.Helpers.psm1', 'src/Update.Helpers.psm1', 'scripts/get-install.ps1') -Force
+    Import-Module (Join-Path $destination 'src/Install.Helpers.psm1') -Force
     Update-AiPowerShellProfile -ProfilePath $PROFILE.CurrentUserAllHosts -InstallDirectory $destination -BackupDirectory (Join-Path $destination 'backups/profiles')
 }
 Write-Host "Установлено: $destination"
@@ -147,3 +147,7 @@ if(-not $NoPanelSetup){
 Write-Host 'WinSW заменён встроенным Windows service runtime. Параметры запуска и таймер простоя сохранены.'
 Write-Host 'В этом процессе PATH обновлён. Если установщик запущен через дочерний pwsh, переподключись по SSH или добавь путь в прежнюю сессию вручную.'
 Write-Host 'Проверка: ai help; ai context bonsai; ai status'
+
+# Delegate the installing user's existing gh login to SYSTEM, encrypted and ACL protected.
+Import-Module (Join-Path $destination 'src/Web.Update.psm1') -Force
+if(Sync-AiUpdateCredential $destination){Write-Host 'Доступ gh подключён к обновлениям веб-панели (Windows DPAPI).'}

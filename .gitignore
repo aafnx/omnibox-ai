@@ -13,3 +13,5 @@ backups/
 *.dll
 .test-output/
 __pycache__/
+
+updates/

@@ -1,6 +1,6 @@
 # OmniBox AI
 
-Универсальная панель со светлой, тёмной и системной темами управления локальными ИИ-серверами на Windows. Версия **0.8.1**. Открывай её с ноутбука или смартфона, запускай движки, меняй настройки и управляй загрузкой моделей. Для работы с нейросетью используется отдельный клиент через API.
+Универсальная панель со светлой, тёмной и системной темами управления локальными ИИ-серверами на Windows. Версия **0.9.0**. Открывай её с ноутбука или смартфона, запускай движки, меняй настройки и управляй загрузкой моделей. Для работы с нейросетью используется отдельный клиент через API.
 
 ## Возможности
 
@@ -43,7 +43,7 @@ winget install --id GitHub.cli --exact --source winget
 gh auth login --hostname github.com --git-protocol https --web
 ```
 
-Войди в аккаунт с доступом к `aafnx/omnibox-ai`. URL и код подтверждения из SSH можно использовать в браузере ноутбука или телефона. Авторизацией и её хранением управляет `gh`, приложение не копирует его токен. Службы SYSTEM этим входом не пользуются: обновление выполняется пользователем через CLI. [Установка gh](https://github.com/cli/cli/blob/trunk/docs/install_windows.md), [авторизация](https://cli.github.com/manual/gh_auth_login).
+Войди в аккаунт с доступом к `aafnx/omnibox-ai`. URL и код подтверждения из SSH можно использовать в браузере ноутбука или телефона. Для CLI скачивание выполняет `gh`. Установщик также подключает этот вход к веб-панели через Windows DPAPI и защищённый ACL, поскольку панель работает от SYSTEM. Позже можно войти отдельно по коду прямо в панели. [Установка gh](https://github.com/cli/cli/blob/trunk/docs/install_windows.md), [авторизация](https://cli.github.com/manual/gh_auth_login).
 
 Установка или первое обновление старой версии — одна строка:
 
@@ -51,7 +51,7 @@ gh auth login --hostname github.com --git-protocol https --web
 & { $ErrorActionPreference='Stop'; $p=gh api --hostname github.com 'repos/aafnx/omnibox-ai/contents/dist/install-omnibox-ai.ps1?ref=main' | ConvertFrom-Json; if($LASTEXITCODE -ne 0 -or $p.encoding -ne 'base64'){throw 'Не удалось скачать установщик'}; $f=Join-Path $env:TEMP ('omnibox-ai-'+[guid]::NewGuid().ToString('N')+'.ps1'); try{[IO.File]::WriteAllBytes($f,[Convert]::FromBase64String($p.content)); & $f}finally{if(Test-Path -LiteralPath $f){Remove-Item -LiteralPath $f -Force}} }
 ```
 
-После перехода на 0.8.1 дальнейшие обновления:
+Для установок с доступной командой `ai update` обновление через CLI:
 
 ```powershell
 ai update
@@ -95,13 +95,14 @@ CLI доступен в PATH после установки. Все команд�
 
 ```powershell
 pwsh -NoProfile -File .\tests\test.ps1
+pwsh -NoProfile -File .\tests\update_test.ps1
 ```
 
 ```powershell
 python -m unittest discover -s tests -p http_test.py -v
 ```
 
-Python нужен только для второго набора тестов. Поведение JS-интерфейса дополнительно проверяется `node tests/web_test.cjs` с адаптером DOM; это не визуальный браузерный тест. Он проверяет настоящий HTTP-сервер PowerShell, вход, CSRF/Origin, ограничения запросов, журналы и фоновые операции с тестовым адаптером движков. Тесты управления проверяют XML, откат, эксклюзивность и модели без GPU. Реальные Windows-службы, ACL и Firewall нужно проверить на серверном ПК после установки.
+Python нужен только для второго набора тестов. Поведение JS-интерфейса дополнительно проверяется `node tests/web_test.cjs` с адаптером DOM; это не визуальный браузерный тест. Набор HTTP-тестов проверяет настоящий HTTP-сервер PowerShell, вход, CSRF/Origin, ограничения запросов, журналы и фоновые операции с тестовым адаптером движков. Тесты управления проверяют XML, откат, эксклюзивность и модели без GPU. Реальные Windows-службы, ACL и Firewall нужно проверить на серверном ПК после установки.
 
 Сборка единого установочного файла:
 
@@ -110,3 +111,5 @@ pwsh -NoProfile -File .\scripts\build-setup.ps1
 ```
 
 [Мониторинг и журнал](docs/monitoring.md) · [Архитектура](docs/architecture.md) · [Веб-панель](docs/web-panel.md) · [Установка](docs/install.md) · [OpenAI API](docs/model-api.md) · [Каталог моделей](docs/models.md) · [NAS reverse proxy](docs/reverse-proxy.md) · [Изменения](CHANGELOG.md)
+
+Обновление из браузера: **Обновления → Проверить обновления → Установить и перезапустить**. Вход через gh по коду или разовый GitHub token; [подробности](docs/web-panel.md#обновления-приложения).

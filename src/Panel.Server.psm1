@@ -77,10 +77,12 @@ function Start-AiPanelOperation {
 }
 
 function Start-OmniBoxPanel {
-    param([string]$Root, [string]$PanelConfigPath = (Join-Path $Root 'panel.json'), [string]$EngineModulePath = (Join-Path $Root 'src/OmniBox.Ai.psm1'), [string]$CatalogModulePath = (Join-Path $PSScriptRoot 'Model.Catalog.psm1'))
+    param([string]$Root, [string]$PanelConfigPath = (Join-Path $Root 'panel.json'), [string]$EngineModulePath = (Join-Path $Root 'src/OmniBox.Ai.psm1'), [string]$CatalogModulePath = (Join-Path $PSScriptRoot 'Model.Catalog.psm1'), [string]$UpdateModulePath = (Join-Path $PSScriptRoot 'Web.Update.psm1'))
     Import-Module (Join-Path $PSScriptRoot 'Panel.Security.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot 'Gateway.Helpers.psm1') -Force
     Import-Module $EngineModulePath -Force
+    Import-Module $UpdateModulePath -Force
+    $updates=New-AiWebUpdateState $Root
     $panel = Read-AiPanelConfig $PanelConfigPath
     $configPath = Join-Path $Root 'config.json'
     $gatewayPath = Join-Path $Root 'gateway.json'
@@ -102,7 +104,7 @@ function Start-OmniBoxPanel {
     $assets = @{ '/inter-400.woff'=@('web/inter-400.woff.base64','font/woff'); '/inter-600.woff'=@('web/inter-600.woff.base64','font/woff'); '/favicon.svg'=@('web/favicon.svg','image/svg+xml'); '/brand-light.svg'=@('web/brand-light.svg','image/svg+xml'); '/brand-dark.svg'=@('web/brand-dark.svg','image/svg+xml'); '/'  = @('web/index.html','text/html; charset=utf-8'); '/app.js' = @('web/app.js','text/javascript; charset=utf-8'); '/style.css' = @('web/style.css','text/css; charset=utf-8') }
     try {
         $listener.Start()
-        Write-Host "OmniBox AI 0.7.0 panel: port $($panel.port)"
+        Write-Host "OmniBox AI 0.9.0 panel: port $($panel.port)"
         while ($listener.IsListening) {
             # Blocking wait: no background polling, model probes, GPU queries, or wake timers.
             $context = $listener.GetContext()
@@ -115,6 +117,7 @@ function Start-OmniBoxPanel {
                 $hosts = if ($isApi) { $apiHosts } else { $panel.allowed_hosts }
                 if ($request.Url.Host -notin $hosts) { Send-AiHttpResponse $context 403 @{ error = 'Host запрещён.' }; continue }
                 if ($isApi) {
+                    if((Get-AiWebUpdateStatus $updates).phase -eq 'installing'){Send-AiHttpResponse $context 503 @{error=@{message='Application update in progress.';type='omnibox_error'}};continue}
                     $apiConfig = Read-AiGatewayConfig $gatewayPath
                     $backends = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
                     if (-not $apiConfig.enabled -or -not $backends.backends.Contains($apiConfig.backend)) { Send-AiHttpResponse $context 503 @{error=@{message='Selected backend is unavailable.';type='omnibox_error'}}; continue }
@@ -161,6 +164,12 @@ function Start-OmniBoxPanel {
                 if ($null -eq $session -or $session.expires -lt [DateTime]::UtcNow -or ($session.secure -and -not $transport.secure)) { Send-AiHttpResponse $context 401 @{ error = 'Войди в панель.' }; continue }
                 if ($method -eq 'POST' -and $request.Headers['X-Omnibox-CSRF'] -cne $session.csrf) { Send-AiHttpResponse $context 403 @{ error = 'CSRF-проверка не пройдена.' }; continue }
                 switch ("$method $path") {
+                    'GET /api/updates' { Send-AiHttpResponse $context 200 (Get-AiWebUpdateStatus $updates) }
+                    'POST /api/updates' {
+                        $body=Read-AiHttpJson $request
+                        $null=Update-AiPanelOperations $operations
+                        Send-AiHttpResponse $context 202 (Start-AiWebUpdateAction $updates $body $operations)
+                    }
                     'GET /api/session' { Send-AiHttpResponse $context 200 @{ csrf = $session.csrf; ssh_target = $panel.ssh_target; port = $panel.port } }
                     'GET /api/gateway' { Send-AiHttpResponse $context 200 (Get-AiGatewayView (Read-AiGatewayConfig $gatewayPath)) }
                     'GET /api/activity' { Send-AiHttpResponse $context 200 ([OmniBox.InferenceStats]::Snapshot() | ConvertFrom-Json -AsHashtable) }
@@ -228,6 +237,7 @@ function Start-OmniBoxPanel {
                         $null = Update-AiPanelOperations $operations
                         $body = Read-AiHttpJson $request
                         if ($body.action -notin @('start','stop','restart','stopall','save','apply','restore','load','unload','pull','download')) { throw 'Неизвестная операция.' }
+                        if((Get-AiWebUpdateStatus $updates).phase -eq 'installing'){throw 'Дождитесь завершения обновления приложения.'}
                         $result = Start-AiPanelOperation $operations $EngineModulePath $configPath $body
                         Send-AiHttpResponse $context 202 $result
                     }
@@ -239,6 +249,7 @@ function Start-OmniBoxPanel {
         }
     } finally {
         $listener.Close()
+        Stop-AiWebUpdateManager $updates
         foreach ($operation in $operations.Values) { if ($null -ne $operation.job) { Stop-Job $operation.job; Remove-Job $operation.job -Force } }
         foreach($entry in $catalog.Values){Stop-Job $entry.job;Remove-Job $entry.job -Force}
         if($null -ne $telemetryJob){Stop-Job $telemetryJob;Remove-Job $telemetryJob -Force}

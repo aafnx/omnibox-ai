@@ -22,13 +22,13 @@ async function api(path, body) {
 }
 function notice(message, error=false) { $('notice').hidden=false; $('notice').textContent=message; $('notice').classList.toggle('error',error); }
 function showLogin() { $('new-api-key').hidden=true;$('key-copy').replaceChildren();gatewayDirty=false;loggedIn=false; clearTimeout(pollTimer); $('login').hidden=false; $('dashboard').hidden=true; csrf=''; }
-async function showDashboard() { const session=await api('/api/session'); csrf=session.csrf; panelPort=session.port; loggedIn=true; $('login').hidden=true; $('dashboard').hidden=false; await refresh(true); schedulePoll(); }
+async function showDashboard() { const session=await api('/api/session'); csrf=session.csrf; panelPort=session.port; loggedIn=true; $('login').hidden=true; $('dashboard').hidden=false; await refresh(true); schedulePoll(); if(localStorage.getItem('omnibox-update-pending')==='1')switchTab('updates'); }
 function monitoringActive(){return activity?.active||snapshot?.backends.some(b=>b.service==='StartPending'||(b.service==='Running'&&b.sleeping!==true&&(b.type==='prism'||!['(none)','-',undefined,null].includes(b.loaded_model))));}
 function schedulePoll() { clearTimeout(pollTimer); if(!loggedIn)return; pollTimer=setTimeout(async()=>{ if(!document.hidden) { try { await refresh(false); } catch(e) { notice(e.message,true); } } schedulePoll(); },document.hidden?10000:(monitoringActive()||snapshot?.operations?.some(o=>o.state==='running')||pendingActions.size?3000:10000)); }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&loggedIn)refresh(false).catch(e=>notice(e.message,true));});
 function backend() { return snapshot?.backends.find(b=>b.name===selectedBackend); }
 function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; $('catalog-results').replaceChildren(); $('catalog-status').textContent=''; renderSettings(); }
-function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='logs')refreshLogs().catch(e=>notice(e.message,true)); }
+function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='logs')refreshLogs().catch(e=>notice(e.message,true)); if(tab==='updates')refreshUpdateStatus().catch(e=>notice(e.message,true)); }
 async function refresh(gpu) {
   if(refreshBusy)return;refreshBusy=true;
   try{
@@ -135,7 +135,7 @@ function collectSettings() {
   if(b.type==='prism'){for(const [key,id] of Object.entries(fields))settings[key]=$(id).value.trim(); if($('model-choice').value)settings.model=$('model-choice').value;}
   return settings;
 }
-async function action(body) { const revision=formRevision;const key=body.backend||'*';pendingActions.add(key);renderEngines();try{const op=await api('/api/actions',body);if(body.settings||body.action==='restore')submittedForms.set(op.id,revision);notice('Операция принята. Результат появится в обзоре.');await refresh(false);schedulePoll();return op;}finally{pendingActions.delete(key);renderEngines();} }
+async function action(body) { if(updateStatus?.phase==='installing')throw new Error('Дождитесь завершения обновления приложения.'); const revision=formRevision;const key=body.backend||'*';pendingActions.add(key);renderEngines();try{const op=await api('/api/actions',body);if(body.settings||body.action==='restore')submittedForms.set(op.id,revision);notice('Операция принята. Результат появится в обзоре.');await refresh(false);schedulePoll();return op;}finally{pendingActions.delete(key);renderEngines();} }
 function copyRow(label,value) {
   const row=document.createElement('div');row.className='connect-row'; const caption=document.createElement('span');caption.className='card-label';caption.textContent=label;
   const field=document.createElement('div');field.className='copy-field';const code=document.createElement('code');code.textContent=value; const button=document.createElement('button');button.textContent='Копировать';button.type='button';
@@ -222,3 +222,43 @@ function residencyText(r){
  return label;
 }
 setInterval(()=>{if(loggedIn&&!document.hidden&&snapshot)document.querySelectorAll('.engine-idle').forEach(el=>{const b=snapshot.backends.find(b=>b.name===el.dataset.backend);if(b)el.textContent=idleText(b);});},1000);
+
+let updateStatus=null,updateTimer=null,updateBusy=false;
+function renderUpdateStatus(data){
+ updateStatus=data;
+ const busy=['checking','login','installing'].includes(data.phase);
+ $('update-version').textContent=`Установлена ${data.current}${data.latest?' · доступна '+data.latest:''}`;
+ $('update-message').textContent=data.message;
+ $('update-progress').hidden=!busy;
+ $('update-check').disabled=busy||updateBusy;
+ $('update-login').disabled=busy||updateBusy||!data.gh_available;
+ $('update-gh-install').hidden=data.gh_available;
+ $('update-forget').disabled=busy||!data.authenticated;
+ $('update-token-submit').disabled=busy||updateBusy;
+ $('update-apply').hidden=data.phase!=='ready';$('update-apply').disabled=updateBusy;
+ $('update-cancel').hidden=!['checking','login'].includes(data.phase);
+ $('update-auth').textContent=data.authenticated?'Вход gh подключён к панели. Доступ хранится в зашифрованном хранилище Windows.':'Сохранённого входа панели нет. Войдите через gh по коду или используйте разовый токен.';
+ $('update-device').hidden=!data.code;
+ if(data.code&&$('update-code').dataset.code!==data.code)$('update-code').replaceChildren(copyRow('Одноразовый код GitHub',data.code));else if(!data.code)$('update-code').replaceChildren();$('update-code').dataset.code=data.code||'';
+ if(data.phase==='installing')localStorage.setItem('omnibox-update-pending','1');
+ if(['done','failed'].includes(data.phase))localStorage.setItem('omnibox-update-pending','0');
+}
+function scheduleUpdatePoll(){
+ clearTimeout(updateTimer);
+ if(!loggedIn)return;
+ if(activeTab!=='updates'&&!['checking','login','installing'].includes(updateStatus?.phase))return;
+ updateTimer=setTimeout(async()=>{if(!document.hidden){try{await refreshUpdateStatus();}catch(e){if(localStorage.getItem('omnibox-update-pending')==='1')$('update-message').textContent='Панель перезапускается. Ожидаем подключения…';else notice(e.message,true);}}scheduleUpdatePoll();},2000);
+}
+async function refreshUpdateStatus(){renderUpdateStatus(await api('/api/updates'));scheduleUpdatePoll();}
+async function updateAction(body){
+ if(updateBusy)return;updateBusy=true;
+ try{renderUpdateStatus(await api('/api/updates',body));scheduleUpdatePoll();}
+ finally{if(body.token)body.token='';updateBusy=false;if(updateStatus)renderUpdateStatus(updateStatus);}
+}
+for(const [id,action] of [['update-check','check'],['update-login','login'],['update-forget','forget'],['update-cancel','cancel'],['update-apply','apply']]){
+ $(id).addEventListener('click',()=>updateAction({action}).catch(e=>notice(e.message,true)));
+}
+$('update-token-form').addEventListener('submit',e=>{
+ e.preventDefault();const token=$('update-token').value.trim();$('update-token').value='';
+ updateAction({action:'token',token}).catch(e=>notice(e.message,true));
+});

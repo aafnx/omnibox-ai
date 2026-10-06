@@ -47,7 +47,7 @@ class Upstream(http.server.BaseHTTPRequestHandler):
             self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
 
 class PanelFixture:
-    def __init__(self, proxy=False, gateway=False, shared_port=False):
+    def __init__(self, proxy=False, gateway=False, shared_port=False, updates=False):
         self.temp = tempfile.TemporaryDirectory(prefix='omnibox-ai-http-')
         self.root = Path(self.temp.name)
         shutil.copytree(ROOT / 'web', self.root / 'web')
@@ -80,7 +80,18 @@ class PanelFixture:
             (self.root/'gateway.json').write_text(json.dumps(dict(schema_version=1,enabled=True,port=self.api_port,base_url=f'http://127.0.0.1:{self.api_port}/v1',backend='bonsai',require_key=True,key_hash=hashlib.sha256(API_KEY.encode()).hexdigest())))
         self.url = f'http://127.0.0.1:{self.port}'
         self.output = (self.root / 'server-output.log').open('w')
-        self.process = subprocess.Popen([PWSH, '-NoProfile', '-File', str(ROOT / 'tests/http-fixture.ps1'), '-Root', str(self.root)], stdout=self.output, stderr=subprocess.STDOUT)
+        process_env=os.environ.copy()
+        if updates:
+            fixture_payload=base64.b64encode(b'test fixture payload').decode()
+            fixture_sha=hashlib.sha256(b'test fixture payload').hexdigest()
+            installer=f"#requires -Version 7.4\n$expectedSha = '{fixture_sha}'\n$payload = '{fixture_payload}'\nif($CheckOnly){{'OmniBox AI 9.9.9 payload OK'}}\nthrow 'Must not execute during check'\n"
+            (self.root/'contents.json').write_text(json.dumps(dict(type='file',encoding='base64',content=base64.b64encode(installer.encode()).decode())))
+            fake=self.root/'fake-bin';fake.mkdir()
+            gh=fake/'gh'
+            gh.write_text("#!/usr/bin/env python3\nimport sys,time,pathlib\ntime.sleep(.7)\nprint((pathlib.Path(__file__).parent.parent/'contents.json').read_text())\n")
+            gh.chmod(0o755)
+            process_env['PATH']=str(fake)+os.pathsep+process_env.get('PATH','')
+        self.process = subprocess.Popen([PWSH, '-NoProfile', '-File', str(ROOT / 'tests/http-fixture.ps1'), '-Root', str(self.root)], stdout=self.output, stderr=subprocess.STDOUT, env=process_env)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
@@ -507,6 +518,78 @@ class ProxyTests(unittest.TestCase):
             self.assertEqual(self.request('/api/login', {'password':'wrong'}, extra={'X-Forwarded-For':'198.51.100.41'})[0], 401)
         self.assertEqual(self.request('/api/login', {'password':PASSWORD}, extra={'X-Forwarded-For':'198.51.100.41'})[0], 429)
         self.assertEqual(self.request('/api/login', {'password':PASSWORD}, extra={'X-Forwarded-For':'198.51.100.42'})[0], 200)
+
+@unittest.skipIf(os.name=='nt','The gh test executable is a Linux fixture; native Windows service updates are tested on Windows separately.')
+class UpdateTests(unittest.TestCase):
+    call=classmethod(HttpTests.call.__func__)
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture=PanelFixture(updates=True)
+        cls.cookies=http.cookiejar.CookieJar();cls.client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cls.cookies))
+        cls.csrf=cls.call('/api/login',{'password':PASSWORD})[1]['csrf']
+    @classmethod
+    def tearDownClass(cls): cls.fixture.close()
+    def wait_update(self):
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            code,data,_=self.call('/api/updates');self.assertEqual(code,200)
+            if data['phase'] not in ('checking','login'): return data
+            time.sleep(.1)
+        self.fail('Update did not finish')
+    def test_01_auth_csrf_and_origin(self):
+        self.assertEqual(self.call('/api/updates',auth=False)[0],401)
+        self.assertEqual(self.call('/api/updates',{'action':'check'},auth=False)[0],401)
+        self.assertEqual(self.call('/api/updates',{'action':'check'})[0],403)
+        self.assertEqual(self.call('/api/updates',{'action':'check'},csrf=self.csrf,origin='http://evil.example')[0],403)
+    def test_02_no_arbitrary_commands_download_source_or_path(self):
+        for body in ({'action':'exec'},{'action':'check','url':'https://evil'},{'action':'apply','root':'/tmp/evil'},{'action':'token','token':'short'},{'action':['check']}):
+            self.assertEqual(self.call('/api/updates',body,csrf=self.csrf)[0],400)
+    def test_03_check_is_async_and_duplicate_is_rejected(self):
+        code,data,_=self.call('/api/updates',{'action':'check'},csrf=self.csrf)
+        self.assertEqual(code,202);self.assertEqual(data['phase'],'checking')
+        self.assertEqual(self.call('/api/updates',{'action':'check'},csrf=self.csrf)[0],400)
+        start=time.monotonic();self.assertEqual(self.call('/api/session')[0],200);self.assertLess(time.monotonic()-start,.3)
+        data=self.wait_update();self.assertEqual(data['phase'],'ready',data);self.assertEqual(data['latest'],'9.9.9')
+        self.assertTrue((self.fixture.root/'updates/download/installer.ps1').exists())
+        self.assertFalse((self.fixture.root/'updates/result.json').exists())
+        for key in ('token','file','sha256','bytes'):self.assertNotIn(key,data)
+    def test_04_token_stays_one_use_and_private_files_are_not_http_assets(self):
+        secret='fixture-only-secret-not-real'
+        code,data,_=self.call('/api/updates',{'action':'token','token':secret},csrf=self.csrf)
+        self.assertEqual(code,202);self.assertNotIn(secret,json.dumps(data))
+        data=self.wait_update();self.assertEqual(data['phase'],'ready',data)
+        self.assertNotIn(secret,json.dumps(data));self.assertFalse(data['authenticated'])
+        self.assertFalse((self.fixture.root/'updates/auth/github.dpapi').exists())
+        self.assertEqual(self.call('/updates/download/installer.ps1')[0],404)
+        self.assertEqual(self.call('/updates/auth/github.dpapi')[0],404)
+    def test_05_generation_control_guard_rejects_install_during_model_operation(self):
+        code,op,_=self.call('/api/actions',{'action':'download','backend':'bonsai','url':'fixture'},csrf=self.csrf)
+        self.assertEqual(code,202)
+        code,data,_=self.call('/api/updates',{'action':'apply'},csrf=self.csrf)
+        self.assertEqual(code,400);self.assertIn('Дождитесь',data['error'])
+        HttpTests.wait_operation(self,op['id'])
+    def test_06_corrupt_package_and_cancel_are_safe(self):
+        path=self.fixture.root/'contents.json';old=path.read_text();package=json.loads(old)
+        package['content']=base64.b64encode(b'#requires -Version 7.4\n'+b'x'*150).decode();path.write_text(json.dumps(package))
+        try:
+            self.assertEqual(self.call('/api/updates',{'action':'check'},csrf=self.csrf)[0],202)
+            self.assertEqual(self.wait_update()['phase'],'failed')
+            self.assertEqual(self.call('/api/updates',{'action':'apply'},csrf=self.csrf)[0],400)
+        finally:path.write_text(old)
+        self.assertEqual(self.call('/api/updates',{'action':'check'},csrf=self.csrf)[0],202)
+        self.assertEqual(self.call('/api/updates',{'action':'cancel'},csrf=self.csrf)[0],202)
+        self.assertEqual(self.wait_update()['phase'],'failed')
+    def test_07_forget_and_status_survive_worker_result(self):
+        self.assertEqual(self.call('/api/updates',{'action':'forget'},csrf=self.csrf)[0],202)
+        result=self.fixture.root/'updates/result.json'
+        result.write_text(json.dumps(dict(phase='installing',message='Fixture installation',version='9.9.9',service='fixture')))
+        try:
+            self.assertEqual(self.call('/api/updates')[1]['phase'],'installing')
+            self.assertEqual(self.call('/api/actions',{'action':'start','backend':'bonsai'},csrf=self.csrf)[0],400)
+            self.assertEqual(self.call('/api/updates',{'action':'check'},csrf=self.csrf)[0],400)
+            result.write_text(json.dumps(dict(phase='failed',message='Fixture recovery',version='9.9.9')))
+            # A newly started manager (idle) exposes persisted results, rather than dropping them.
+        finally:result.unlink()
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
