@@ -1,0 +1,258 @@
+# Dot-sourced by OmniBox.Ai.psm1; uses its service, XML, rollback and mutex adapters.
+function Get-AiArgumentValue {
+    param([string[]]$Tokens, [string[]]$Names, $Default = $null)
+    $value = $Default
+    for ($i = 0; $i -lt $Tokens.Count; $i++) {
+        if ($Tokens[$i] -in $Names -and $i + 1 -lt $Tokens.Count) { $value = $Tokens[++$i].Trim('"') }
+        foreach ($name in $Names) { if ($Tokens[$i].StartsWith("$name=")) { $value = $Tokens[$i].Substring($name.Length + 1).Trim('"') } }
+    }
+    return $value
+}
+
+function Set-AiArgumentValue {
+    param([Xml.XmlDocument]$Xml, [string[]]$Names, [string]$Value)
+    $tokens = @(Get-AiPrismArguments $Xml)
+    $next = [Collections.Generic.List[string]]::new()
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+        if ($tokens[$i] -in $Names) {
+            if ($i + 1 -ge $tokens.Count) { throw "Нет значения у $($tokens[$i])." }; $i++; continue
+        }
+        $matched = $false
+        foreach ($name in $Names) { if ($tokens[$i].StartsWith("$name=")) { $matched = $true } }
+        if (-not $matched) { $next.Add($tokens[$i]) }
+    }
+    if ($Value.Contains('"') -or $Value.Contains("`n") -or $Value.Contains("`r")) { throw 'Кавычки и переносы строк в параметрах запрещены.' }
+    $next.Add($Names[0]); $next.Add($(if ($Value -match '\s') { '"' + $Value + '"' } else { $Value }))
+    $Xml.SelectSingleNode('/service/arguments').InnerText = $next -join ' '
+}
+
+function Get-AiXmlEnv {
+    param([Xml.XmlDocument]$Xml, [string]$Name, [string]$Default)
+    $nodes = @($Xml.SelectNodes('/service/env') | Where-Object { $_.GetAttribute('name') -eq $Name })
+    if ($nodes.Count -gt 1) { throw "Повторяется $Name в XML." }
+    if ($nodes.Count) { return $nodes[0].GetAttribute('value') }; return $Default
+}
+
+function Set-AiXmlEnv {
+    param([Xml.XmlDocument]$Xml, [string]$Name, [string]$Value)
+    $nodes = @($Xml.SelectNodes('/service/env') | Where-Object { $_.GetAttribute('name') -eq $Name })
+    if ($nodes.Count -gt 1) { throw "Повторяется $Name в XML." }
+    $node = if ($nodes.Count) { $nodes[0] } else { $Xml.CreateElement('env') }
+    $node.SetAttribute('name', $Name); $node.SetAttribute('value', $Value)
+    if (-not $nodes.Count) { $null = $Xml.DocumentElement.AppendChild($node) }
+}
+
+function Get-AiLaunchSettings {
+    param($Backend)
+    $xml = Read-AiServiceXml $Backend
+    $settings = @{ context = [string](Get-AiConfiguredContext $Backend); idle_minutes = 30 }
+    if ($Backend.type -eq 'prism') {
+        $tokens = @(Get-AiPrismArguments $xml)
+        $settings.model = Get-AiArgumentValue $tokens @('-m','--model') ''
+        $settings.alias = Get-AiArgumentValue $tokens @('--alias') ([IO.Path]::GetFileNameWithoutExtension($settings.model))
+        $settings.gpu_layers = Get-AiArgumentValue $tokens @('-ngl','--gpu-layers','--n-gpu-layers') '99'
+        $settings.cache_key = Get-AiArgumentValue $tokens @('-ctk','--cache-type-k') 'f16'
+        $settings.cache_value = Get-AiArgumentValue $tokens @('-ctv','--cache-type-v') 'f16'
+        $settings.flash_attention = Get-AiArgumentValue $tokens @('-fa','--flash-attn') 'auto'
+        $settings.batch = Get-AiArgumentValue $tokens @('-b','--batch-size') '512'
+        $settings.ubatch = Get-AiArgumentValue $tokens @('-ub','--ubatch-size') '128'
+        $settings.idle_minutes = [math]::Round([double](Get-AiArgumentValue $tokens @('--sleep-idle-seconds') '-1') / 60, 2)
+    } else {
+        $settings.keep_alive = Get-AiXmlEnv $xml 'OLLAMA_KEEP_ALIVE' '5m'
+        if ($settings.keep_alive -match '^(\d+)m$') { $settings.idle_minutes = [int]$Matches[1] }
+        elseif ($settings.keep_alive -match '^(\d+)s?$') { $settings.idle_minutes = [math]::Round([double]$Matches[1] / 60, 2) }
+        else { $settings.idle_minutes = $null }
+    }
+    return $settings
+}
+
+function Get-AiPrismModels {
+    param($Backend)
+    $settings = Get-AiLaunchSettings $Backend
+    if (-not $settings.model) { return @() }
+    $directory = Split-Path ([IO.Path]::GetFullPath($settings.model)) -Parent
+    if (-not (Test-Path -LiteralPath $directory -PathType Container)) { return @() }
+    return @(Get-ChildItem -LiteralPath $directory -File -Filter '*.gguf' |
+        Where-Object { $_.Name -notmatch '(?i)mmproj|projector' -and -not $_.LinkType } |
+        Sort-Object Name | ForEach-Object { @{ name = $_.Name; id = $_.FullName; bytes = $_.Length } })
+}
+
+function New-AiLaunchXml {
+    param($Backend, [System.Collections.IDictionary]$Settings)
+    $allowed = @('context','idle_minutes')
+    if ($Backend.type -eq 'prism') { $allowed += @('model','alias','gpu_layers','cache_key','cache_value','flash_attention','batch','ubatch') }
+    foreach ($key in $Settings.Keys) { if ($key -notin $allowed) { throw "Неизвестная настройка: $key" } }
+    $xml = if ($Settings.Contains('context')) { New-AiContextXml $Backend (ConvertTo-AiContext ([string]$Settings.context)) } else { Read-AiServiceXml $Backend }
+    if ($Settings.Contains('idle_minutes')) {
+        $idle = [string]$Settings.idle_minutes
+        if ($idle -notmatch '^\d+$' -or [long]$idle -lt 1 -or [long]$idle -gt 1440) { throw 'Простой должен быть от 1 до 1440 минут.' }
+        if ($Backend.type -eq 'prism') { Set-AiArgumentValue $xml @('--sleep-idle-seconds') ([string]([int]$idle * 60)) }
+        else { Set-AiXmlEnv $xml 'OLLAMA_KEEP_ALIVE' "${idle}m" }
+    }
+    if ($Backend.type -eq 'prism') {
+        if ($Settings.Contains('model')) {
+            $known = @(Get-AiPrismModels $Backend)
+            $model = [string]$Settings.model
+            if ($model -notin @($known | ForEach-Object { $_.id })) { throw 'Выбери существующий GGUF из каталога моделей; произвольные пути запрещены.' }
+            Set-AiArgumentValue $xml @('-m','--model') $model
+        }
+        if ($Settings.Contains('alias')) {
+            if ([string]$Settings.alias -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,79}$') { throw 'Имя API-модели: латиница, цифры, точка, дефис или подчёркивание, до 80 символов.' }
+            Set-AiArgumentValue $xml @('--alias') ([string]$Settings.alias)
+        }
+        foreach ($key in @('gpu_layers','batch','ubatch')) {
+            if ($Settings.Contains($key)) {
+                $value = [string]$Settings[$key]; $min = if ($key -eq 'gpu_layers') { 0 } else { 1 }; $max = if ($key -eq 'gpu_layers') { 999 } else { 8192 }
+                if ($value -notmatch '^\d+$' -or [long]$value -lt $min -or [long]$value -gt $max) { throw "$key должен быть от $min до $max." }
+                $names = switch ($key) { 'gpu_layers' { @('-ngl','--gpu-layers','--n-gpu-layers') } 'batch' { @('-b','--batch-size') } 'ubatch' { @('-ub','--ubatch-size') } }
+                Set-AiArgumentValue $xml $names $value
+            }
+        }
+        foreach ($key in @('cache_key','cache_value')) {
+            if ($Settings.Contains($key)) {
+                if ($Settings[$key] -notin @('f16','q8_0','q4_0')) { throw 'Кеш: f16, q8_0 или q4_0.' }
+                $names = if ($key -eq 'cache_key') { @('-ctk','--cache-type-k') } else { @('-ctv','--cache-type-v') }
+                Set-AiArgumentValue $xml $names ([string]$Settings[$key])
+            }
+        }
+        if ($Settings.Contains('flash_attention')) {
+            if ($Settings.flash_attention -notin @('on','off','auto')) { throw 'Flash Attention: on, off или auto.' }
+            Set-AiArgumentValue $xml @('-fa','--flash-attn') ([string]$Settings.flash_attention)
+        }
+        $tokens = @(Get-AiPrismArguments $xml)
+        if ([int](Get-AiArgumentValue $tokens @('-ub','--ubatch-size') '128') -gt [int](Get-AiArgumentValue $tokens @('-b','--batch-size') '512')) { throw 'ubatch не может быть больше batch.' }
+    }
+    return ,$xml
+}
+
+function Invoke-AiModelRequest {
+    param($Backend, [string]$Path, $Body, [int]$Timeout = 180)
+    Invoke-RestMethod -Uri ($Backend.base_url.TrimEnd('/') + $Path) -Method Post -ContentType 'application/json; charset=utf-8' -Body ($Body | ConvertTo-Json -Depth 10 -Compress) -TimeoutSec $Timeout -ErrorAction Stop
+}
+
+function Get-AiGpuData {
+    $savedExit = $global:LASTEXITCODE
+    try {
+        $exe = Get-Command nvidia-smi -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
+        if ($null -eq $exe) { return @() }
+        $lines = @(& $exe.Source --query-gpu=name,memory.total,memory.used,memory.free --format=csv,noheader,nounits 2>$null)
+        if ($LASTEXITCODE -ne 0) { return @() }
+        return @($lines | ForEach-Object {
+            $parts = $_ -split ',\s*'
+            if ($parts.Count -eq 4) { @{ name = $parts[0]; total = [int]$parts[1]; used = [int]$parts[2]; free = [int]$parts[3] } }
+        })
+    } finally { $global:LASTEXITCODE = $savedExit }
+}
+
+function Get-AiDashboard {
+    param([string]$ConfigPath, [switch]$IncludeGpu)
+    $config = Read-AiConfig $ConfigPath
+    $statuses = @(Get-AiStatus $config)
+    $rows = @()
+    foreach ($name in ($config.backends.Keys | Sort-Object)) {
+        $b = $config.backends[$name]; $status = $statuses | Where-Object Backend -eq $name | Select-Object -First 1
+        $settings = $null; $models = @(); $errors = @(); $pending = $false; $restore = $false
+        try {
+            $settings = Get-AiLaunchSettings $b
+            $history = Read-AiRecoveryState $b
+            $pending = $null -ne $history -and $history.pending
+            $restore = $null -ne $history
+        } catch { $errors += $_.Exception.Message }
+        if ($b.type -eq 'prism') { try { $models = @(Get-AiPrismModels $b) } catch { $errors += $_.Exception.Message } }
+        elseif ($status.Service -eq 'Running') {
+            try { $tags = Invoke-AiProbe $b '/api/tags'; $models = @($tags.models | ForEach-Object { @{ id = $_.name; name = $_.name; bytes = $_.size } }) }
+            catch { $errors += $_.Exception.Message }
+        }
+        $rows += @{ name = $name; type = $b.type; service = $status.Service; startup = $status.Startup; api = $status.API; active_context = $status.Context; sleeping = $status.Sleeping; loaded_model = $status.Model; settings = $settings; models = $models; pending = $pending; can_restore = $restore; errors = $errors; endpoint = $b.base_url.TrimEnd('/') + '/v1' }
+    }
+    $gpu = @(); if ($IncludeGpu) { $gpu = @(Get-AiGpuData) }
+    return @{ version = '0.4.0'; default_backend = $config.default_backend; exclusive = $config.exclusive; backends = $rows; gpu = $gpu; computer = [Environment]::MachineName }
+}
+
+function Assert-AiModelName {
+    param([string]$Name)
+    if ($Name.Length -gt 200 -or $Name -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_./:-]*$' -or $Name.Contains('..')) { throw 'Некорректное имя модели Ollama.' }
+}
+
+function Invoke-AiPanelAction {
+    param([string]$ConfigPath, [System.Collections.IDictionary]$Request)
+    $config = Read-AiConfig $ConfigPath
+    foreach ($key in $Request.Keys) { if ($key -notin @('action','backend','settings','model','url','filename','sha256')) { throw "Неизвестное поле: $key" } }
+    $operationName = [string]$Request.action
+    if ($operationName -notin @('start','stop','restart','stopall','save','apply','restore','load','unload','pull','download')) { throw 'Неизвестная операция панели.' }
+    $name = if ($Request.Contains('backend')) { [string]$Request.backend } else { $config.default_backend }
+    $b = Get-AiBackend $config $name
+    Assert-AiAdministrator
+    if ($operationName -eq 'stopall') { Invoke-Ai @('stop') $ConfigPath; return 'Все настроенные ИИ-серверы остановлены.' }
+    if ($operationName -in @('start','stop','restart','restore')) { Invoke-Ai @($operationName,$name) $ConfigPath; return "$name`: операция $operationName завершена." }
+    if ($operationName -eq 'download') { return Save-AiPrismDownload $b $Request }
+    if ($operationName -eq 'pull') {
+        if ($b.type -ne 'ollama') { throw 'Скачивание по имени доступно для Ollama.' }
+        Assert-AiModelName ([string]$Request.model)
+        $service = Get-AiService $b.service
+        if ($null -eq $service -or [string]$service.Status -ne 'Running') { throw 'Сначала запусти Ollama. Скачивание само сервер не запускает.' }
+        $null = Invoke-AiModelRequest $b '/api/pull' @{ model = [string]$Request.model; stream = $false } 7200
+        return "Модель $($Request.model) скачана."
+    }
+    Invoke-AiLocked {
+        if ($operationName -in @('save','apply')) {
+            if ($Request.settings -isnot [System.Collections.IDictionary]) { throw 'Нужен объект settings.' }
+            $xml = New-AiLaunchXml $b $Request.settings
+            if ($operationName -eq 'save') { Save-AiServiceXml $b $xml; return 'Настройки сохранены для следующего запуска; работающая модель не перезапущена.' }
+            Invoke-AiBackendStart $config $name 'restart' $xml
+            return 'Настройки применены. Сервер готов.'
+        }
+        if ($b.type -eq 'prism') {
+            if ($operationName -eq 'unload') { Stop-AiBackend $config $name; return 'Модель выгружена, сервер остановлен. Новый запрос сам его не запустит.' }
+            $xml = if ($Request.Contains('settings')) { New-AiLaunchXml $b $Request.settings } else { $null }
+            $service = Get-AiService $b.service
+            $verb = if ($null -ne $service -and [string]$service.Status -ne 'Stopped') { 'restart' } else { 'start' }
+            Invoke-AiBackendStart $config $name $verb $xml
+            return 'Модель загружена. API готов.'
+        }
+        if ($operationName -eq 'unload') {
+            $service = Get-AiService $b.service
+            if ($null -eq $service -or [string]$service.Status -ne 'Running') { return 'Ollama уже остановлена; загруженных моделей нет.' }
+            $ps = Invoke-AiProbe $b '/api/ps'
+            foreach ($model in @($ps.models)) { $null = Invoke-AiModelRequest $b '/api/generate' @{ model = $model.name; prompt = ''; stream = $false; keep_alive = 0 } $config.startup_timeout_seconds }
+            return 'Все модели Ollama выгружены; сервер продолжает слушать API.'
+        }
+        Assert-AiModelName ([string]$Request.model)
+        if ($operationName -eq 'load') { Start-AiBackend $config $name }
+        $service = Get-AiService $b.service
+        if ($null -eq $service -or [string]$service.Status -ne 'Running') { throw 'Ollama остановлена.' }
+        $tags = Invoke-AiProbe $b '/api/tags'
+        if ([string]$Request.model -notin @($tags.models | ForEach-Object name)) { throw 'Модель не установлена. Сначала скачай её.' }
+        $settings = Get-AiLaunchSettings $b
+        $body = @{ model = [string]$Request.model; stream = $false; prompt = ''; keep_alive = $(if ($operationName -eq 'unload') { 0 } else { $settings.keep_alive }) }
+        if ($operationName -eq 'load' -and $settings.context -match '^\d+$') { $body.options = @{ num_ctx = [int]$settings.context } }
+        $null = Invoke-AiModelRequest $b '/api/generate' $body $config.startup_timeout_seconds
+        return 'Модель загружена в память.'
+    }
+}
+
+function Save-AiPrismDownload {
+    param($Backend, $Request)
+    if ($Backend.type -ne 'prism') { throw 'GGUF скачивается для PrismML.' }
+    $uri = $null
+    if (-not [Uri]::TryCreate([string]$Request.url, [UriKind]::Absolute, [ref]$uri) -or $uri.Scheme -ne 'https' -or $uri.Host -cne 'huggingface.co' -or -not $uri.IsDefaultPort -or $uri.UserInfo -or $uri.Fragment -or
+        $uri.AbsolutePath -notmatch '^/[^/]+/[^/]+/resolve/[^/]+/.+\.gguf$') { throw 'Нужна прямая HTTPS-ссылка huggingface.co/.../resolve/.../model.gguf.' }
+    $filename = [string]$Request.filename
+    if ($filename -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,159}\.gguf$' -or $filename.Contains('..') -or $filename -match '(?i)mmproj|projector') { throw 'Имя GGUF: латиница/цифры/дефис/подчёркивание, без пути и projector.' }
+    $sha = if ($Request.Contains('sha256')) { [string]$Request.sha256 } else { '' }
+    if ($sha -and $sha -notmatch '^[a-fA-F0-9]{64}$') { throw 'SHA256 должен содержать 64 hex-символа.' }
+    $settings = Get-AiLaunchSettings $Backend
+    $directory = Split-Path ([IO.Path]::GetFullPath($settings.model)) -Parent
+    $target = Join-Path $directory $filename
+    if (Test-Path -LiteralPath $target) { throw 'Файл уже существует; перезапись моделей запрещена.' }
+    $temporary = Join-Path $directory ('.download-' + [Guid]::NewGuid().ToString('N') + '.part')
+    try {
+        Invoke-WebRequest -Uri $uri.AbsoluteUri -OutFile $temporary -MaximumRedirection 10 -TimeoutSec 7200
+        $stream = [IO.File]::OpenRead($temporary)
+        try { $magic = [byte[]]::new(4); $read = $stream.Read($magic, 0, 4) } finally { $stream.Dispose() }
+        if ($read -ne 4 -or [Text.Encoding]::ASCII.GetString($magic) -cne 'GGUF') { throw 'Скачанный файл не имеет заголовка GGUF.' }
+        if ($sha -and (Get-FileHash -LiteralPath $temporary -Algorithm SHA256).Hash -ine $sha) { throw 'SHA256 скачанного GGUF не совпадает.' }
+        [IO.File]::Move($temporary, $target)
+        return "Скачано: $filename. Выбери модель в настройках; сама она не загружалась."
+    } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
+}

@@ -1,4 +1,8 @@
 config.json
+panel.json
+logs/
+*.ai-previous
+*.ai-state.json
 .omnibox-ai-install
 backups/
 *.log
@@ -7,3 +11,4 @@ backups/
 *.exe
 *.dll
 .test-output/
+__pycache__/

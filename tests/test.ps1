@@ -76,6 +76,14 @@ function New-ContextFixture([string]$Arguments = '-m "C:\ai\models\-c 77 model.g
     return @{ path = (Save-TestConfig $config); config = $config; bonsai = $bonsaiPath; ollama = $ollamaPath }
 }
 
+function New-WebModelFixture {
+    $dir = Join-Path $testRoot ('models with spaces-' + [Guid]::NewGuid().ToString('N'))
+    $null = New-Item -ItemType Directory -Path $dir
+    foreach ($name in @('bonsai-pq2.gguf','other-model.gguf','mmproj-bonsai.gguf')) { [IO.File]::WriteAllBytes((Join-Path $dir $name), [Text.Encoding]::ASCII.GetBytes('GGUFfixture')) }
+    $args = '-m "' + (Join-Path $dir 'bonsai-pq2.gguf') + '" --alias bonsai-2-27b -c 196608 -ngl 99 -fa on -ctk q8_0 -ctv q8_0 -b 512 -ub 128 --sleep-idle-seconds 1800 --port 18080 --jinja'
+    return New-ContextFixture $args
+}
+
 try {
     Test 'all PowerShell files parse' {
         foreach ($file in Get-ChildItem -LiteralPath $repo -Recurse -File | Where-Object Extension -in @('.ps1', '.psm1')) {
@@ -87,7 +95,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.3.0'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.4.0'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -638,6 +646,131 @@ try {
         Assert-Throws { Invoke-Ai @('start') $f.path } '*оставлен остановленным*'
         Assert-Equal (Get-Content $f.bonsai -Raw) $original
     }
+    Test 'panel reads complete launch settings and local model catalog' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        $b = $f.config.backends.bonsai
+        $s = & $m { param($b) Get-AiLaunchSettings $b } $b
+        Assert-Equal $s.context '196608'; Assert-Equal $s.idle_minutes 30
+        Assert-Equal $s.gpu_layers '99'; Assert-Equal $s.cache_key 'q8_0'
+        $models = @(& $m { param($b) Get-AiPrismModels $b } $b)
+        Assert-Equal $models.Count 2
+        Assert-True (-not (@($models | ForEach-Object name) -like '*mmproj*'))
+    }
+    Test 'panel save changes launch parameters without stopping running service' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        & $m { $script:services.bonsai.Status = 'Running' }
+        $model = Join-Path (Split-Path (& $m { param($b) (Get-AiLaunchSettings $b).model } $f.config.backends.bonsai) -Parent) 'other-model.gguf'
+        $null = Invoke-AiPanelAction $f.path @{action='save';backend='bonsai';settings=@{model=$model;context='128k';idle_minutes=45;gpu_layers=80;cache_key='q4_0';cache_value='q4_0';flash_attention='on';batch=256;ubatch=64;alias='other-model'}}
+        $s = & $m { param($b) Get-AiLaunchSettings $b } $f.config.backends.bonsai
+        Assert-Equal $s.model $model; Assert-Equal $s.context '131072'; Assert-Equal $s.idle_minutes 45
+        Assert-Equal $s.cache_key 'q4_0'; Assert-Equal $s.alias 'other-model'
+        Assert-True ((Get-Content $f.bonsai -Raw) -like '*--port 18080 --jinja*')
+        Assert-True (-not ((Get-Calls $m) -like 'stop:*'))
+    }
+    Test 'panel rejects arbitrary model paths and settings before touching services' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        Assert-Throws { Invoke-AiPanelAction $f.path @{action='apply';settings=@{model='/etc/passwd'}} } '*произвольные пути запрещены*'
+        Assert-Throws { Invoke-AiPanelAction $f.path @{action='apply';settings=@{command='whoami'}} } '*Неизвестная настройка*'
+        Assert-Throws { Invoke-AiPanelAction $f.path @{action='apply';settings=@{gpu_layers='99 --host 0.0.0.0'}} } '*gpu_layers*'
+        Assert-Throws { Invoke-AiPanelAction $f.path @{action='apply';settings=@{batch=64;ubatch=128}} } '*ubatch*'
+        Assert-True (-not ((Get-Calls $m) -like 'stop:*'))
+    }
+    Test 'panel apply uses automatic rollback for model and cache changes too' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        $original = Get-Content $f.bonsai -Raw
+        & $m { function script:Wait-AiReady { param($Config,$Name) throw 'mock incompatible cache' } }
+        Assert-Throws { Invoke-AiPanelAction $f.path @{action='apply';settings=@{cache_key='q4_0'}} } '*Предыдущий XML восстановлен*'
+        Assert-Equal (Get-Content $f.bonsai -Raw) $original
+    }
+    Test 'panel unload PrismML stops service and never wakes it' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        & $m { $script:services.bonsai.Status = 'Running' }
+        $null = Invoke-AiPanelAction $f.path @{action='unload';backend='bonsai'}
+        Assert-True ((Get-Calls $m) -contains 'stop:bonsai')
+        Assert-True (-not ((Get-Calls $m) -like 'start:*'))
+    }
+    Test 'Ollama UI defaults modify only context and idle env' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        $null = Invoke-AiPanelAction $f.path @{action='save';backend='ollama';settings=@{context='64k';idle_minutes=15}}
+        $s = & $m { param($b) Get-AiLaunchSettings $b } $f.config.backends.ollama
+        Assert-Equal $s.context '65536'; Assert-Equal $s.keep_alive '15m'
+        Assert-Throws { Invoke-AiPanelAction $f.path @{action='save';backend='ollama';settings=@{gpu_layers=99}} } '*Неизвестная настройка*'
+    }
+    Test 'Ollama model preload uses empty prompt and configured keep-alive' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        & $m {
+            function script:Invoke-AiProbe { param($Backend,$Path) if($Path -eq '/api/tags') { [pscustomobject]@{models=@([pscustomobject]@{name='test:latest'})} } else { [pscustomobject]@{version='0.35.1'} } }
+            function script:Invoke-AiModelRequest { param($Backend,$Path,$Body,$Timeout) $script:modelBody=$Body; $script:modelPath=$Path }
+        }
+        $null = Invoke-AiPanelAction $f.path @{action='load';backend='ollama';model='test:latest'}
+        Assert-Equal (& $m {$script:modelBody.prompt}) ''
+        Assert-Equal (& $m {$script:modelBody.keep_alive}) '30m'
+        Assert-Equal (& $m {$script:modelBody.options.num_ctx}) 32768
+        Assert-Equal (& $m {$script:modelPath}) '/api/generate'
+    }
+    Test 'Ollama unload releases every loaded model without stopping service' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        & $m {
+            $script:unloaded=[Collections.Generic.List[string]]::new()
+            function script:Invoke-AiProbe { param($Backend,$Path) [pscustomobject]@{models=@([pscustomobject]@{name='one:latest'},[pscustomobject]@{name='two:latest'})} }
+            function script:Invoke-AiModelRequest { param($Backend,$Path,$Body,$Timeout) if($Body.keep_alive -ne 0){throw 'must unload'}; $script:unloaded.Add($Body.model) }
+        }
+        $null = Invoke-AiPanelAction $f.path @{action='unload';backend='ollama'}
+        Assert-Equal (& $m {$script:unloaded -join ','}) 'one:latest,two:latest'
+        Assert-True (-not ((Get-Calls $m) -like 'stop:*'))
+    }
+    Test 'panel dashboard of stopped servers does not query API or GPU' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        & $m {$script:services.ollama.Status='Stopped';function script:Get-AiGpuData {throw 'no GPU probe'}}
+        $d = Get-AiDashboard $f.path
+        Assert-Equal $d.backends.Count 2
+        Assert-True (-not ((Get-Calls $m) -like 'probe:*'))
+        Assert-Equal $d.gpu.Count 0
+    }
+    Test 'download validates URL and filename before accessing network' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        Assert-Throws { Invoke-AiPanelAction $f.path @{action='download';url='http://127.0.0.1/private.gguf';filename='model.gguf'} } '*HTTPS-ссылка*'
+        Assert-Throws { Invoke-AiPanelAction $f.path @{action='download';url='https://huggingface.co/o/r/resolve/main/x.gguf';filename='../model.gguf'} } '*Имя GGUF*'
+        Assert-Throws { Invoke-AiPanelAction $f.path @{action='pull';backend='ollama';model='x; Stop-Service bonsai'} } '*Некорректное имя*'
+    }
+    Test 'GGUF download checks magic and never overwrites existing model' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        & $m { function script:Invoke-WebRequest {param($Uri,$OutFile,$MaximumRedirection,$TimeoutSec) [IO.File]::WriteAllBytes($OutFile,[Text.Encoding]::ASCII.GetBytes('GGUFdownload'))} }
+        $request=@{action='download';url='https://huggingface.co/o/r/resolve/main/x.gguf';filename='new-model.gguf'}
+        $null=Invoke-AiPanelAction $f.path $request
+        Assert-Throws { Invoke-AiPanelAction $f.path $request } '*перезапись моделей запрещена*'
+        Assert-True (-not ((Get-Calls $m) -like 'start:*'))
+    }
+    Test 'bad downloaded GGUF is removed without adding a model' {
+        $m = New-TestModule; $f = New-WebModelFixture
+        & $m {function script:Invoke-WebRequest {param($Uri,$OutFile,$MaximumRedirection,$TimeoutSec) [IO.File]::WriteAllText($OutFile,'HTML error')}}
+        Assert-Throws { Invoke-AiPanelAction $f.path @{action='download';url='https://huggingface.co/o/r/resolve/main/x.gguf';filename='bad-model.gguf'} } '*заголовка GGUF*'
+        $dir = Split-Path (& $m {param($b)(Get-AiLaunchSettings $b).model} $f.config.backends.bonsai) -Parent
+        Assert-True (-not (Test-Path (Join-Path $dir 'bad-model.gguf')))
+        Assert-Equal @(Get-ChildItem -LiteralPath $dir -Filter '*.part').Count 0
+    }
+    Test 'panel password hashes are salted and checked securely' {
+        Import-Module (Join-Path $repo 'src/Panel.Security.psm1') -Force
+        $a=New-AiPanelPassword 'correct test password'; $b=New-AiPanelPassword 'correct test password'
+        Assert-True ($a.hash -cne $b.hash)
+        Assert-True (Test-AiPanelPassword 'correct test password' $a)
+        Assert-True (-not (Test-AiPanelPassword 'incorrect password' $a))
+        Assert-Throws {New-AiPanelPassword 'short'} '*12*'
+    }
+    Test 'panel origin check blocks cross-site actions' {
+        Assert-True (Test-AiPanelOrigin 'http://127.0.0.1:18090' '127.0.0.1:18090')
+        Assert-True (-not (Test-AiPanelOrigin 'http://evil.example' '127.0.0.1:18090'))
+        Assert-True (-not (Test-AiPanelOrigin 'http://127.0.0.1:18090@evil.example' '127.0.0.1:18090'))
+    }
+    Test 'panel service runs UI independently with automatic startup' {
+        Import-Module (Join-Path $repo 'src/Panel.Install.psm1') -Force
+        $xml=New-AiPanelServiceXml 'C:\Program Files\PowerShell\7\pwsh.exe' $testRoot
+        Assert-Equal $xml.service.id 'omnibox-ai'
+        Assert-Equal $xml.service.startmode 'Automatic'
+        Assert-Equal $xml.service.executable 'C:\Program Files\PowerShell\7\pwsh.exe'
+        Assert-True ($xml.service.arguments -like '*panel.ps1*')
+        Assert-True ($xml.service.arguments -notlike '*Start-Service*')
+    }
     Test 'self-contained package matches every current source file' {
         $setup = Join-Path $repo 'dist/install-omnibox-ai.ps1'
         $text = Get-Content $setup -Raw
@@ -646,7 +779,7 @@ try {
         $memory = [IO.MemoryStream]::new([Convert]::FromBase64String($encoded))
         $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Read)
         try {
-            Assert-Equal $archive.Entries.Count 11
+            Assert-Equal $archive.Entries.Count 20
             foreach ($entry in $archive.Entries) {
                 Assert-True ($entry.FullName -notmatch '(^/|\.\.)')
                 $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)

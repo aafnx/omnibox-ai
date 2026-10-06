@@ -482,7 +482,7 @@ function Show-AiPower {
 
 function Show-AiHelp {
     @'
-OmniBox AI 0.3.0 — управление локальными серверами
+OmniBox AI 0.4.0 — управление локальными серверами
 
 ai start [backend] [--context 128k]  Запуск; по умолчанию bonsai. Другой остановится.
 ai stop [bonsai|ollama]        Остановка; без имени — все настроенные серверы.
@@ -499,7 +499,7 @@ ai run/pull/list/ps/show/...  Сокращения команд Ollama, не к�
 ai version                   Версия ai.
 ai help                      Эта справка.
 
-Перед игрой: ai stop. Статус и журналы не загружают модель.
+Остановить все серверы: ai stop. Статус и журналы не загружают модель.
 Контекст: 32k=32768, 128k=131072, 192k=196608 токенов.
 ai context bonsai 128k — сохранить, без перезапуска работающего сервера.
 ai restart bonsai --context 128k — сохранить и применить сейчас.
@@ -516,7 +516,7 @@ function Invoke-Ai {
     $command = if ($Arguments.Count) { $Arguments[0].ToLowerInvariant() } else { 'help' }
     [string[]]$rest = @(if ($Arguments.Count -gt 1) { $Arguments[1..($Arguments.Count - 1)] })
     if ($command -in @('help', '--help', '-h')) { Show-AiHelp; return }
-    if ($command -in @('version', '--version')) { '0.3.0'; return }
+    if ($command -in @('version', '--version')) { '0.4.0'; return }
     $config = Read-AiConfig $ConfigPath
     switch ($command) {
         { $_ -in @('start', 'stop', 'restart') } {
@@ -631,4 +631,5 @@ function Invoke-Ai {
     }
 }
 
-Export-ModuleMember -Function Invoke-Ai
+. (Join-Path $PSScriptRoot 'Panel.Engine.ps1')
+Export-ModuleMember -Function Invoke-Ai, Get-AiDashboard, Invoke-AiPanelAction
