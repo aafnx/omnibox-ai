@@ -34,3 +34,5 @@ body{font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
 .page-heading{margin-bottom:22px}@media(max-width:720px){.page-heading{margin-bottom:18px}}
 /* The grid track follows the viewport, so the 430px login card shrinks on phones instead of overflowing. */
 .login-screen{grid-template-columns:minmax(0,1fr)}
+/* Brand Iris for primary actions in both themes; #6654df keeps white text above 4.5:1. */
+:root[data-theme=dark] .primary{background:#6654df}:root[data-theme=dark] .primary:hover{background:#7563ef}

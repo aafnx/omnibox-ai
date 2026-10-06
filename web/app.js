@@ -118,7 +118,7 @@ function renderActivity() {
   if(!activity||!snapshot)return;
   $('request-history').replaceChildren();(activity.requests||[]).forEach(r=>{$('request-history').append(tableRow([new Date(r.started).toLocaleString('ru-RU'),r.session_id.slice(0,8),r.model,`${r.state==='completed'?'Готово':'Ошибка'} · ${r.status}`,fmt(r.duration_seconds),fmt(r.input_tokens),fmt(r.output_tokens),fmt(r.total_tokens)]));});
   $('session-history').replaceChildren();(activity.sessions||[]).forEach(s=>{$('session-history').append(tableRow([s.id.slice(0,8),s.model,`${s.requests}${s.missing_usage?' · без usage: '+s.missing_usage:''}`,fmt(s.input_tokens),fmt(s.output_tokens),fmt(s.total_tokens)]));});
-  $('journal-status').textContent=activity.journal_error||'Журнал содержит только метаданные запросов через /v1 OmniBox AI.';
+  $('journal-status').textContent=activity.journal_error||'Журнал содержит только метаданные запросов через /v1 OMNIBOX AI.';
   const running=snapshot.backends.find(b=>['Running','StartPending'].includes(b.service));
   const r=activity.active||(activity.requests||[]).find(x=>running&&x.backend===running.name&&(!running.selected_model||x.model===running.selected_model));
   const box=$('live-session');box.replaceChildren();
