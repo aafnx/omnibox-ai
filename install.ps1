@@ -29,7 +29,7 @@ $contextReader = { param($Backend) & $aiModule { param($Backend) Get-AiConfigure
 if ($Reconfigure -and $NonInteractive) { throw '-Reconfigure и -NonInteractive нельзя использовать вместе.' }
 $installed = Test-Path -LiteralPath (Join-Path $InstallDirectory '.omnibox-ai-install') -PathType Leaf
 if ($installed -and -not $Reconfigure) { $NonInteractive = $true; Write-Host 'Обновление: существующие настройки сохраняются, мастер не запускается.' }
-Write-Host 'OmniBox AI 0.9.2 — установка / обновление на этом ПК'
+Write-Host 'OmniBox AI 0.9.3 — установка / обновление на этом ПК'
 Write-Host 'Используются уже установленные службы Bonsai и Ollama. Enter сохраняет предложенное значение.'
 $setup = Get-AiSetupOptions -InstallDirectory $InstallDirectory -ConfigLoader $configLoader -ContextReader $contextReader -NonInteractive:$NonInteractive -Reconfigure:$Reconfigure -DefaultBackend $DefaultBackend -Context $Context -StartServer:$StartServer
 $InstallDirectory = $setup.directory
@@ -82,7 +82,7 @@ if (-not $NoPanelSetup) {
     $panelService = Get-CimInstance Win32_Service -Filter "Name='omnibox-ai'" -ErrorAction Stop
     $expectedWrapper = Join-Path $destination 'panel-service.exe'
     $nativeCommand=New-AiNativeServiceCommand $pwsh $destination (Join-Path $destination 'panel-service.xml')
-    if ($null -ne $panelService -and $panelService.PathName.Trim().Trim('"') -ine $expectedWrapper -and $panelService.PathName -ine $nativeCommand) { throw 'Имя omnibox-ai занято другой Windows-службой.' }
+    if ($null -ne $panelService -and -not(Test-AiOwnedServiceCommand $panelService.PathName $pwsh $destination (Join-Path $destination 'panel-service.xml'))) { throw 'Имя omnibox-ai занято другой Windows-службой.' }
 }
 # Compile and probe an isolated runtime before stopping services or overwriting files.
 $runtimeStage = New-AiCheckedServiceRuntime -SourceDirectory $source -PwshPath $pwsh
@@ -115,7 +115,7 @@ if (-not (Test-Path -LiteralPath $configPath)) {
     Copy-Item -LiteralPath (Join-Path $destination 'config.example.json') -Destination $configPath
 } else { Write-Host 'Существующие параметры config.json сохранены.' }
 Import-Module (Join-Path $destination 'src/Service.Install.psm1') -Force
-$serviceBackup=Install-AiNativeServices -Directory $destination -PwshPath $pwsh -Config $setup.config -ValidatedRuntimePath (Join-Path $runtimeStage 'src/Service.Host.dll')
+$serviceBackup=Install-AiNativeServices -Directory $destination -PwshPath $pwsh -Config $setup.config -ValidatedRuntimePath (Join-Path $runtimeStage 'src/Service.Host.exe')
 $oldPanelWrapper=Join-Path $destination 'panel-service.exe'
 if($null -ne $panelService -and $panelService.PathName.Trim().Trim('"') -ieq $oldPanelWrapper -and (Test-Path -LiteralPath $oldPanelWrapper)){Copy-Item -LiteralPath $oldPanelWrapper -Destination (Join-Path $serviceBackup 'panel-winsw.exe')}
 $setup.config.default_backend = $setup.backend
@@ -123,7 +123,7 @@ Set-Content -LiteralPath $configPath -Value ($setup.config | ConvertTo-Json -Dep
 # Exact PowerShell location; %* preserves the user's command-line quoting in cmd.
 $launcher = "@echo off`r`n`"$pwsh`" -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"%~dp0ai.ps1`" %*`r`nexit /b %errorlevel%`r`n"
 Set-Content -LiteralPath (Join-Path $destination 'ai.cmd') -Value $launcher -Encoding ascii -NoNewline
-Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.9.2' -Encoding utf8
+Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.9.3' -Encoding utf8
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $entries = @($userPath -split ';' | Where-Object { $_ })

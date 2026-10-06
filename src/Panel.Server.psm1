@@ -104,7 +104,7 @@ function Start-OmniBoxPanel {
     $assets = @{ '/inter-400.woff'=@('web/inter-400.woff.base64','font/woff'); '/inter-600.woff'=@('web/inter-600.woff.base64','font/woff'); '/favicon.svg'=@('web/favicon.svg','image/svg+xml'); '/brand-light.svg'=@('web/brand-light.svg','image/svg+xml'); '/brand-dark.svg'=@('web/brand-dark.svg','image/svg+xml'); '/'  = @('web/index.html','text/html; charset=utf-8'); '/app.js' = @('web/app.js','text/javascript; charset=utf-8'); '/style.css' = @('web/style.css','text/css; charset=utf-8') }
     try {
         $listener.Start()
-        Write-Host "OmniBox AI 0.9.2 panel: port $($panel.port)"
+        Write-Host "OmniBox AI 0.9.3 panel: port $($panel.port)"
         while ($listener.IsListening) {
             # Blocking wait: no background polling, model probes, GPU queries, or wake timers.
             $context = $listener.GetContext()

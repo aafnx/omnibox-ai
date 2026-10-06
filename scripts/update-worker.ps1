@@ -7,7 +7,7 @@ function Write-UpdateResult([string]$Phase,[string]$Message){
     $value=@{phase=$Phase;message=$Message;version=$Version;service=$ServiceName;timestamp=[DateTime]::UtcNow.ToString('o')}|ConvertTo-Json -Compress
     $tmp=$statusPath+'.tmp';[IO.File]::WriteAllText($tmp,$value,[Text.Encoding]::UTF8);[IO.File]::Move($tmp,$statusPath,$true)
 }
-$snapshot=Join-Path $PSScriptRoot 'previous';$saved=$false
+$snapshot=Join-Path $PSScriptRoot 'previous';$saved=$false;$serviceSnapshot=@()
 $mutex=[Threading.Mutex]::new($false,'Global\omnibox-ai-control-v1');$locked=$false
 try{
     try{$locked=$mutex.WaitOne(60000)}catch [Threading.AbandonedMutexException]{$locked=$true}
@@ -15,9 +15,22 @@ try{
     Write-UpdateResult 'installing' 'Создаём резервную копию. Панель перезапустится; серверы будут остановлены.'
     $null=New-Item -ItemType Directory -Path $snapshot
     # Copy the installation, not model weights, request logs, earlier backups or credentials.
-    foreach($entry in @('ai.ps1','ai.cmd','panel.ps1','service.ps1','src','scripts','web','docs','README.md','config.example.json','config.json','panel.json','gateway.json','.omnibox-ai-install')){
+    foreach($entry in @('ai.ps1','ai.cmd','panel.ps1','panel-service.xml','service.ps1','src','scripts','web','docs','README.md','config.example.json','config.json','panel.json','gateway.json','.omnibox-ai-install')){
         $file=Join-Path $Root $entry
         if(Test-Path -LiteralPath $file){Copy-Item -LiteralPath $file -Destination $snapshot -Recurse -Force}
+    }
+    Import-Module (Join-Path $snapshot 'src/Service.Install.psm1') -Force
+    $previousConfig=Get-Content -LiteralPath (Join-Path $snapshot 'config.json') -Raw|ConvertFrom-Json -AsHashtable
+    $profiles=@{'omnibox-ai'=(Join-Path $Root 'panel-service.xml')}
+    foreach($backend in $previousConfig.backends.Values){if($backend.service -notmatch '^[A-Za-z0-9_.-]+$'){throw 'Invalid backend service.'};$profiles[$backend.service]=$backend.service_config}
+    $pwsh=(Get-Process -Id $PID).Path
+    foreach($name in $profiles.Keys){
+        $svc=Get-CimInstance Win32_Service -Filter "Name='$name'"
+        if($null -ne $svc){
+            if(-not(Test-AiOwnedServiceCommand $svc.PathName $pwsh $Root $profiles[$name])){throw 'Unexpected service command before update.'}
+            $startup=switch($svc.StartMode){'Auto'{'Automatic'} 'Manual'{'Manual'} 'Disabled'{'Disabled'} default{throw 'Unexpected service start mode.'}}
+            $serviceSnapshot+=@{name=$name;command=$svc.PathName;startup=$startup;profile=$profiles[$name]}
+        }
     }
     $saved=$true
     & (Join-Path $PSScriptRoot 'installer.ps1') -InstallDirectory $Root -NonInteractive -NoProfileUpdate
@@ -35,19 +48,18 @@ try{
             # A failed installation may have stopped the panel before stopping every backend.
             # Only stop services whose command exactly belongs to this installation.
             Import-Module (Join-Path $snapshot 'src/Service.Install.psm1') -Force
-            $previous=Get-Content -LiteralPath (Join-Path $snapshot 'config.json') -Raw|ConvertFrom-Json -AsHashtable
             $pwsh=(Get-Process -Id $PID).Path
-            foreach($backend in $previous.backends.Values){
-                if($backend.service -notmatch '^[A-Za-z0-9_.-]+$'){throw 'Invalid backend service.'}
-                $svc=Get-CimInstance Win32_Service -Filter "Name='$($backend.service)'"
+            foreach($entry in $serviceSnapshot){
+                $svc=Get-CimInstance Win32_Service -Filter "Name='$($entry.name)'"
                 if($null -ne $svc -and $svc.State -ne 'Stopped'){
-                    if($svc.PathName -ine (New-AiNativeServiceCommand $pwsh $Root $backend.service_config)){throw 'Unexpected backend service command.'}
+                    if(-not(Test-AiOwnedServiceCommand $svc.PathName $pwsh $Root $entry.profile)){throw 'Unexpected service command during recovery.'}
                     $process=Get-Process -Id $svc.ProcessId -ErrorAction SilentlyContinue
-                    Stop-Service -Name $backend.service -ErrorAction Stop
-                    if($null -ne $process -and -not $process.WaitForExit(30000)){throw 'Backend host still running.'}
+                    Stop-Service -Name $entry.name -ErrorAction Stop
+                    if($null -ne $process -and -not $process.WaitForExit(30000)){throw 'Service host still running.'}
                 }
             }
             foreach($item in Get-ChildItem -LiteralPath $snapshot -Force){Copy-Item -LiteralPath $item.FullName -Destination $Root -Recurse -Force}
+            foreach($entry in $serviceSnapshot){Set-Service -Name $entry.name -BinaryPathName $entry.command -StartupType $entry.startup -ErrorAction Stop}
             Start-Service 'omnibox-ai' -ErrorAction Stop
             $restored=$true
         }catch{}

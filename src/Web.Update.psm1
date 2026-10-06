@@ -139,7 +139,7 @@ function Get-AiWebUpdateStatus {
         if($Manager.shared.phase -in @('checking','login')){$Manager.shared.phase='failed';$Manager.shared.message='Операция прервана. Повторите проверку.'}
         Remove-Job $Manager.job -Force;$Manager.job=$null
     }
-    $current='0.9.2';$marker=Join-Path $Manager.root '.omnibox-ai-install'
+    $current='0.9.3';$marker=Join-Path $Manager.root '.omnibox-ai-install'
     if(Test-Path -LiteralPath $marker){$match=[regex]::Match((Get-Content -LiteralPath $marker -Raw),'\d+\.\d+\.\d+');if($match.Success){$current=$match.Value}}
     $result=@{current=$current;latest=$Manager.shared.latest;phase=$Manager.shared.phase;message=$Manager.shared.message;code=$Manager.shared.code;gh_available=[bool](Get-AiUpdateGh);authenticated=(Test-Path -LiteralPath (Join-Path $Manager.root 'updates/auth/github.dpapi'))}
     $file=Join-Path $Manager.root 'updates/result.json'
@@ -223,19 +223,18 @@ function Start-AiWebUpdateWorker {
         $oldService=Get-Service $oldName -ErrorAction SilentlyContinue
         if($null -ne $oldService -and $oldService.Status -eq 'Stopped'){
             $info=Get-CimInstance Win32_Service -Filter "Name='$oldName'" -ErrorAction SilentlyContinue
-            if($null -ne $info -and $info.PathName -ieq (New-AiNativeServiceCommand $pwsh $item.FullName (Join-Path $item.FullName 'update.xml'))){Remove-Service $oldName -ErrorAction SilentlyContinue;$oldService=Get-Service $oldName -ErrorAction SilentlyContinue}
+            if($null -ne $info -and (Test-AiOwnedServiceCommand $info.PathName $pwsh $item.FullName (Join-Path $item.FullName 'update.xml'))){Remove-Service $oldName -ErrorAction SilentlyContinue;$oldService=Get-Service $oldName -ErrorAction SilentlyContinue}
         }
         if($null -eq $oldService){Remove-Item -LiteralPath $item.FullName -Recurse -Force -ErrorAction SilentlyContinue}
     }
     $id=[Guid]::NewGuid().ToString('N');$name='omnibox-ai-update-'+$id.Substring(0,8)
     $stage=Join-Path $Root ('updates/run-'+$id);$null=New-Item -ItemType Directory -Path (Join-Path $stage 'src') -Force
-    Copy-Item -LiteralPath (Join-Path $Root 'service.ps1') -Destination $stage
-    Copy-Item -LiteralPath (Join-Path $Root 'src/Service.Host.dll') -Destination (Join-Path $stage 'src')
+    Copy-Item -LiteralPath (Join-Path $Root 'src/Service.Host.exe') -Destination (Join-Path $stage 'src')
     Copy-Item -LiteralPath (Join-Path $Root 'scripts/update-worker.ps1') -Destination $stage
     [IO.File]::WriteAllBytes((Join-Path $stage 'installer.ps1'),$bytes)
     $profile=Join-Path $stage 'update.xml';$x=[xml]'<service><id/><executable/><arguments/><workingdirectory/><logpath/></service>'
     $x.service.id=$name;$x.service.executable=$pwsh
-    $x.service.arguments='-NoLogo -NoProfile -ExecutionPolicy Bypass -File "'+(Join-Path $stage 'update-worker.ps1')+'" -Root "'+$Root+'" -ServiceName "'+$name+'" -Version "'+$Version+'"'
+    $x.service.arguments='-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'+(Join-Path $stage 'update-worker.ps1')+'" -Root "'+$Root+'" -ServiceName "'+$name+'" -Version "'+$Version+'"'
     $x.service.workingdirectory=$stage;$x.service.logpath=Join-Path $stage 'logs';$x.Save($profile)
     # A durable marker prevents duplicate installation after a panel restart.
     $resultPath=Join-Path $Root 'updates/result.json'

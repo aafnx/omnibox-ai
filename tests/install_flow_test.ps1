@@ -36,7 +36,7 @@ function global:Start-Service {param($Name,$ErrorAction)
   throw 'Fixture SCM startup failure'
  }
  $s=$global:FlowServices[$Name];$s.Status='Running';$s.State='Running';$global:FlowCalls.Add('start:'+ $Name)
- if($s.PathName -match '-Profile "([^"]+)"$'){Set-Content -LiteralPath ($Matches[1]+'.runtime.json') -Value '{"pid":null}'}
+ if($s.PathName -match '-Profile "([^"]+)"$'){Set-Content -LiteralPath ($Matches[1]+'.runtime.json') -Value '{"pid":null}';Set-Content -LiteralPath ($Matches[1]+'.ready') -Value 'ready'}
 }
 function global:Stop-Service {param($Name,$ErrorAction,[switch]$NoWait)$s=$global:FlowServices[$Name];$s.Status='Stopped';$s.State='Stopped';$global:FlowCalls.Add('stop:'+ $Name)}
 function global:Remove-Service {param($Name,$ErrorAction)$global:FlowServices.Remove($Name);$global:FlowCalls.Add('remove:'+ $Name)}
@@ -81,11 +81,13 @@ try{
  Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Panel not started'
  Assert ((Get-Service 'bonsai').Status -eq 'Stopped') 'Bonsai unexpectedly started'
  Assert ((Get-Service 'ollama').Status -eq 'Stopped') 'Ollama unexpectedly started'
- Assert (Test-Path (Join-Path $destination 'src/Service.Host.dll')) 'Runtime not built'
+ Assert (Test-Path (Join-Path $destination 'src/Service.Host.exe')) 'Runtime not built'
  Assert ($global:FlowCalls.Contains('firewall:omnibox-ai-panel')) 'Firewall boundary not reached'
  $previousPanel=Get-Content (Join-Path $destination 'panel.json') -Raw|ConvertFrom-Json -AsHashtable
  $previousGateway=Get-Content (Join-Path $destination 'gateway.json') -Raw|ConvertFrom-Json -AsHashtable
  # A running fake panel has PID 0; the process provider supplies no real host.
+ (Get-Service 'omnibox-ai').PathName=New-AiLegacyServiceCommand (Join-Path $PSHOME $(if($IsWindows){'pwsh.exe'}else{'pwsh'})) $destination (Join-Path $destination 'panel-service.xml')
+ (Get-Service 'bonsai').PathName=New-AiLegacyServiceCommand (Join-Path $PSHOME $(if($IsWindows){'pwsh.exe'}else{'pwsh'})) $destination $config.backends.bonsai.service_config
  $previousPanel.allowed_hosts+=@('custom.example');$previousPanel|ConvertTo-Json -Depth 12|Set-Content (Join-Path $destination 'panel.json')
  function global:Read-Host {throw 'Upgrade unexpectedly prompted'}
  & (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate
@@ -96,6 +98,8 @@ try{
  Assert ($gateway.key_hash -ceq $previousGateway.key_hash) 'Upgrade changed API key'
  Assert ($gateway.base_url -ceq $previousGateway.base_url) 'Upgrade changed endpoint'
  Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Upgraded panel not started'
+ Assert ((Get-Service 'omnibox-ai').PathName -like '*src/Service.Host.exe*') 'Legacy panel was not migrated'
+ Assert ((Get-Service 'bonsai').PathName -like '*src/Service.Host.exe*') 'Legacy backend was not migrated'
  Write-Host 'PASS real installer body completes first installation and upgrade with mocked Windows providers'
  # An SCM preflight failure must leave both running panel and installed source intact.
  $beforeHash=(Get-FileHash (Join-Path $destination 'service.ps1')).Hash
@@ -113,17 +117,10 @@ try{
  Assert (Test-Path (Join-Path $failedStage 'logs')) 'Failed preflight lost diagnostics'
  Remove-Item -LiteralPath $failedStage -Recurse -Force
  Write-Host 'PASS failed SCM preflight preserves running installation and reports bootstrap detail'
- $bootstrap=Join-Path $fixture 'bootstrap';$null=New-Item -ItemType Directory -Path $bootstrap
- Copy-Item (Join-Path $repo 'service.ps1') $bootstrap
- $bootstrapProfile=Join-Path $bootstrap 'fixture.xml';Set-Content $bootstrapProfile '<service/>'
- $bootstrapFailed=$false
- try{& (Join-Path $bootstrap 'service.ps1') -Profile $bootstrapProfile}catch{$bootstrapFailed=$true}
- Assert $bootstrapFailed 'Missing assembly did not fail'
- Assert (Test-Path (Join-Path $bootstrap 'logs/fixture.bootstrap.log')) 'Early service error was not logged'
  $script:reconfigurePrompts=0
  $null=Get-AiSetupOptions -InstallDirectory $destination -Reconfigure -ConfigLoader {param($d)Get-Content (Join-Path $d 'config.json') -Raw|ConvertFrom-Json -AsHashtable} -ContextReader {param($b)'196608'} -ReadAnswer {param($prompt)$script:reconfigurePrompts++;''}
  Assert ($script:reconfigurePrompts -eq 4) 'Explicit reconfigure did not open setup prompts'
- Write-Host 'PASS early assembly failures are logged and explicit reconfigure opens the wizard'
+ Write-Host 'PASS explicit reconfigure opens the wizard'
 
 
 }finally{

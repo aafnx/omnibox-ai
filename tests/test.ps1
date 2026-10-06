@@ -99,7 +99,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.9.2'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.9.3'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -1009,12 +1009,15 @@ try {
     Test 'native service command quotes executable, script and compatible profile paths' {
         Import-Module (Join-Path $repo 'src/Service.Install.psm1') -Force
         $cmd=New-AiNativeServiceCommand '/program files/pwsh' '/tools/ai' '/models/service.xml'
-        Assert-True ($cmd.StartsWith('"/program files/pwsh"'))
+        Assert-True ($cmd.StartsWith('"/tools/ai/src/Service.Host.exe"'))
         Assert-True ($cmd.Contains('-Profile "/models/service.xml"'))
         Assert-True (-not $cmd.Contains('winsw'))
         Assert-Throws {New-AiNativeServiceCommand '/bad"path' '/tools/ai' '/model.xml'} '*Invalid service path*'
         Add-Type -Path (Join-Path $repo 'src/Service.Host.cs')
-        Assert-Throws {[OmniBox.ServiceHost]::Run('test','pwsh','','','','','',[Collections.Generic.Dictionary[string,string]]::new())} '*Windows service runtime*'
+        Assert-True (Test-AiOwnedServiceCommand $cmd '/program files/pwsh' '/tools/ai' '/models/service.xml')
+        $legacy=New-AiLegacyServiceCommand '/program files/pwsh' '/tools/ai' '/models/service.xml'
+        Assert-True (Test-AiOwnedServiceCommand $legacy '/program files/pwsh' '/tools/ai' '/models/service.xml')
+        Assert-True (-not(Test-AiOwnedServiceCommand '"/other/service.exe" -Profile "/models/service.xml"' '/program files/pwsh' '/tools/ai' '/models/service.xml'))
     }
     Test 'Prism placement sets CPU, full GPU or explicit hybrid layers without losing context' {
         $f=New-ContextFixture;$m=New-TestModule;$b=$f.config.backends.bonsai
@@ -1100,7 +1103,7 @@ try {
         $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
         $before=@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count
         $output=Invoke-AiDownloadedInstaller -Bytes ([IO.File]::ReadAllBytes((Join-Path $repo 'dist/install-omnibox-ai.ps1'))) -CheckOnly
-        Assert-True ($output -like '*0.9.2 payload OK*')
+        Assert-True ($output -like '*0.9.3 payload OK*')
         Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before
         Assert-Throws {Invoke-AiDownloadedInstaller -Bytes ([Text.Encoding]::UTF8.GetBytes("throw 'fixture installer error'"))} '*fixture installer error*'
         Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before

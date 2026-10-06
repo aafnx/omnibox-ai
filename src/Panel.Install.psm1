@@ -84,7 +84,7 @@ function New-AiPanelServiceXml {
     $xml = [Xml.XmlDocument]::new()
     $xml.LoadXml('<service><id>omnibox-ai</id><name>OmniBox AI</name><description>AI server control panel</description><executable/><arguments/><workingdirectory/><startmode>Automatic</startmode><stoptimeout>30 sec</stoptimeout><stopparentprocessfirst>true</stopparentprocessfirst><logpath/><log mode="roll-by-size"><sizeThreshold>10240</sizeThreshold><keepFiles>3</keepFiles></log></service>')
     $xml.service.executable = $PwshPath
-    $xml.service.arguments = '-NoLogo -NoProfile -ExecutionPolicy Bypass -File "' + (Join-Path $Directory 'panel.ps1') + '"'
+    $xml.service.arguments = '-NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + (Join-Path $Directory 'panel.ps1') + '"'
     $xml.service.workingdirectory = $Directory
     $xml.service.logpath = Join-Path $Directory 'logs'
     return ,$xml
