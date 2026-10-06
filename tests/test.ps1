@@ -1103,7 +1103,16 @@ try {
             $x=[xml](Get-Content (Join-Path $repo "web/$name") -Raw)
             Assert-Equal $x.DocumentElement.LocalName 'svg'
             Assert-True ($x.OuterXml.Contains('#7C6CFF') -or $x.OuterXml.Contains('#7c6cff'))
+            # The lockup is transparent: a filled background shows as a box on cards of another colour.
+            Assert-Equal @($x.SelectNodes('//*[local-name()="rect"]')).Count 0
         }
+        foreach($name in @('brand-light.svg','brand-dark.svg')){
+            # OMNIBOX AI lockup: the wordmark has nine Michroma glyph outlines including the AI suffix.
+            $x=[xml](Get-Content (Join-Path $repo "web/$name") -Raw)
+            $glyphs=[regex]::Matches(($x.DocumentElement.LastChild.InnerXml),'\bM\s*[-\d.]').Count
+            Assert-True ($glyphs -ge 9) "Wordmark of $name has $glyphs outlines"
+        }
+        Assert-True ((Get-Content (Join-Path $repo 'web/index.html') -Raw).Contains('alt="OMNIBOX AI"')) 'Logo alt text is not OMNIBOX AI'
     }
     Test 'updater uses gh credentials without asking for a token' {
         $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
