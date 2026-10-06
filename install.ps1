@@ -19,6 +19,9 @@ Import-Module (Join-Path $PSScriptRoot 'src/Setup.Helpers.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'src/Service.Install.psm1') -Force
 $aiModule = Import-Module (Join-Path $PSScriptRoot 'src/OmniBox.Ai.psm1') -Force -PassThru
 $sourceRoot = $PSScriptRoot
+$package = Import-PowerShellDataFile -LiteralPath (Join-Path $PSScriptRoot 'package.psd1')
+$version = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'VERSION') -Raw).Trim()
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'Некорректный файл VERSION в пакете установки.' }
 $configLoader = {
     param($Directory)
     $path = Join-Path $Directory 'config.json'
@@ -29,7 +32,7 @@ $contextReader = { param($Backend) & $aiModule { param($Backend) Get-AiConfigure
 if ($Reconfigure -and $NonInteractive) { throw '-Reconfigure и -NonInteractive нельзя использовать вместе.' }
 $installed = Test-Path -LiteralPath (Join-Path $InstallDirectory '.omnibox-ai-install') -PathType Leaf
 if ($installed -and -not $Reconfigure) { $NonInteractive = $true; Write-Host 'Обновление: существующие настройки сохраняются, мастер не запускается.' }
-Write-Host 'OmniBox AI 0.9.4 — установка / обновление на этом ПК'
+Write-Host "OmniBox AI $version — установка / обновление на этом ПК"
 Write-Host 'Используются уже установленные службы Bonsai и Ollama.'
 if(-not $NonInteractive){Write-Host 'Enter сохраняет предложенное значение.'}
 $setup = Get-AiSetupOptions -InstallDirectory $InstallDirectory -ConfigLoader $configLoader -ContextReader $contextReader -NonInteractive:$NonInteractive -Reconfigure:$Reconfigure -DefaultBackend $DefaultBackend -Context $Context -StartServer:$StartServer
@@ -62,7 +65,7 @@ if ($null -ne $existing) {
         throw "Команда ai уже существует: $($existing.Source). Устрани конфликт имени перед установкой."
     }
 }
-$files = @('ai.ps1', 'ai.cmd', 'panel.ps1', 'service.ps1', 'src/Service.Host.cs', 'src/Service.Install.psm1', 'scripts/build-service.ps1', 'src/OmniBox.Ai.psm1', 'src/Panel.Engine.ps1', 'src/Panel.Cli.ps1', 'src/Telemetry.ps1', 'src/Inference.Stats.cs', 'src/Gateway.Helpers.psm1', 'src/OpenAi.Proxy.cs', 'src/Model.Catalog.psm1', 'src/Panel.Server.psm1', 'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Update.Helpers.psm1', 'src/Web.Update.psm1', 'scripts/update-worker.ps1', 'scripts/get-install.ps1', 'src/Setup.Helpers.psm1', 'web/index.html', 'web/style.css', 'web/app.js', 'web/favicon.svg', 'web/brand-light.svg', 'web/brand-dark.svg', 'web/inter-400.woff.base64', 'web/inter-600.woff.base64', 'web/inter-license.txt', 'config.example.json', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md', 'docs/web-panel.md', 'docs/reverse-proxy.md', 'docs/model-api.md', 'docs/models.md', 'docs/monitoring.md')
+$files = @($package.Files)
 foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $file) -PathType Leaf)) { throw "Нет файла исходников: $file" }
 }
@@ -124,7 +127,7 @@ Set-Content -LiteralPath $configPath -Value ($setup.config | ConvertTo-Json -Dep
 # Exact PowerShell location; %* preserves the user's command-line quoting in cmd.
 $launcher = "@echo off`r`n`"$pwsh`" -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"%~dp0ai.ps1`" %*`r`nexit /b %errorlevel%`r`n"
 Set-Content -LiteralPath (Join-Path $destination 'ai.cmd') -Value $launcher -Encoding ascii -NoNewline
-Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.9.4' -Encoding utf8
+Set-Content -LiteralPath $markerPath -Value "omnibox-ai $version" -Encoding utf8
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $entries = @($userPath -split ';' | Where-Object { $_ })

@@ -5,6 +5,8 @@ Set-StrictMode -Version Latest
 $repo = Split-Path $PSScriptRoot -Parent
 $modulePath = Join-Path $repo 'src/OmniBox.Ai.psm1'
 $example = Join-Path $repo 'config.example.json'
+$version = (Get-Content -LiteralPath (Join-Path $repo 'VERSION') -Raw).Trim()
+$manifest = Import-PowerShellDataFile -LiteralPath (Join-Path $repo 'package.psd1')
 $script:passed = 0
 $script:failed = 0
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('omnibox-ai-tests-' + [Guid]::NewGuid().ToString('N'))
@@ -99,7 +101,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.9.4'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') $version
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -1138,7 +1140,7 @@ try {
         $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
         $before=@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count
         $output=Invoke-AiDownloadedInstaller -Bytes ([IO.File]::ReadAllBytes((Join-Path $repo 'dist/install-omnibox-ai.ps1'))) -CheckOnly
-        Assert-True ($output -like '*0.9.4 payload OK*')
+        Assert-True ($output -like "*$version payload OK*")
         Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before
         Assert-Throws {Invoke-AiDownloadedInstaller -Bytes ([Text.Encoding]::UTF8.GetBytes("throw 'fixture installer error'"))} '*fixture installer error*'
         Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before
@@ -1154,26 +1156,69 @@ try {
         Assert-True (& $m {$script:updateToken})
         Assert-Throws {Invoke-Ai -Arguments @('update','--wrong') -ConfigPath 'missing'} '*ai update*'
     }
+    Test 'VERSION is the single source of the application version' {
+        Assert-True ($version -match '^\d+\.\d+\.\d+$') 'VERSION must be x.y.z'
+        $sources = @($manifest.Files + $manifest.InstallerFiles + @('scripts/setup.template.ps1', 'scripts/build-setup.ps1') | Where-Object { $_ -match '\.(ps1|psm1|psd1|cs|js|html)$' })
+        foreach ($file in $sources) {
+            $text = Get-Content -LiteralPath (Join-Path $repo $file) -Raw
+            Assert-True ($text -notmatch [regex]::Escape("'$version'")) "Hard-coded version in $file"
+            Assert-True ($text -notmatch 'OmniBox AI \d+\.\d+\.\d+|omnibox-ai \d+\.\d+\.\d+') "Hard-coded version text in $file"
+        }
+        Assert-True ((Get-Content -LiteralPath (Join-Path $repo 'CHANGELOG.md') -Raw) -match ('(?m)^## ' + [regex]::Escape($version) + ' ')) 'CHANGELOG has no entry for VERSION'
+        Assert-True ((Get-Content -LiteralPath (Join-Path $repo 'README.md') -Raw).Contains("**$version**")) 'README states another version'
+    }
     Test 'self-contained package matches every current source file' {
         $setup = Join-Path $repo 'dist/install-omnibox-ai.ps1'
         $text = Get-Content $setup -Raw
         $encoded = [regex]::Match($text, '(?m)^\$payload = ''([^'']+)''').Groups[1].Value
+        $sha = [regex]::Match($text, '(?m)^\$expectedSha = ''([a-f0-9]{64})''').Groups[1].Value
         Assert-True ($encoded.Length -gt 0)
+        # The generated wrapper is exactly the current template with this version and payload.
+        $template = (Get-Content -LiteralPath (Join-Path $repo 'scripts/setup.template.ps1') -Raw) -replace "`r?`n", "`r`n"
+        $expected = $template.Replace('__VERSION__', $version).Replace('__PAYLOAD_SHA256__', $sha).Replace('__PAYLOAD_BASE64__', $encoded)
+        Assert-True (($text -replace "`r?`n", "`r`n") -ceq $expected) 'dist was not built from the current template/VERSION: run scripts/build-setup.ps1'
         $memory = [IO.MemoryStream]::new([Convert]::FromBase64String($encoded))
         $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Read)
         try {
-            Assert-Equal $archive.Entries.Count 44
+            $names = @($archive.Entries | ForEach-Object FullName)
+            Assert-Equal ($names -join ',') ((@($manifest.Files) + @($manifest.InstallerFiles)) -join ',')
             foreach ($entry in $archive.Entries) {
                 Assert-True ($entry.FullName -notmatch '(^/|\.\.)')
-                $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)
+                $reader = [IO.StreamReader]::new($entry.Open(), [Text.UTF8Encoding]::new($false), $false)
                 try { $embedded = $reader.ReadToEnd() } finally { $reader.Dispose() }
-                Assert-Equal $embedded (Get-Content -LiteralPath (Join-Path $repo $entry.FullName) -Raw)
+                $current = (Get-Content -LiteralPath (Join-Path $repo $entry.FullName) -Raw).Replace("`r`n", "`n")
+                if ([IO.Path]::GetExtension($entry.FullName) -in $manifest.CrlfExtensions) { $current = $current.Replace("`n", "`r`n") }
+                Assert-True ($embedded -ceq $current) "Package differs from source: $($entry.FullName). Run scripts/build-setup.ps1"
             }
         } finally { $archive.Dispose(); $memory.Dispose() }
         $exe = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
         $output = & $exe -NoLogo -NoProfile -File $setup -CheckOnly
         Assert-Equal $global:LASTEXITCODE 0
-        Assert-True ($output -like '*payload OK*')
+        Assert-True ($output -like "*$version payload OK*")
+    }
+    Test 'package build is independent of checkout line endings' {
+        $copy = Join-Path $testRoot 'eol-checkout'
+        foreach ($file in @($manifest.Files) + @($manifest.InstallerFiles) + @('scripts/build-setup.ps1', 'scripts/setup.template.ps1')) {
+            $target = Join-Path $copy $file
+            $null = New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force
+            # Opposite line endings from the packaged form must produce the same payload content.
+            $content = (Get-Content -LiteralPath (Join-Path $repo $file) -Raw).Replace("`r`n", "`n")
+            if ([IO.Path]::GetExtension($file) -notin $manifest.CrlfExtensions) { $content = $content.Replace("`n", "`r`n") }
+            [IO.File]::WriteAllText($target, $content, [Text.UTF8Encoding]::new($false))
+        }
+        $exe = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
+        $built = Join-Path $copy 'dist/install-omnibox-ai.ps1'
+        $null = & $exe -NoLogo -NoProfile -File (Join-Path $copy 'scripts/build-setup.ps1') -OutputPath $built
+        Assert-Equal $global:LASTEXITCODE 0
+        $pattern = '(?m)^\$payload = ''([^'']+)'''
+        $read = {
+            param([string]$Setup)
+            $bytes = [Convert]::FromBase64String([regex]::Match((Get-Content -LiteralPath $Setup -Raw), $pattern).Groups[1].Value)
+            $zip = [IO.Compression.ZipArchive]::new([IO.MemoryStream]::new($bytes))
+            try { @($zip.Entries | ForEach-Object { $r = [IO.StreamReader]::new($_.Open()); try { $_.FullName + '=' + $r.ReadToEnd() } finally { $r.Dispose() } }) -join "`0" }
+            finally { $zip.Dispose() }
+        }
+        Assert-True ((& $read $built) -ceq (& $read (Join-Path $repo 'dist/install-omnibox-ai.ps1'))) 'Payload content depends on checkout line endings'
     }
     Test 'self-contained package corruption is rejected before installation' {
         $text = Get-Content (Join-Path $repo 'dist/install-omnibox-ai.ps1') -Raw

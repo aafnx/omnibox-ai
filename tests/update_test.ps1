@@ -2,6 +2,7 @@
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $root=Split-Path $PSScriptRoot -Parent
+$version=(Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
 $m=Import-Module (Join-Path $root 'src/Web.Update.psm1') -Force -PassThru
 $dir=Join-Path ([IO.Path]::GetTempPath()) ('omnibox-update-tests-'+[Guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path $dir
@@ -20,7 +21,7 @@ try{
     } $bytes
     Test 'web package uses delegated gh credential and validates version/payload without execution' {
         $p=Get-AiWebInstaller $dir
-        Assert ($p.version -eq '0.9.4') 'Version missing'
+        Assert ($p.version -eq $version) 'Version missing'
         Assert ((& $m {$script:sentToken}) -eq 'delegated-secret') 'Credential not delegated'
         Assert ($p.bytes.Length -eq $bytes.Length) 'Package differs'
         Assert ($p.sha256 -eq [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()) 'File hash differs'
@@ -200,7 +201,7 @@ if sys.argv[1:3]==['auth','login']:
 elif sys.argv[1:3]==['auth','token']: print('fixture-token-not-real')
 else: print(open(__file__+'.json').read())
 '@
-        [IO.File]::WriteAllText($fake,$program,[Text.UTF8Encoding]::new($false));Copy-Item $fixture ($fake+'.json');& chmod +x $fake
+        [IO.File]::WriteAllText($fake,$program.Replace("`r`n","`n"),[Text.UTF8Encoding]::new($false));Copy-Item $fixture ($fake+'.json');& chmod +x $fake
         & $m {param($exe,$moduleFile)
             $script:realGh=$exe
             Remove-Item Function:script:Invoke-AiUpdateGh
@@ -214,7 +215,7 @@ else: print(open(__file__+'.json').read())
         Test 'device code gh process completes, delegates credential and removes temporary gh profile' {
             $state=[hashtable]::Synchronized(@{cancel=$false;code='';message=''})
             $package=Invoke-AiWebGhLogin $dir $state
-            Assert ($package.version -eq '0.9.4') 'Login did not download'
+            Assert ($package.version -eq $version) 'Login did not download'
             Assert ((& $m {$script:saved}) -eq 'fixture-token-not-real') 'Login token not delegated'
             Assert ($state.code -eq '') 'Code not cleared'
             Assert (@(Get-ChildItem (Join-Path $dir 'updates/auth') -Directory).Count -eq 0) 'gh config leaked'

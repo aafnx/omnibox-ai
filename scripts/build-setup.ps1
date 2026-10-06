@@ -3,7 +3,21 @@
 param([string]$OutputPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'dist/install-omnibox-ai.ps1'))
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$files = @('ai.ps1', 'ai.cmd', 'panel.ps1', 'service.ps1', 'src/Service.Host.cs', 'src/Service.Install.psm1', 'scripts/build-service.ps1', 'src/OmniBox.Ai.psm1', 'src/Panel.Engine.ps1', 'src/Panel.Cli.ps1', 'src/Telemetry.ps1', 'src/Inference.Stats.cs', 'src/Gateway.Helpers.psm1', 'src/OpenAi.Proxy.cs', 'src/Model.Catalog.psm1', 'src/Panel.Server.psm1', 'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Update.Helpers.psm1', 'src/Web.Update.psm1', 'scripts/update-worker.ps1', 'scripts/get-install.ps1', 'src/Setup.Helpers.psm1', 'web/index.html', 'web/style.css', 'web/app.js', 'web/favicon.svg', 'web/brand-light.svg', 'web/brand-dark.svg', 'web/inter-400.woff.base64', 'web/inter-600.woff.base64', 'web/inter-license.txt', 'config.example.json', 'install.ps1', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md', 'docs/web-panel.md', 'docs/reverse-proxy.md', 'docs/model-api.md', 'docs/models.md', 'docs/monitoring.md')
+$package = Import-PowerShellDataFile -LiteralPath (Join-Path $root 'package.psd1')
+$version = (Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
+if ($version -notmatch '^\d+\.\d+\.\d+$') { throw 'VERSION must contain a single x.y.z version.' }
+$files = @($package.Files) + @($package.InstallerFiles)
+
+function ConvertTo-AiPackageBytes {
+    # Same bytes from any checkout: CRLF for Windows scripts, LF for everything else.
+    param([string]$Path, [string[]]$CrlfExtensions)
+    $text = [Text.UTF8Encoding]::new($false, $true).GetString([IO.File]::ReadAllBytes($Path))
+    if ($text.Contains([char]0)) { throw "Package file is not text: $Path" }
+    $text = $text.Replace("`r`n", "`n")
+    if ([IO.Path]::GetExtension($Path).ToLowerInvariant() -in $CrlfExtensions) { $text = $text.Replace("`n", "`r`n") }
+    return ,[Text.UTF8Encoding]::new($false).GetBytes($text)
+}
+
 $memory = [IO.MemoryStream]::new()
 try {
     $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Create, $true)
@@ -13,7 +27,7 @@ try {
             $entry.LastWriteTime = [DateTimeOffset]::new(2026, 10, 5, 0, 0, 0, [TimeSpan]::Zero)
             $output = $entry.Open()
             try {
-                $bytes = [IO.File]::ReadAllBytes((Join-Path $root $file))
+                $bytes = ConvertTo-AiPackageBytes (Join-Path $root $file) $package.CrlfExtensions
                 $output.Write($bytes, 0, $bytes.Length)
             } finally { $output.Dispose() }
         }
@@ -21,8 +35,8 @@ try {
     $bytes = $memory.ToArray()
 } finally { $memory.Dispose() }
 $sha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
-$template = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'setup.template.ps1') -Raw
-$generated = $template.Replace('__PAYLOAD_SHA256__', $sha).Replace('__PAYLOAD_BASE64__', [Convert]::ToBase64String($bytes))
+$template = (Get-Content -LiteralPath (Join-Path $PSScriptRoot 'setup.template.ps1') -Raw) -replace "`r?`n", "`r`n"
+$generated = $template.Replace('__VERSION__', $version).Replace('__PAYLOAD_SHA256__', $sha).Replace('__PAYLOAD_BASE64__', [Convert]::ToBase64String($bytes))
 $fullOutput = [IO.Path]::GetFullPath($OutputPath)
 $null = New-Item -ItemType Directory -Path (Split-Path $fullOutput -Parent) -Force
 Set-Content -LiteralPath $fullOutput -Value $generated -Encoding utf8BOM -NoNewline
