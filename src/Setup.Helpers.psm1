@@ -14,12 +14,14 @@ function Read-AiYesNo {
 
 function Get-AiSetupOptions {
     param([string]$InstallDirectory = 'C:\tools\ai', [scriptblock]$ConfigLoader, [scriptblock]$ContextReader,
-        [switch]$NonInteractive, [string]$DefaultBackend = '', [string]$Context = '', [switch]$StartServer,
+        [switch]$NonInteractive, [switch]$Reconfigure, [string]$DefaultBackend = '', [string]$Context = '', [switch]$StartServer,
         [scriptblock]$ReadAnswer = { param($Prompt) Read-Host $Prompt })
+    if (-not $Reconfigure -and [IO.File]::Exists([IO.Path]::Combine($InstallDirectory, '.omnibox-ai-install'))) { $NonInteractive = $true }
     if (-not $NonInteractive) {
         $answer = & $ReadAnswer "Папка установки [$InstallDirectory]"
         if (-not [string]::IsNullOrWhiteSpace($answer)) { $InstallDirectory = $answer.Trim() }
     }
+    if (-not $Reconfigure -and [IO.File]::Exists([IO.Path]::Combine($InstallDirectory, '.omnibox-ai-install'))) { $NonInteractive = $true }
     $config = & $ConfigLoader $InstallDirectory
     if (-not $DefaultBackend) { $DefaultBackend = $config.default_backend }
     if (-not $NonInteractive) {

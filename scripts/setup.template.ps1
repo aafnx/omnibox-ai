@@ -8,7 +8,7 @@ Self-contained interactive installer. Run on the Windows PC through SSH.
 & .\install-omnibox-ai.ps1 -NonInteractive -DefaultBackend bonsai -Context 192k
 #>
 [CmdletBinding()]
-param([string]$InstallDirectory = 'C:\tools\ai', [switch]$NonInteractive,
+param([string]$InstallDirectory = 'C:\tools\ai', [switch]$NonInteractive, [switch]$Reconfigure,
     [string]$DefaultBackend = '', [string]$Context = '', [switch]$StartServer,
     [switch]$NoProfileUpdate, [switch]$CheckOnly, [string]$PanelHost = '', [int]$PanelPort = 18090,
     [string]$PanelRemoteAddresses = 'LocalSubnet', [switch]$NoPanelSetup,
@@ -21,7 +21,7 @@ $payload = '__PAYLOAD_BASE64__'
 $payloadBytes = [Convert]::FromBase64String($payload)
 $actualSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($payloadBytes)).ToLowerInvariant()
 if ($actualSha -cne $expectedSha) { throw 'Встроенный пакет повреждён: SHA256 не совпадает.' }
-if ($CheckOnly) { Write-Output "OmniBox AI 0.9.1 payload OK ($($payloadBytes.Length) bytes)"; return }
+if ($CheckOnly) { Write-Output "OmniBox AI 0.9.2 payload OK ($($payloadBytes.Length) bytes)"; return }
 if (-not $IsWindows) { throw 'Установщик предназначен для Windows.' }
 
 $temporaryDirectory = Join-Path $env:TEMP ('omnibox-ai-package-' + [Guid]::NewGuid().ToString('N'))
@@ -31,7 +31,7 @@ try {
     [IO.File]::WriteAllBytes($zipPath, $payloadBytes)
     $sourcePath = Join-Path $temporaryDirectory 'source'
     Expand-Archive -LiteralPath $zipPath -DestinationPath $sourcePath
-    $installArgs = @{ InstallDirectory = $InstallDirectory; NonInteractive = $NonInteractive; DefaultBackend = $DefaultBackend; Context = $Context; StartServer = $StartServer; NoProfileUpdate = $NoProfileUpdate; PanelHost = $PanelHost; NoPanelSetup = $NoPanelSetup }
+    $installArgs = @{ InstallDirectory = $InstallDirectory; NonInteractive = $NonInteractive; Reconfigure = $Reconfigure; DefaultBackend = $DefaultBackend; Context = $Context; StartServer = $StartServer; NoProfileUpdate = $NoProfileUpdate; PanelHost = $PanelHost; NoPanelSetup = $NoPanelSetup }
     if ($PSBoundParameters.ContainsKey('PanelRemoteAddresses')) { $installArgs.PanelRemoteAddresses = $PanelRemoteAddresses }
     if ($PSBoundParameters.ContainsKey('PanelPort')) { $installArgs.PanelPort = $PanelPort }
     if ($PSBoundParameters.ContainsKey('PanelPublicUrl')) { $installArgs.PanelPublicUrl = $PanelPublicUrl }

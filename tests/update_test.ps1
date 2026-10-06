@@ -20,7 +20,7 @@ try{
     } $bytes
     Test 'web package uses delegated gh credential and validates version/payload without execution' {
         $p=Get-AiWebInstaller $dir
-        Assert ($p.version -eq '0.9.1') 'Version missing'
+        Assert ($p.version -eq '0.9.2') 'Version missing'
         Assert ((& $m {$script:sentToken}) -eq 'delegated-secret') 'Credential not delegated'
         Assert ($p.bytes.Length -eq $bytes.Length) 'Package differs'
         Assert ($p.sha256 -eq [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()) 'File hash differs'
@@ -81,7 +81,7 @@ try{
         Copy-Item (Join-Path $root 'service.ps1') $fixture
         Copy-Item (Join-Path $root 'src/Service.Install.psm1') (Join-Path $fixture 'src')
         Copy-Item (Join-Path $root 'scripts/update-worker.ps1') (Join-Path $fixture 'scripts')
-        Set-Content (Join-Path $fixture '.omnibox-ai-install') 'omnibox-ai 0.9.1'
+        Set-Content (Join-Path $fixture '.omnibox-ai-install') 'omnibox-ai 0.9.2'
         [IO.File]::WriteAllBytes((Join-Path $fixture 'src/Service.Host.dll'),[byte[]]@(1,2,3))
         $installer=Join-Path $fixture 'installer.ps1';[IO.File]::WriteAllBytes($installer,$bytes)
         $sha=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
@@ -146,7 +146,7 @@ try{
                 Copy-Item (Join-Path $root 'scripts/update-worker.ps1') $stage
                 Copy-Item (Join-Path $root 'src/Service.Install.psm1') (Join-Path $installed 'src')
                 Set-Content (Join-Path $installed 'ai.ps1') 'previous app'
-                Set-Content (Join-Path $installed '.omnibox-ai-install') 'omnibox-ai 0.9.1'
+                Set-Content (Join-Path $installed '.omnibox-ai-install') 'omnibox-ai 0.9.2'
                 Set-Content (Join-Path $installed 'config.json') '{"backends":{}}'
                 Set-Content (Join-Path $installed 'panel.json') '{"port":18090,"public_origin":"https://llm.fnx.red","credential":"fixture"}'
                 Set-Content (Join-Path $installed 'gateway.json') '{"key_hash":"fixture-key-hash"}'
@@ -201,7 +201,7 @@ else: print(open(__file__+'.json').read())
         Test 'device code gh process completes, delegates credential and removes temporary gh profile' {
             $state=[hashtable]::Synchronized(@{cancel=$false;code='';message=''})
             $package=Invoke-AiWebGhLogin $dir $state
-            Assert ($package.version -eq '0.9.1') 'Login did not download'
+            Assert ($package.version -eq '0.9.2') 'Login did not download'
             Assert ((& $m {$script:saved}) -eq 'fixture-token-not-real') 'Login token not delegated'
             Assert ($state.code -eq '') 'Code not cleared'
             Assert (@(Get-ChildItem (Join-Path $dir 'updates/auth') -Directory).Count -eq 0) 'gh config leaked'

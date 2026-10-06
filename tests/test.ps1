@@ -99,7 +99,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.9.1'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.9.2'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -601,6 +601,22 @@ try {
         Assert-True ($null -eq $result.context)
         Assert-True (-not $result.start)
     }
+    Test 'setup detects an existing installation without prompting' {
+        $directory=Join-Path $testRoot 'setup-existing';$null=New-Item -ItemType Directory -Path $directory -Force
+        Set-Content (Join-Path $directory '.omnibox-ai-install') 'omnibox-ai 0.9.0'
+        $c=Get-Content $example -Raw|ConvertFrom-Json -AsHashtable
+        $result=Get-AiSetupOptions -InstallDirectory $directory -ConfigLoader {param($d)$c} -ContextReader {param($b)'196608'} -ReadAnswer {throw 'must not prompt'}
+        Assert-Equal $result.backend $c.default_backend
+        Assert-True ($null -eq $result.context -and -not $result.start)
+    }
+    Test 'setup skips model questions after selecting an existing installation directory' {
+        $directory=Join-Path $testRoot 'setup-existing'
+        $c=Get-Content $example -Raw|ConvertFrom-Json -AsHashtable
+        $script:setupPrompts=0
+        $result=Get-AiSetupOptions -InstallDirectory (Join-Path $testRoot 'setup-new') -ConfigLoader {param($d)$c} -ContextReader {param($b)'196608'} -ReadAnswer {param($p)$script:setupPrompts++;if($script:setupPrompts -ne 1){throw 'unexpected question'};$directory}
+        Assert-Equal $result.directory $directory
+        Assert-Equal $script:setupPrompts 1
+    }
     Test 'wizard accepts only English yes no answers and their abbreviations' {
         foreach ($a in @('y','yes','YES',' Y ')) { $answer=$a; Assert-True (Read-AiYesNo 'test' -ReadAnswer {param($p)$answer}) }
         foreach ($a in @('n','no','NO',' N ')) { $answer=$a; Assert-True (-not (Read-AiYesNo 'test' -ReadAnswer {param($p)$answer})) }
@@ -1084,7 +1100,7 @@ try {
         $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
         $before=@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count
         $output=Invoke-AiDownloadedInstaller -Bytes ([IO.File]::ReadAllBytes((Join-Path $repo 'dist/install-omnibox-ai.ps1'))) -CheckOnly
-        Assert-True ($output -like '*0.9.1 payload OK*')
+        Assert-True ($output -like '*0.9.2 payload OK*')
         Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before
         Assert-Throws {Invoke-AiDownloadedInstaller -Bytes ([Text.Encoding]::UTF8.GetBytes("throw 'fixture installer error'"))} '*fixture installer error*'
         Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before

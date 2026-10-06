@@ -61,7 +61,7 @@ namespace OmniBox {
     while(!Stop.WaitOne(250)&&!Child.HasExited){}
     if(!Child.HasExited){Report(3);Child.Kill(true);if(!Child.WaitForExit(15000))error=1053;}else if(!Stop.WaitOne(0)&&Child.ExitCode!=0)error=1066;
     Log("host","Process stopped");
-   }catch(Exception e){error=1064;Log("host",e.GetType().Name+": "+e.Message);}
+   }catch(Exception e){error=1064;Log("host",e.ToString());}
    finally{WriteRuntime(false);Child?.Dispose();Report(1,error);}
   }
  }

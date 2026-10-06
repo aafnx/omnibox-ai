@@ -511,7 +511,7 @@ function Show-AiPower {
 
 function Show-AiHelp {
     @'
-OmniBox AI 0.9.1 — управление локальными серверами
+OmniBox AI 0.9.2 — управление локальными серверами
 
 ai start [backend] [--context 128k]  Запуск; по умолчанию bonsai. Другой остановится.
 ai stop [bonsai|ollama]        Остановка; без имени — все настроенные серверы.
@@ -549,7 +549,7 @@ function Invoke-Ai {
     $command = if ($Arguments.Count) { $Arguments[0].ToLowerInvariant() } else { 'help' }
     [string[]]$rest = @(if ($Arguments.Count -gt 1) { $Arguments[1..($Arguments.Count - 1)] })
     if ($command -in @('help', '--help', '-h')) { Show-AiHelp; return }
-    if ($command -in @('version', '--version')) { '0.9.1'; return }
+    if ($command -in @('version', '--version')) { '0.9.2'; return }
     if ($command -in @('access','panel','password')) {
         $root=Split-Path ([IO.Path]::GetFullPath($ConfigPath)) -Parent
         if($command -eq 'access'){if($rest.Count){throw 'Использование: ai access'};$rest=@('info')}

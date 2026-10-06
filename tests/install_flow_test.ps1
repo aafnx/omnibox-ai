@@ -6,7 +6,7 @@ $repo=Split-Path $PSScriptRoot -Parent
 $fixture=Join-Path ([IO.Path]::GetTempPath()) ('omnibox-install-flow-'+[Guid]::NewGuid().ToString('N'))
 $source=Join-Path $fixture 'source';$destination=Join-Path $fixture 'installed'
 $oldUserProfile=$env:USERPROFILE;$oldPath=$env:Path;$oldUsername=$env:USERNAME;$oldUserPath=[Environment]::GetEnvironmentVariable("Path","User")
-$global:FlowServices=@{};$global:FlowCalls=[Collections.Generic.List[string]]::new()
+$global:FlowFailProbe=$false;$global:FlowServices=@{};$global:FlowCalls=[Collections.Generic.List[string]]::new()
 function Assert($Value,[string]$Message){if(-not $Value){throw $Message}}
 function global:Get-Command {
  param($Name,$CommandType,$ErrorAction)
@@ -14,6 +14,7 @@ function global:Get-Command {
  if($Name -in @('ai','gh')){return $null}
  Microsoft.PowerShell.Core\Get-Command @PSBoundParameters
 }
+function global:Get-Process {param($Id,$ErrorAction)if($Id -eq 0){return $null};Microsoft.PowerShell.Management\Get-Process @PSBoundParameters}
 function global:Get-Service {param($Name,$ErrorAction)return $global:FlowServices[$Name]}
 function global:Get-CimInstance {param($ClassName,$Filter,$ErrorAction)if($Filter -match "Name='([^']+)'"){return $global:FlowServices[$Matches[1]]}}
 function global:New-Service {
@@ -28,10 +29,16 @@ function global:Set-Service {param($Name,$BinaryPathName,$StartupType,$ErrorActi
  $global:FlowCalls.Add('set:'+ $Name)
 }
 function global:Start-Service {param($Name,$ErrorAction)
+ if($global:FlowFailProbe -and $Name -like 'omnibox-ai-probe-*'){
+  $profile=[regex]::Match($global:FlowServices[$Name].PathName,'-Profile "([^"]+)"$').Groups[1].Value
+  $logDir=Join-Path (Split-Path $profile -Parent) 'logs';$null=New-Item -ItemType Directory -Path $logDir -Force
+  Set-Content (Join-Path $logDir ($Name+'.bootstrap.log')) 'Fixture bootstrap diagnostic: access denied'
+  throw 'Fixture SCM startup failure'
+ }
  $s=$global:FlowServices[$Name];$s.Status='Running';$s.State='Running';$global:FlowCalls.Add('start:'+ $Name)
  if($s.PathName -match '-Profile "([^"]+)"$'){Set-Content -LiteralPath ($Matches[1]+'.runtime.json') -Value '{"pid":null}'}
 }
-function global:Stop-Service {param($Name,$ErrorAction)$s=$global:FlowServices[$Name];$s.Status='Stopped';$s.State='Stopped';$global:FlowCalls.Add('stop:'+ $Name)}
+function global:Stop-Service {param($Name,$ErrorAction,[switch]$NoWait)$s=$global:FlowServices[$Name];$s.Status='Stopped';$s.State='Stopped';$global:FlowCalls.Add('stop:'+ $Name)}
 function global:Remove-Service {param($Name,$ErrorAction)$global:FlowServices.Remove($Name);$global:FlowCalls.Add('remove:'+ $Name)}
 function global:Unblock-File {param($LiteralPath)}
 function global:Get-NetTCPConnection {param($LocalPort,$State,$ErrorAction)return $null}
@@ -78,20 +85,51 @@ try{
  Assert ($global:FlowCalls.Contains('firewall:omnibox-ai-panel')) 'Firewall boundary not reached'
  $previousPanel=Get-Content (Join-Path $destination 'panel.json') -Raw|ConvertFrom-Json -AsHashtable
  $previousGateway=Get-Content (Join-Path $destination 'gateway.json') -Raw|ConvertFrom-Json -AsHashtable
- # The fake service has no real process. It is stopped to exercise upgrade without a fake PID.
- Stop-Service 'omnibox-ai'
- & (Join-Path $source 'install.ps1') -InstallDirectory $destination -NonInteractive -NoProfileUpdate
+ # A running fake panel has PID 0; the process provider supplies no real host.
+ $previousPanel.allowed_hosts+=@('custom.example');$previousPanel|ConvertTo-Json -Depth 12|Set-Content (Join-Path $destination 'panel.json')
+ function global:Read-Host {throw 'Upgrade unexpectedly prompted'}
+ & (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate
  $panel=Get-Content (Join-Path $destination 'panel.json') -Raw|ConvertFrom-Json -AsHashtable
  $gateway=Get-Content (Join-Path $destination 'gateway.json') -Raw|ConvertFrom-Json -AsHashtable
+ Assert ('custom.example' -in $panel.allowed_hosts) 'Upgrade dropped allowed host'
  Assert ($panel.credential.hash -ceq $previousPanel.credential.hash) 'Upgrade changed password'
  Assert ($gateway.key_hash -ceq $previousGateway.key_hash) 'Upgrade changed API key'
  Assert ($gateway.base_url -ceq $previousGateway.base_url) 'Upgrade changed endpoint'
  Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Upgraded panel not started'
  Write-Host 'PASS real installer body completes first installation and upgrade with mocked Windows providers'
+ # An SCM preflight failure must leave both running panel and installed source intact.
+ $beforeHash=(Get-FileHash (Join-Path $destination 'service.ps1')).Hash
+ $beforeCalls=$global:FlowCalls.Count;$global:FlowFailProbe=$true;$failedStage=$null
+ try {
+  & (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate
+  throw 'Expected probe failure'
+ }catch{
+  Assert ($_.Exception.Message -like '*Fixture bootstrap diagnostic: access denied*') 'Probe detail missing'
+  $failedStage=($_.Exception.Message -split 'Диагностика: ')[-1].Trim()
+ }
+ Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Failed preflight stopped panel'
+ Assert ((Get-FileHash (Join-Path $destination 'service.ps1')).Hash -eq $beforeHash) 'Failed preflight changed installed source'
+ Assert (-not (@($global:FlowCalls|Select-Object -Skip $beforeCalls) -contains 'stop:omnibox-ai')) 'Panel stopped before probe'
+ Assert (Test-Path (Join-Path $failedStage 'logs')) 'Failed preflight lost diagnostics'
+ Remove-Item -LiteralPath $failedStage -Recurse -Force
+ Write-Host 'PASS failed SCM preflight preserves running installation and reports bootstrap detail'
+ $bootstrap=Join-Path $fixture 'bootstrap';$null=New-Item -ItemType Directory -Path $bootstrap
+ Copy-Item (Join-Path $repo 'service.ps1') $bootstrap
+ $bootstrapProfile=Join-Path $bootstrap 'fixture.xml';Set-Content $bootstrapProfile '<service/>'
+ $bootstrapFailed=$false
+ try{& (Join-Path $bootstrap 'service.ps1') -Profile $bootstrapProfile}catch{$bootstrapFailed=$true}
+ Assert $bootstrapFailed 'Missing assembly did not fail'
+ Assert (Test-Path (Join-Path $bootstrap 'logs/fixture.bootstrap.log')) 'Early service error was not logged'
+ $script:reconfigurePrompts=0
+ $null=Get-AiSetupOptions -InstallDirectory $destination -Reconfigure -ConfigLoader {param($d)Get-Content (Join-Path $d 'config.json') -Raw|ConvertFrom-Json -AsHashtable} -ContextReader {param($b)'196608'} -ReadAnswer {param($prompt)$script:reconfigurePrompts++;''}
+ Assert ($script:reconfigurePrompts -eq 4) 'Explicit reconfigure did not open setup prompts'
+ Write-Host 'PASS early assembly failures are logged and explicit reconfigure opens the wizard'
+
+
 }finally{
- foreach($name in @('Get-Command','Get-Service','Get-CimInstance','New-Service','Set-Service','Start-Service','Stop-Service','Remove-Service','Get-NetTCPConnection','Get-NetFirewallRule','Remove-NetFirewallRule','New-NetFirewallRule','Invoke-WebRequest','Unblock-File')){Remove-Item ('Function:global:'+ $name) -ErrorAction SilentlyContinue}
+ foreach($name in @('Get-Command','Get-Process','Get-Service','Get-CimInstance','New-Service','Set-Service','Start-Service','Stop-Service','Remove-Service','Get-NetTCPConnection','Get-NetFirewallRule','Remove-NetFirewallRule','New-NetFirewallRule','Invoke-WebRequest','Unblock-File','Read-Host')){Remove-Item ('Function:global:'+ $name) -ErrorAction SilentlyContinue}
  $env:USERPROFILE=$oldUserProfile;$env:Path=$oldPath;$env:USERNAME=$oldUsername
  if($IsWindows){[Environment]::SetEnvironmentVariable("Path",$oldUserPath,"User")}
- Remove-Variable FlowServices,FlowCalls -Scope Global -ErrorAction SilentlyContinue
+ Remove-Variable FlowServices,FlowCalls,FlowFailProbe -Scope Global -ErrorAction SilentlyContinue
  if(Test-Path $fixture){Remove-Item -LiteralPath $fixture -Recurse -Force}
 }

@@ -74,6 +74,7 @@ function Get-AiPanelInstallOptions {
     }
     $ssh = if ($null -ne $existing) { $existing.ssh_target } else { "$($env:USERNAME)@$HostName" }
     $hosts = @($HostName, '127.0.0.1', 'localhost', [Environment]::MachineName.ToLowerInvariant())
+    if ($null -ne $existing) { $hosts += @($existing.allowed_hosts) }
     if ($proxyOptions.public_origin) { $hosts += ([Uri]$proxyOptions.public_origin).Host }
     return @{ schema_version = 1; port = $Port; allowed_hosts = @($hosts | Select-Object -Unique); credential = $credential; ssh_target = $ssh; remote_addresses = $addresses; generated_password = $generated; public_origin = $proxyOptions.public_origin; trusted_proxy_addresses = $proxyOptions.trusted_proxy_addresses }
 }
@@ -114,7 +115,7 @@ function Install-AiPanelService {
     param([string]$Directory, [string]$PwshPath, $Config, $Options, $GatewayOptions)
     $service = Get-Service -Name 'omnibox-ai' -ErrorAction SilentlyContinue
     if ($null -ne $service -and [string]$service.Status -ne 'Stopped') {
-        Stop-Service -Name 'omnibox-ai' -ErrorAction Stop
+        Stop-Service -Name 'omnibox-ai' -NoWait -ErrorAction Stop
         $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
     }
     if (Get-NetTCPConnection -LocalPort $Options.port -State Listen -ErrorAction SilentlyContinue) { throw "Порт $($Options.port) занят другим процессом. Выбери другой порт панели." }

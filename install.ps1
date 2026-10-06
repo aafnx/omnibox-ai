@@ -1,7 +1,7 @@
 #requires -Version 7.4
 [CmdletBinding()]
 param([string]$InstallDirectory = 'C:\tools\ai', [switch]$NoProfileUpdate,
-    [switch]$NonInteractive, [string]$DefaultBackend = '', [string]$Context = '', [switch]$StartServer,
+    [switch]$NonInteractive, [switch]$Reconfigure, [string]$DefaultBackend = '', [string]$Context = '', [switch]$StartServer,
     [string]$PanelHost = '', [int]$PanelPort = 18090, [string]$PanelRemoteAddresses = 'LocalSubnet', [switch]$NoPanelSetup,
     [string]$PanelPublicUrl = '', [string]$PanelTrustedProxyAddresses = '', [int]$ApiPort = 18090, [string]$ApiBaseUrl = '', [switch]$NoApi)
 
@@ -26,10 +26,14 @@ $configLoader = {
     & $aiModule { param($Path) Read-AiConfig $Path } $path
 }.GetNewClosure()
 $contextReader = { param($Backend) & $aiModule { param($Backend) Get-AiConfiguredContext $Backend } $Backend }.GetNewClosure()
-Write-Host 'OmniBox AI 0.9.1 — установка на этом ПК'
+if ($Reconfigure -and $NonInteractive) { throw '-Reconfigure и -NonInteractive нельзя использовать вместе.' }
+$installed = Test-Path -LiteralPath (Join-Path $InstallDirectory '.omnibox-ai-install') -PathType Leaf
+if ($installed -and -not $Reconfigure) { $NonInteractive = $true; Write-Host 'Обновление: существующие настройки сохраняются, мастер не запускается.' }
+Write-Host 'OmniBox AI 0.9.2 — установка / обновление на этом ПК'
 Write-Host 'Используются уже установленные службы Bonsai и Ollama. Enter сохраняет предложенное значение.'
-$setup = Get-AiSetupOptions -InstallDirectory $InstallDirectory -ConfigLoader $configLoader -ContextReader $contextReader -NonInteractive:$NonInteractive -DefaultBackend $DefaultBackend -Context $Context -StartServer:$StartServer
+$setup = Get-AiSetupOptions -InstallDirectory $InstallDirectory -ConfigLoader $configLoader -ContextReader $contextReader -NonInteractive:$NonInteractive -Reconfigure:$Reconfigure -DefaultBackend $DefaultBackend -Context $Context -StartServer:$StartServer
 $InstallDirectory = $setup.directory
+if (-not $Reconfigure -and (Test-Path -LiteralPath (Join-Path $InstallDirectory '.omnibox-ai-install') -PathType Leaf)) { $NonInteractive = $true }
 
 if (-not [IO.Path]::IsPathFullyQualified($InstallDirectory)) { throw 'Укажи абсолютный путь установки.' }
 $destination = [IO.Path]::GetFullPath($InstallDirectory).TrimEnd('\')
@@ -79,7 +83,12 @@ if (-not $NoPanelSetup) {
     $expectedWrapper = Join-Path $destination 'panel-service.exe'
     $nativeCommand=New-AiNativeServiceCommand $pwsh $destination (Join-Path $destination 'panel-service.xml')
     if ($null -ne $panelService -and $panelService.PathName.Trim().Trim('"') -ine $expectedWrapper -and $panelService.PathName -ine $nativeCommand) { throw 'Имя omnibox-ai занято другой Windows-службой.' }
-    if ($null -ne $panelService -and $panelService.State -ne 'Stopped') { $panelProcess=Get-Process -Id $panelService.ProcessId -ErrorAction SilentlyContinue;Stop-Service 'omnibox-ai' -ErrorAction Stop; (Get-Service 'omnibox-ai').WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30));if($null -ne $panelProcess -and -not $panelProcess.WaitForExit(15000)){throw 'Panel host did not exit.'} }
+}
+# Compile and probe an isolated runtime before stopping services or overwriting files.
+$runtimeStage = New-AiCheckedServiceRuntime -SourceDirectory $source -PwshPath $pwsh
+try {
+if (-not $NoPanelSetup) {
+    if ($null -ne $panelService -and $panelService.State -ne 'Stopped') { $panelProcess=Get-Process -Id $panelService.ProcessId -ErrorAction SilentlyContinue;Stop-Service 'omnibox-ai' -NoWait -ErrorAction Stop; (Get-Service 'omnibox-ai').WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30));if($null -ne $panelProcess -and -not $panelProcess.WaitForExit(15000)){throw 'Panel host did not exit.'} }
 }
 if (Test-Path -LiteralPath $markerPath) {
     $backup = Join-Path $destination ('backups/' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -104,9 +113,9 @@ foreach ($file in $files) {
 $configPath = Join-Path $destination 'config.json'
 if (-not (Test-Path -LiteralPath $configPath)) {
     Copy-Item -LiteralPath (Join-Path $destination 'config.example.json') -Destination $configPath
-} else { Write-Host 'Существующие параметры config.json сохранены; сервер по умолчанию — по выбору мастера.' }
+} else { Write-Host 'Существующие параметры config.json сохранены.' }
 Import-Module (Join-Path $destination 'src/Service.Install.psm1') -Force
-$serviceBackup=Install-AiNativeServices -Directory $destination -PwshPath $pwsh -Config $setup.config
+$serviceBackup=Install-AiNativeServices -Directory $destination -PwshPath $pwsh -Config $setup.config -ValidatedRuntimePath (Join-Path $runtimeStage 'src/Service.Host.dll')
 $oldPanelWrapper=Join-Path $destination 'panel-service.exe'
 if($null -ne $panelService -and $panelService.PathName.Trim().Trim('"') -ieq $oldPanelWrapper -and (Test-Path -LiteralPath $oldPanelWrapper)){Copy-Item -LiteralPath $oldPanelWrapper -Destination (Join-Path $serviceBackup 'panel-winsw.exe')}
 $setup.config.default_backend = $setup.backend
@@ -114,7 +123,7 @@ Set-Content -LiteralPath $configPath -Value ($setup.config | ConvertTo-Json -Dep
 # Exact PowerShell location; %* preserves the user's command-line quoting in cmd.
 $launcher = "@echo off`r`n`"$pwsh`" -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"%~dp0ai.ps1`" %*`r`nexit /b %errorlevel%`r`n"
 Set-Content -LiteralPath (Join-Path $destination 'ai.cmd') -Value $launcher -Encoding ascii -NoNewline
-Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.9.1' -Encoding utf8
+Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.9.2' -Encoding utf8
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $entries = @($userPath -split ';' | Where-Object { $_ })
@@ -151,3 +160,5 @@ Write-Host 'Проверка: ai help; ai context bonsai; ai status'
 # Delegate the installing user's existing gh login to SYSTEM, encrypted and ACL protected.
 Import-Module (Join-Path $destination 'src/Web.Update.psm1') -Force
 if(Sync-AiUpdateCredential $destination){Write-Host 'Доступ gh подключён к обновлениям веб-панели (Windows DPAPI).'}
+
+} finally { if ($runtimeStage -and (Test-Path -LiteralPath $runtimeStage)) { Remove-Item -LiteralPath $runtimeStage -Recurse -Force } }
