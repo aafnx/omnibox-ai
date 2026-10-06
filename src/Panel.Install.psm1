@@ -131,7 +131,7 @@ function Install-AiPanelService {
     Protect-AiPanelDirectory $Directory
     $command=New-AiNativeServiceCommand $PwshPath $Directory (Join-Path $Directory 'panel-service.xml')
     if ($null -eq $service) { $null=New-Service -Name 'omnibox-ai' -BinaryPathName $command -StartupType Automatic -DisplayName 'OmniBox AI' }
-    else { Set-Service -Name 'omnibox-ai' -BinaryPathName $command -ErrorAction Stop }
+    else { Set-AiServiceCommand -Name 'omnibox-ai' -Command $command }
     Set-Service -Name 'omnibox-ai' -StartupType Automatic
     $rule = Get-NetFirewallRule -Name 'omnibox-ai-panel' -ErrorAction SilentlyContinue
     if ($null -ne $rule) { Remove-NetFirewallRule -Name 'omnibox-ai-panel' }

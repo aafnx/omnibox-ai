@@ -99,7 +99,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.9.3'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.9.4'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -1019,6 +1019,41 @@ try {
         Assert-True (Test-AiOwnedServiceCommand $legacy '/program files/pwsh' '/tools/ai' '/models/service.xml')
         Assert-True (-not(Test-AiOwnedServiceCommand '"/other/service.exe" -Profile "/models/service.xml"' '/program files/pwsh' '/tools/ai' '/models/service.xml'))
     }
+    Test 'service command changes check Windows provider result and preserved quoted paths' {
+        Import-Module (Join-Path $repo 'src/Service.Install.psm1') -Force
+        $m=Get-Module Service.Install
+        & $m {
+            $script:fixtureService=[pscustomobject]@{Name='fixture';PathName='old';StartMode='Manual'}
+            $script:fixtureCode=0;$script:fixtureIgnore=$false;$script:fixtureMissing=$false
+            function script:Get-CimInstance {[CmdletBinding()]param($ClassName,$Filter)if(-not $script:fixtureMissing){$script:fixtureService.PSObject.Copy()}}
+            function script:Invoke-CimMethod {
+                [CmdletBinding()]param($InputObject,$MethodName,$Arguments,$OperationTimeoutSec)
+                if($MethodName -ne 'Change'){throw 'Wrong provider method'}
+                if($script:fixtureCode -eq 0 -and -not $script:fixtureIgnore){$script:fixtureService.PathName=$Arguments.PathName;if($Arguments.ContainsKey('StartMode')){$script:fixtureService.StartMode=if($Arguments.StartMode -eq 'Automatic'){'Auto'}else{$Arguments.StartMode}}}
+                [pscustomobject]@{ReturnValue=$script:fixtureCode}
+            }
+        }
+        try {
+            $command='"C:\program files\ai\src\Service.Host.exe" -Profile "C:\tools\ai\panel-service.xml"'
+            Set-AiServiceCommand -Name fixture -Command $command -StartupType Automatic
+            Assert-Equal (& $m {$script:fixtureService.PathName}) $command
+            Assert-Equal (& $m {$script:fixtureService.StartMode}) 'Auto'
+            & $m {$script:fixtureCode=2}
+            Assert-Throws {Set-AiServiceCommand fixture 'replacement'} '*Win32_Service.Change code 2*'
+            Assert-Equal (& $m {$script:fixtureService.PathName}) $command
+            & $m {$script:fixtureCode=0;$script:fixtureIgnore=$true}
+            Assert-Throws {Set-AiServiceCommand fixture 'replacement'} '*verification failed*'
+            & $m {$script:fixtureMissing=$true}
+            Assert-Throws {Set-AiServiceCommand fixture 'replacement'} '*does not exist*'
+        } finally {& $m {Remove-Item Function:script:Get-CimInstance,Function:script:Invoke-CimMethod}}
+    }
+    Test 'product scripts never pass unsupported BinaryPathName to Set-Service' {
+        foreach($file in Get-ChildItem $repo -Recurse -File | Where-Object {$_.Extension -in @('.ps1','.psm1') -and $_.FullName -notmatch '[/\\]tests[/\\]'}){
+            $ast=[Management.Automation.Language.Parser]::ParseFile($file.FullName,[ref]$null,[ref]$null)
+            $invalid=$ast.FindAll({param($node)$node -is [Management.Automation.Language.CommandAst] -and $node.GetCommandName() -eq 'Set-Service' -and @($node.CommandElements|Where-Object {$_ -is [Management.Automation.Language.CommandParameterAst] -and $_.ParameterName -eq 'BinaryPathName'}).Count -gt 0},$true)
+            Assert-Equal @($invalid).Count 0
+        }
+    }
     Test 'Prism placement sets CPU, full GPU or explicit hybrid layers without losing context' {
         $f=New-ContextFixture;$m=New-TestModule;$b=$f.config.backends.bonsai
         $x=& $m {param($b)New-AiLaunchXml $b @{placement='cpu'}} $b
@@ -1103,7 +1138,7 @@ try {
         $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
         $before=@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count
         $output=Invoke-AiDownloadedInstaller -Bytes ([IO.File]::ReadAllBytes((Join-Path $repo 'dist/install-omnibox-ai.ps1'))) -CheckOnly
-        Assert-True ($output -like '*0.9.3 payload OK*')
+        Assert-True ($output -like '*0.9.4 payload OK*')
         Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before
         Assert-Throws {Invoke-AiDownloadedInstaller -Bytes ([Text.Encoding]::UTF8.GetBytes("throw 'fixture installer error'"))} '*fixture installer error*'
         Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before

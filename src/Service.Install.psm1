@@ -1,4 +1,23 @@
 Set-StrictMode -Version Latest
+function Set-AiServiceCommand {
+ [CmdletBinding()]
+ param(
+  [Parameter(Mandatory)][ValidatePattern('^[A-Za-z0-9_.-]+$')][string]$Name,
+  [Parameter(Mandatory)][string]$Command,
+  [ValidateSet('Automatic','Manual','Disabled')][string]$StartupType
+ )
+ if([string]::IsNullOrWhiteSpace($Command) -or $Command.Contains("`n") -or $Command.Contains("`r")){throw 'Invalid service command'}
+ $service=Get-CimInstance Win32_Service -Filter "Name='$Name'" -ErrorAction Stop
+ if($null -eq $service){throw "Service $Name does not exist"}
+ $arguments=@{PathName=$Command}
+ if($StartupType){$arguments.StartMode=$StartupType}
+ $result=Invoke-CimMethod -InputObject $service -MethodName Change -Arguments $arguments -OperationTimeoutSec 30 -ErrorAction Stop
+ if($null -eq $result -or $null -eq $result.ReturnValue){throw "Service $Name change returned no status"}
+ if($result.ReturnValue -ne 0){throw "Service $Name change failed (Win32_Service.Change code $($result.ReturnValue))"}
+ $updated=Get-CimInstance Win32_Service -Filter "Name='$Name'" -ErrorAction Stop
+ $mode=if($StartupType -eq 'Automatic'){'Auto'}else{$StartupType}
+ if($null -eq $updated -or $updated.PathName -cne $Command -or ($StartupType -and $updated.StartMode -ne $mode)){throw "Service $Name change verification failed"}
+}
 function New-AiNativeServiceCommand {
  param([string]$PwshPath,[string]$Directory,[string]$Profile)
  foreach($v in @($PwshPath,$Directory,$Profile)){if($v.Contains('"') -or $v.Contains("`n") -or $v.Contains("`r")){throw 'Invalid service path'}}
@@ -42,11 +61,11 @@ function Install-AiNativeServices {
   if($null -ne $old -and $old.PathName.Trim().Trim('"') -ieq $expected -and (Test-Path -LiteralPath $expected)){Copy-Item -LiteralPath $expected -Destination (Join-Path $backup "$name-winsw.exe");$legacyWrappers+=$expected}
   $changes+=@{service=$b.service;old=$old;command=$command}
   if($null -eq $old){$null=New-Service -Name $b.service -BinaryPathName $command -StartupType Manual -DisplayName "OmniBox AI · $name"}
-  else{Set-Service -Name $b.service -BinaryPathName $command -StartupType Manual -ErrorAction Stop}
+  else{Set-AiServiceCommand -Name $b.service -Command $command -StartupType Manual}
   $b.runtime_path=$b.service_config+'.runtime.json'
  }
  }catch{
-  foreach($change in $changes){try{if($null -ne $change.old){Set-Service -Name $change.service -BinaryPathName $change.old.PathName -ErrorAction Stop}else{Remove-Service $change.service -ErrorAction Stop}}catch{Write-Warning "Cannot restore service $($change.service): $_"}}
+  foreach($change in $changes){try{if($null -ne $change.old){$mode=if($change.old.StartMode -eq 'Auto'){'Automatic'}else{$change.old.StartMode};Set-AiServiceCommand -Name $change.service -Command $change.old.PathName -StartupType $mode}else{Remove-Service $change.service -ErrorAction Stop}}catch{Write-Warning "Cannot restore service $($change.service): $_"}}
   if(Test-Path -LiteralPath (Join-Path $backup 'Service.Host.exe')){Copy-Item -LiteralPath (Join-Path $backup 'Service.Host.exe') -Destination $executable -Force}
   throw
  }
@@ -67,6 +86,8 @@ function Test-AiNativeServiceRuntime {
  $pidToCheck=$null
  try{
   $null=New-Service -Name $name -BinaryPathName (New-AiNativeServiceCommand $PwshPath $Directory $profile) -StartupType Manual
+  # Exercise the same Windows API used to migrate existing services before app changes.
+  Set-AiServiceCommand -Name $name -Command (New-AiNativeServiceCommand $PwshPath $Directory $profile) -StartupType Manual
   Start-Service $name -ErrorAction Stop;(Get-Service $name).WaitForStatus('Running',[TimeSpan]::FromSeconds(15))
   $runtime=Get-Content -LiteralPath ($profile+'.runtime.json') -Raw|ConvertFrom-Json;$pidToCheck=$runtime.pid
   $deadline=[DateTime]::UtcNow.AddSeconds(10)
@@ -109,4 +130,4 @@ function New-AiCheckedServiceRuntime {
   throw ('Проверка нового runtime остановила установку до изменения приложения. '+$_.Exception.Message+"`nДиагностика: "+$stage)
  }
 }
-Export-ModuleMember -Function New-AiNativeServiceCommand,New-AiLegacyServiceCommand,Test-AiOwnedServiceCommand,Install-AiNativeServices,Test-AiNativeServiceRuntime,New-AiCheckedServiceRuntime
+Export-ModuleMember -Function Set-AiServiceCommand,New-AiNativeServiceCommand,New-AiLegacyServiceCommand,Test-AiOwnedServiceCommand,Install-AiNativeServices,Test-AiNativeServiceRuntime,New-AiCheckedServiceRuntime

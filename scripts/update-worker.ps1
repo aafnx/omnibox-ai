@@ -59,7 +59,7 @@ try{
                 }
             }
             foreach($item in Get-ChildItem -LiteralPath $snapshot -Force){Copy-Item -LiteralPath $item.FullName -Destination $Root -Recurse -Force}
-            foreach($entry in $serviceSnapshot){Set-Service -Name $entry.name -BinaryPathName $entry.command -StartupType $entry.startup -ErrorAction Stop}
+            foreach($entry in $serviceSnapshot){Set-AiServiceCommand -Name $entry.name -Command $entry.command -StartupType $entry.startup}
             Start-Service 'omnibox-ai' -ErrorAction Stop
             $restored=$true
         }catch{}

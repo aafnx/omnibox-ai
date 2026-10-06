@@ -6,7 +6,7 @@ $repo=Split-Path $PSScriptRoot -Parent
 $fixture=Join-Path ([IO.Path]::GetTempPath()) ('omnibox-install-flow-'+[Guid]::NewGuid().ToString('N'))
 $source=Join-Path $fixture 'source';$destination=Join-Path $fixture 'installed'
 $oldUserProfile=$env:USERPROFILE;$oldPath=$env:Path;$oldUsername=$env:USERNAME;$oldUserPath=[Environment]::GetEnvironmentVariable("Path","User")
-$global:FlowFailProbe=$false;$global:FlowServices=@{};$global:FlowCalls=[Collections.Generic.List[string]]::new()
+$global:FlowFailChange=$null;$global:FlowFailProbe=$false;$global:FlowServices=@{};$global:FlowCalls=[Collections.Generic.List[string]]::new()
 function Assert($Value,[string]$Message){if(-not $Value){throw $Message}}
 function global:Get-Command {
  param($Name,$CommandType,$ErrorAction)
@@ -16,17 +16,27 @@ function global:Get-Command {
 }
 function global:Get-Process {param($Id,$ErrorAction)if($Id -eq 0){return $null};Microsoft.PowerShell.Management\Get-Process @PSBoundParameters}
 function global:Get-Service {param($Name,$ErrorAction)return $global:FlowServices[$Name]}
-function global:Get-CimInstance {param($ClassName,$Filter,$ErrorAction)if($Filter -match "Name='([^']+)'"){return $global:FlowServices[$Matches[1]]}}
+function global:Get-CimInstance {param($ClassName,$Filter,$ErrorAction)if($Filter -match "Name='([^']+)'"){$s=$global:FlowServices[$Matches[1]];if($null -ne $s){return $s.PSObject.Copy()}}}
 function global:New-Service {
  param($Name,$BinaryPathName,$StartupType,$DisplayName)
- $s=[pscustomobject]@{Name=$Name;PathName=$BinaryPathName;Status='Stopped';State='Stopped';StartType=$StartupType;ProcessId=0}
+ $s=[pscustomobject]@{Name=$Name;PathName=$BinaryPathName;Status='Stopped';State='Stopped';StartType=$StartupType;StartMode=$(if($StartupType -eq 'Automatic'){'Auto'}else{$StartupType});ProcessId=0}
  $s|Add-Member ScriptMethod WaitForStatus {param($Status,$Timeout)if($this.Status -ne [string]$Status){throw 'Fixture service not in expected state'}}
  $global:FlowServices[$Name]=$s;$global:FlowCalls.Add('new:'+ $Name)
  return $s
 }
-function global:Set-Service {param($Name,$BinaryPathName,$StartupType,$ErrorAction)
- $s=$global:FlowServices[$Name];if($BinaryPathName){$s.PathName=$BinaryPathName};if($StartupType){$s.StartType=$StartupType}
+function global:Set-Service {
+ [CmdletBinding()]param($Name,$StartupType)
+ $s=$global:FlowServices[$Name];if($StartupType){$s.StartType=$StartupType;$s.StartMode=if($StartupType -eq 'Automatic'){'Auto'}else{$StartupType}}
  $global:FlowCalls.Add('set:'+ $Name)
+}
+function global:Invoke-CimMethod {
+ [CmdletBinding()]param($InputObject,$MethodName,$Arguments,$OperationTimeoutSec)
+ if($MethodName -ne 'Change'){throw 'Unexpected CIM method'}
+ if($global:FlowFailChange -eq $InputObject.Name){$global:FlowFailChange=$null;return [pscustomobject]@{ReturnValue=2}}
+ $s=$global:FlowServices[$InputObject.Name];$s.PathName=$Arguments.PathName
+ if($Arguments.ContainsKey('StartMode')){$s.StartType=$Arguments.StartMode;$s.StartMode=if($Arguments.StartMode -eq 'Automatic'){'Auto'}else{$Arguments.StartMode}}
+ $global:FlowCalls.Add('change:'+ $InputObject.Name)
+ return [pscustomobject]@{ReturnValue=0}
 }
 function global:Start-Service {param($Name,$ErrorAction)
  if($global:FlowFailProbe -and $Name -like 'omnibox-ai-probe-*'){
@@ -101,6 +111,23 @@ try{
  Assert ((Get-Service 'omnibox-ai').PathName -like '*src/Service.Host.exe*') 'Legacy panel was not migrated'
  Assert ((Get-Service 'bonsai').PathName -like '*src/Service.Host.exe*') 'Legacy backend was not migrated'
  Write-Host 'PASS real installer body completes first installation and upgrade with mocked Windows providers'
+ # A nonzero Windows provider result midway through migration must restore detached snapshots.
+ $migrationConfig=Get-Content (Join-Path $destination 'config.json') -Raw|ConvertFrom-Json -AsHashtable
+ $oldCommands=@{}
+ foreach($name in @('bonsai','ollama')){
+  $svc=Get-Service $name
+  $svc.PathName=New-AiLegacyServiceCommand (Join-Path $PSHOME 'pwsh') $destination $migrationConfig.backends[$name].service_config
+  $oldCommands[$name]=$svc.PathName
+ }
+ $checkedExe=Join-Path $fixture 'checked.exe';Copy-Item (Join-Path $destination 'src/Service.Host.exe') $checkedExe
+ $beforeCalls=$global:FlowCalls.Count;$global:FlowFailChange='ollama'
+ $failed=$false
+ try{Install-AiNativeServices $destination (Join-Path $PSHOME 'pwsh') $migrationConfig $checkedExe}catch{$failed=$_.Exception.Message -like '*Win32_Service.Change code 2*'}
+ Assert $failed 'Nonzero CIM return code was ignored'
+ foreach($name in @('bonsai','ollama')){Assert ((Get-Service $name).PathName -ceq $oldCommands[$name]) 'Failed migration did not restore original command'}
+ Assert (-not (@($global:FlowCalls|Select-Object -Skip $beforeCalls)|Where-Object {$_ -like 'start:*'})) 'Failed migration started a model'
+ Write-Host 'PASS failed second service change restores original commands without model start'
+
  # An SCM preflight failure must leave both running panel and installed source intact.
  $beforeHash=(Get-FileHash (Join-Path $destination 'service.ps1')).Hash
  $beforeCalls=$global:FlowCalls.Count;$global:FlowFailProbe=$true;$failedStage=$null
@@ -124,9 +151,9 @@ try{
 
 
 }finally{
- foreach($name in @('Get-Command','Get-Process','Get-Service','Get-CimInstance','New-Service','Set-Service','Start-Service','Stop-Service','Remove-Service','Get-NetTCPConnection','Get-NetFirewallRule','Remove-NetFirewallRule','New-NetFirewallRule','Invoke-WebRequest','Unblock-File','Read-Host')){Remove-Item ('Function:global:'+ $name) -ErrorAction SilentlyContinue}
+ foreach($name in @('Get-Command','Get-Process','Get-Service','Get-CimInstance','Invoke-CimMethod','New-Service','Set-Service','Start-Service','Stop-Service','Remove-Service','Get-NetTCPConnection','Get-NetFirewallRule','Remove-NetFirewallRule','New-NetFirewallRule','Invoke-WebRequest','Unblock-File','Read-Host')){Remove-Item ('Function:global:'+ $name) -ErrorAction SilentlyContinue}
  $env:USERPROFILE=$oldUserProfile;$env:Path=$oldPath;$env:USERNAME=$oldUsername
  if($IsWindows){[Environment]::SetEnvironmentVariable("Path",$oldUserPath,"User")}
- Remove-Variable FlowServices,FlowCalls,FlowFailProbe -Scope Global -ErrorAction SilentlyContinue
+ Remove-Variable FlowServices,FlowCalls,FlowFailProbe,FlowFailChange -Scope Global -ErrorAction SilentlyContinue
  if(Test-Path $fixture){Remove-Item -LiteralPath $fixture -Recurse -Force}
 }

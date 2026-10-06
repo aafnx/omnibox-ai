@@ -20,7 +20,7 @@ try{
     } $bytes
     Test 'web package uses delegated gh credential and validates version/payload without execution' {
         $p=Get-AiWebInstaller $dir
-        Assert ($p.version -eq '0.9.3') 'Version missing'
+        Assert ($p.version -eq '0.9.4') 'Version missing'
         Assert ((& $m {$script:sentToken}) -eq 'delegated-secret') 'Credential not delegated'
         Assert ($p.bytes.Length -eq $bytes.Length) 'Package differs'
         Assert ($p.sha256 -eq [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()) 'File hash differs'
@@ -81,7 +81,7 @@ try{
         Copy-Item (Join-Path $root 'service.ps1') $fixture
         Copy-Item (Join-Path $root 'src/Service.Install.psm1') (Join-Path $fixture 'src')
         Copy-Item (Join-Path $root 'scripts/update-worker.ps1') (Join-Path $fixture 'scripts')
-        Set-Content (Join-Path $fixture '.omnibox-ai-install') 'omnibox-ai 0.9.3'
+        Set-Content (Join-Path $fixture '.omnibox-ai-install') 'omnibox-ai 0.9.4'
         [IO.File]::WriteAllBytes((Join-Path $fixture 'src/Service.Host.exe'),[byte[]]@(1,2,3))
         $installer=Join-Path $fixture 'installer.ps1';[IO.File]::WriteAllBytes($installer,$bytes)
         $sha=[Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()
@@ -136,8 +136,16 @@ try{
     Test 'real worker script records success and restores application files after a failed installer' {
         $global:fixtureWorkerCalls=[Collections.Generic.List[string]]::new()
         function Get-Service {param($Name,$ErrorAction)[pscustomobject]@{Status='Running'}}
-        function Get-CimInstance {param($ClassName,$Filter)if($Filter -eq "Name='omnibox-ai'"){return $global:fixtureWorkerService}}
-        function Set-Service {param($Name,$BinaryPathName,$StartupType,$ErrorAction)$global:fixtureWorkerService.PathName=$BinaryPathName;$global:fixtureWorkerCalls.Add('set:'+ $Name)}
+        function global:Get-CimInstance {param($ClassName,$Filter)if($Filter -eq "Name='omnibox-ai'"){return $global:fixtureWorkerService.PSObject.Copy()}}
+        function Set-Service {[CmdletBinding()]param($Name,$StartupType)$global:fixtureWorkerCalls.Add('set:'+ $Name)}
+        function global:Invoke-CimMethod {
+            [CmdletBinding()]param($InputObject,$MethodName,$Arguments,$OperationTimeoutSec)
+            if($MethodName -ne 'Change'){throw 'Unexpected CIM method'}
+            $global:fixtureWorkerService.PathName=$Arguments.PathName
+            if($Arguments.ContainsKey('StartMode')){$global:fixtureWorkerService.StartMode=if($Arguments.StartMode -eq 'Automatic'){'Auto'}else{$Arguments.StartMode}}
+            $global:fixtureWorkerCalls.Add('change:'+ $InputObject.Name)
+            [pscustomobject]@{ReturnValue=0}
+        }
         function Stop-Service {param($Name,$ErrorAction)$global:fixtureWorkerCalls.Add('stop:'+ $Name)}
         function Start-Service {param($Name,$ErrorAction)$global:fixtureWorkerCalls.Add('start:'+ $Name)}
         function Remove-Service {param($Name,$ErrorAction)$global:fixtureWorkerCalls.Add('remove:'+ $Name)}
@@ -148,7 +156,7 @@ try{
                 Copy-Item (Join-Path $root 'scripts/update-worker.ps1') $stage
                 Copy-Item (Join-Path $root 'src/Service.Install.psm1') (Join-Path $installed 'src')
                 Set-Content (Join-Path $installed 'ai.ps1') 'previous app'
-                Set-Content (Join-Path $installed '.omnibox-ai-install') 'omnibox-ai 0.9.3'
+                Set-Content (Join-Path $installed '.omnibox-ai-install') 'omnibox-ai 0.9.4'
                 Set-Content (Join-Path $installed 'config.json') '{"backends":{}}'
                 Set-Content (Join-Path $installed 'panel.json') '{"port":18090,"public_origin":"https://llm.fnx.red","credential":"fixture"}'
                 Set-Content (Join-Path $installed 'gateway.json') '{"key_hash":"fixture-key-hash"}'
@@ -156,7 +164,7 @@ try{
                 Set-Content (Join-Path $installed 'updates/auth/github.dpapi') 'untouched encrypted credential'
                 $originalCommand=New-AiLegacyServiceCommand (Get-Process -Id $PID).Path $installed (Join-Path $installed 'panel-service.xml')
                 $global:fixtureWorkerService=[pscustomobject]@{Name='omnibox-ai';ProcessId=0;State='Stopped';PathName=$originalCommand;StartMode='Auto'}
-                $installer='param($InstallDirectory,[switch]$NonInteractive,[switch]$NoProfileUpdate); if(-not $NonInteractive -or -not $NoProfileUpdate){throw "Bad invocation"}; Set-Content (Join-Path $InstallDirectory "ai.ps1") "updated app"; Set-Service -Name omnibox-ai -BinaryPathName (New-AiNativeServiceCommand (Get-Process -Id $PID).Path $InstallDirectory (Join-Path $InstallDirectory "panel-service.xml")); '
+                $installer='param($InstallDirectory,[switch]$NonInteractive,[switch]$NoProfileUpdate); if(-not $NonInteractive -or -not $NoProfileUpdate){throw "Bad invocation"}; Set-Content (Join-Path $InstallDirectory "ai.ps1") "updated app"; Set-AiServiceCommand -Name omnibox-ai -Command (New-AiNativeServiceCommand (Get-Process -Id $PID).Path $InstallDirectory (Join-Path $InstallDirectory "panel-service.xml")); '
                 if($failure){$installer+='throw "fixture installer failure secret must not appear in status"'}
                 Set-Content (Join-Path $stage 'installer.ps1') $installer
                 & (Join-Path $stage 'update-worker.ps1') -Root $installed -ServiceName 'omnibox-ai-update-fixture' -Version '9.9.9'
@@ -173,7 +181,7 @@ try{
             Assert ($global:fixtureWorkerCalls.Contains('start:omnibox-ai')) 'Recovery never started panel'
             Assert ($global:fixtureWorkerCalls.Contains('remove:omnibox-ai-update-fixture')) 'Worker service was not removed'
         }finally{
-            Remove-Item Function:Get-Service,Function:Get-CimInstance,Function:Stop-Service,Function:Start-Service,Function:Remove-Service,Function:Set-Service
+            Remove-Item Function:Get-Service,Function:global:Get-CimInstance,Function:Stop-Service,Function:Start-Service,Function:Remove-Service,Function:Set-Service,Function:global:Invoke-CimMethod
             Remove-Variable fixtureWorkerCalls,fixtureWorkerService -Scope Global -ErrorAction SilentlyContinue
         }
     }
@@ -206,7 +214,7 @@ else: print(open(__file__+'.json').read())
         Test 'device code gh process completes, delegates credential and removes temporary gh profile' {
             $state=[hashtable]::Synchronized(@{cancel=$false;code='';message=''})
             $package=Invoke-AiWebGhLogin $dir $state
-            Assert ($package.version -eq '0.9.3') 'Login did not download'
+            Assert ($package.version -eq '0.9.4') 'Login did not download'
             Assert ((& $m {$script:saved}) -eq 'fixture-token-not-real') 'Login token not delegated'
             Assert ($state.code -eq '') 'Code not cleared'
             Assert (@(Get-ChildItem (Join-Path $dir 'updates/auth') -Directory).Count -eq 0) 'gh config leaked'
