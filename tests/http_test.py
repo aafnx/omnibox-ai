@@ -435,6 +435,8 @@ class GatewayTests(unittest.TestCase):
             time.sleep(.05)
         self.assertEqual(data['sample']['ram_total_gb'],32);self.assertEqual(data['sample']['cpu_percent'],22)
         self.assertIsNone(data['sample']['cpu_temperature']);self.assertEqual(self.call('/api/session')[0],200)
+        self.assertEqual(self.call('/api/telemetry?once=1',auth=False)[0],401)
+        code,data,_=self.call('/api/telemetry?once=1');self.assertEqual(code,200);self.assertIn('collecting',data)
 
     def test_21_ollama_cpu_placement_is_injected_and_client_override_is_rejected(self):
         path=self.fixture.root/'config.json';original=path.read_text();config=json.loads(original)

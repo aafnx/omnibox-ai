@@ -7,10 +7,13 @@ let gateway = null, gatewayDirty = false, panelPort = 18090;
 let activity=null, refreshBusy=false;
 const pendingActions=new Set();
 const themeMedia=window.matchMedia('(prefers-color-scheme: dark)');
-function applyTheme(value){document.documentElement.dataset.theme=value==='system'?(themeMedia.matches?'dark':'light'):value;$('theme-select').value=value;}
+const themes=['light','dark','system'];
+function applyTheme(value){document.documentElement.dataset.theme=value==='system'?(themeMedia.matches?'dark':'light'):value;themes.forEach(t=>{const b=$(`theme-${t}`);b.classList.toggle('active',t===value);b.setAttribute('aria-pressed',String(t===value));});}
 let theme='light';try{const saved=localStorage.getItem('omnibox-theme');if(['light','dark','system'].includes(saved))theme=saved;}catch{}
 applyTheme(theme);
-$('theme-select').addEventListener('change',e=>{theme=e.target.value;applyTheme(theme);try{localStorage.setItem('omnibox-theme',theme);}catch{}});
+themes.forEach(t=>$(`theme-${t}`).addEventListener('click',()=>{theme=t;applyTheme(theme);try{localStorage.setItem('omnibox-theme',theme);}catch{}}));
+// One switch: top right of the login screen, inside the top bar of the dashboard.
+function placeThemeSwitch(inDashboard){const target=inDashboard?$('topbar-actions'):document.body;if(target)target.append($('theme-switch'));}
 themeMedia.addEventListener('change',()=>{if(theme==='system')applyTheme(theme);});
 const fields = {placement:'placement',context:'context',idle_minutes:'idle',alias:'alias',gpu_layers:'gpu-layers',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch'};
 const labels = {start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
@@ -21,15 +24,15 @@ async function api(path, body) {
   return data;
 }
 function notice(message, error=false) { $('notice').hidden=false; $('notice').textContent=message; $('notice').classList.toggle('error',error); }
-function showLogin() { $('new-api-key').hidden=true;$('key-copy').replaceChildren();gatewayDirty=false;loggedIn=false; clearTimeout(pollTimer); $('login').hidden=false; $('dashboard').hidden=true; csrf=''; }
-async function showDashboard() { const session=await api('/api/session'); csrf=session.csrf; panelPort=session.port; loggedIn=true; $('login').hidden=true; $('dashboard').hidden=false; await refresh(true); schedulePoll(); if(localStorage.getItem('omnibox-update-pending')==='1')switchTab('updates'); }
+function showLogin() { placeThemeSwitch(false); $('new-api-key').hidden=true;$('key-copy').replaceChildren();gatewayDirty=false;loggedIn=false; clearTimeout(pollTimer); $('login').hidden=false; $('dashboard').hidden=true; csrf=''; }
+async function showDashboard() { const session=await api('/api/session'); csrf=session.csrf; panelPort=session.port; loggedIn=true; $('login').hidden=true; $('dashboard').hidden=false; placeThemeSwitch(true); await refresh(true); schedulePoll(); if(localStorage.getItem('omnibox-update-pending')==='1')switchTab('updates'); }
 function monitoringActive(){return activity?.active||snapshot?.backends.some(b=>b.service==='StartPending'||(b.service==='Running'&&b.sleeping!==true&&(b.type==='prism'||!['(none)','-',undefined,null].includes(b.loaded_model))));}
 function schedulePoll() { clearTimeout(pollTimer); if(!loggedIn)return; pollTimer=setTimeout(async()=>{ if(!document.hidden) { try { await refresh(false); } catch(e) { notice(e.message,true); } } schedulePoll(); },document.hidden?10000:(monitoringActive()||snapshot?.operations?.some(o=>o.state==='running')||pendingActions.size?3000:10000)); }
-document.addEventListener('visibilitychange',()=>{if(!document.hidden&&loggedIn)refresh(false).catch(e=>notice(e.message,true));});
+document.addEventListener('visibilitychange',()=>{if(!document.hidden&&loggedIn)refresh(false,true).catch(e=>notice(e.message,true));});
 function backend() { return snapshot?.backends.find(b=>b.name===selectedBackend); }
 function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; $('catalog-results').replaceChildren(); $('catalog-status').textContent=''; renderSettings(); }
 function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='logs')refreshLogs().catch(e=>notice(e.message,true)); if(tab==='updates')refreshUpdateStatus().catch(e=>notice(e.message,true)); }
-async function refresh(gpu) {
+async function refresh(gpu,snapshotRequested=gpu) {
   if(refreshBusy)return;refreshBusy=true;
   try{
   const [data,apiConfig,stats]=await Promise.all([api(`/api/status${gpu?'?gpu=1':''}`),api('/api/gateway'),api('/api/activity')]);activity=stats; snapshot=data; $('version').textContent=`v${data.version}`; $('computer').textContent=data.computer;
@@ -42,7 +45,9 @@ async function refresh(gpu) {
   if(!settingsDirty)renderSettings();
   gateway=apiConfig;if(!gatewayDirty)renderGatewayForm();if(!$('connections').contains(document.activeElement))renderConnections();
   renderActivity();
-  if(monitoringActive())renderTelemetry(await api('/api/telemetry'));else renderTelemetry({enabled:false,reason:data.backends.some(b=>b.service==='Running')?'Модель спит или выгружена; опрос ресурсов приостановлен.':'Серверы остановлены; опрос ресурсов выключен.'});
+  if(monitoringActive())renderTelemetry(await api('/api/telemetry'));
+  else if(snapshotRequested)await requestTelemetrySnapshot();
+  else renderTelemetry({enabled:false,reason:idleTelemetryReason()});
   }finally{refreshBusy=false;}
 }
 function badgeText(b) { if(b.service==='Running') return b.sleeping?'Модель спит':b.api==='Ready'?'API готов':'API недоступен'; return ({Stopped:'Остановлен',Missing:'Не установлен',StartPending:'Запускается',StopPending:'Останавливается'})[b.service]||b.service; }
@@ -81,10 +86,25 @@ function renderOperations(operations) {
     if(op.state!=='running'&&!completed.has(op.id)){completed.add(op.id);if(!notified){notice(op.message,op.state==='failed');notified=true;}if(op.state==='done'&&op.backend===selectedBackend&&submittedForms.get(op.id)===formRevision)settingsDirty=false;submittedForms.delete(op.id);}
   });
 }
+// Idle panel: no periodic sampling. The user gets one sample when opening or refreshing the panel.
+let lastSample=null,snapshotFollowUp=0;
+function idleTelemetryReason(){return snapshot?.backends.some(b=>b.service==='Running')?'Модель спит или выгружена: постоянный опрос приостановлен.':'Серверы остановлены: постоянный опрос выключен.';}
+async function requestTelemetrySnapshot(){
+  const data=await api('/api/telemetry?once=1');renderTelemetry(data.sample?{...data,snapshot:true}:{enabled:false,reason:'Собираем показатели ресурсов…'});
+  // The sample is collected in the background: ask once more for its result, never in a loop.
+  if(data.collecting){clearTimeout(snapshotFollowUp);snapshotFollowUp=setTimeout(()=>{if(loggedIn&&!monitoringActive())api('/api/telemetry?once=1').then(d=>{if(d.sample)renderTelemetry({...d,snapshot:true});}).catch(()=>{});},2500);}
+}
 function fmt(value) { return value===null||value===undefined?'—':Number(value).toLocaleString('ru-RU'); }
 function renderTelemetry(data) {
-  if(!data.enabled){['cpu-value','ram-value','gpu-load','temperature-value','power-value','fan-value'].forEach(id=>$(id).textContent='—');['cpu-bar','ram-bar','gpu-load-bar'].forEach(id=>$(id).value=0);$('telemetry-state').textContent=data.reason||'Опрос ресурсов выключен.';return;}
+  if(!data.enabled){
+    // Keep the last sample on screen with its time instead of dashes.
+    if(lastSample){renderSample(lastSample);$('telemetry-state').textContent=`Снимок ${new Date(lastSample.timestamp).toLocaleTimeString('ru-RU')}. ${data.reason||idleTelemetryReason()} Новый снимок — «Обновить данные».`;return;}
+    ['cpu-value','ram-value','gpu-load','temperature-value','power-value','fan-value'].forEach(id=>$(id).textContent='—');['cpu-bar','ram-bar','gpu-load-bar'].forEach(id=>$(id).value=0);$('telemetry-state').textContent=data.reason||'Опрос ресурсов выключен.';return;}
   const s=data.sample;if(!s){$('telemetry-state').textContent=data.error||'Собираем показатели ресурсов…';return;}
+  lastSample=s;renderSample(s);
+  $('telemetry-state').textContent=data.snapshot?`Снимок ${new Date(s.timestamp).toLocaleTimeString('ru-RU')}. ${idleTelemetryReason()} Новый снимок — «Обновить данные».`:`Обновлено ${new Date(s.timestamp).toLocaleTimeString('ru-RU')}. Опрос при открытой панели.`;
+}
+function renderSample(s) {
   $('cpu-value').textContent=s.cpu_percent===null?'Недоступно':`${fmt(s.cpu_percent)}%`;$('cpu-bar').value=s.cpu_percent||0;
   $('ram-value').textContent=`${fmt(s.ram_used_gb)} / ${fmt(s.ram_total_gb)} ГБ`;$('ram-bar').value=s.ram_percent||0;
   const g=s.gpu?.[0];$('gpu-load').textContent=g?.utilization===null||g?.utilization===undefined?'Недоступно':`${fmt(g.utilization)}%`;$('gpu-load-bar').value=g?.utilization||0;
@@ -92,7 +112,6 @@ function renderTelemetry(data) {
   $('power-value').textContent=g?.power_watts===null||g?.power_watts===undefined?'—':`${fmt(g.power_watts)} Вт`;
   $('fan-value').textContent=g?.fan_percent===null||g?.fan_percent===undefined?'Вентиляторы: —':`Вентиляторы: ${fmt(g.fan_percent)}%`;
   if(g){$('gpu-value').textContent=`${(g.used/1024).toFixed(1)} / ${(g.total/1024).toFixed(1)} ГБ`;$('gpu-bar').value=g.used/g.total*100;$('gpu-caption').textContent=`${g.name} · свободно ${(g.free/1024).toFixed(1)} ГБ`;}
-  $('telemetry-state').textContent=`Обновлено ${new Date(s.timestamp).toLocaleTimeString('ru-RU')}. Опрос при открытой панели.`;
 }
 function tableRow(values) {const row=document.createElement('tr');values.forEach(value=>{const cell=document.createElement('td');cell.textContent=value;row.append(cell);});return row;}
 function renderActivity() {

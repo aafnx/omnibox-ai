@@ -966,6 +966,12 @@ try {
         $m=New-TestModule;& $m {$script:services.ollama.Status='Stopped';function script:Get-AiSystemSample {throw 'must not sample'}}
         $t=Get-AiTelemetry $example;Assert-True (-not $t.enabled)
     }
+    Test 'user-requested telemetry snapshot samples once even with stopped engines' {
+        $m=New-TestModule;& $m {$script:services.ollama.Status='Stopped';$script:samples=0;function script:Get-AiSystemSample {$script:samples++;@{cpu_percent=5;ram_total_gb=32;ram_used_gb=8;gpu=@()}}}
+        $t=Get-AiTelemetry $example -Snapshot
+        Assert-True $t.enabled;Assert-Equal $t.sample.cpu_percent 5;Assert-Equal (& $m {$script:samples}) 1
+        Assert-True (-not (Get-AiTelemetry $example).enabled) 'Periodic telemetry must stay off for stopped engines'
+    }
     Test 'telemetry caches samples for concurrent visible clients' {
         $m=New-TestModule;& $m {$script:samples=0;function script:Get-AiSystemSample {$script:samples++;@{cpu_percent=25;ram_total_gb=32;ram_used_gb=16;cpu_temperature=$null;gpu=@()}}}
         $a=Get-AiTelemetry $example;$b=Get-AiTelemetry $example

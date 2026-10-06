@@ -2,8 +2,14 @@
   "schema_version": 1,
   "releases": [
     {
-      "version": "0.9.6",
+      "version": "0.9.7",
       "commit": null,
+      "date": "2026-10-06",
+      "note": "снимок ресурсов при остановленных серверах, значки темы вверху"
+    },
+    {
+      "version": "0.9.6",
+      "commit": "84dfa1dfcda2931693fe335e0d19204d7f2c3213",
       "date": "2026-10-06",
       "note": "выбор версии: ai update --list и ai update <версия>"
     },
