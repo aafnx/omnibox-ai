@@ -1149,12 +1149,87 @@ try {
         $m=New-TestModule
         & $m {
             function script:Import-Module {param($Name,[switch]$Force)}
-            function script:Invoke-AiUpdate {param($InstallDirectory,[switch]$UseToken)$script:updateRoot=$InstallDirectory;$script:updateToken=[bool]$UseToken}
+            function script:Invoke-AiUpdate {param($InstallDirectory,[switch]$UseToken,[string]$Version,[switch]$List)$script:updateRoot=$InstallDirectory;$script:updateToken=[bool]$UseToken;$script:updateVersion=$Version;$script:updateList=[bool]$List}
         }
         Invoke-Ai -Arguments @('update','--token') -ConfigPath 'missing'
         Assert-Equal (& $m {$script:updateRoot}) $repo
         Assert-True (& $m {$script:updateToken})
+        Invoke-Ai -Arguments @('update','v0.9.4','--token') -ConfigPath 'missing'
+        Assert-Equal (& $m {$script:updateVersion}) '0.9.4'
+        & $m {$script:calls.Clear()}
+        Invoke-Ai -Arguments @('update','--list') -ConfigPath 'missing'
+        Assert-True (& $m {$script:updateList -and -not $script:updateToken -and -not $script:updateVersion}) 'List not dispatched'
+        Assert-True (-not (& $m {$script:calls.Contains('admin')})) 'Listing versions must not require elevation'
         Assert-Throws {Invoke-Ai -Arguments @('update','--wrong') -ConfigPath 'missing'} '*ai update*'
+        Assert-Throws {Invoke-Ai -Arguments @('update','0.9.4','0.9.5') -ConfigPath 'missing'} '*ai update*'
+    }
+    Test 'releases.json lists installable versions newest first, top entry is VERSION from main' {
+        $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
+        $releases=@(ConvertTo-AiReleaseList (Get-Content -LiteralPath (Join-Path $repo 'releases.json') -Raw))
+        Assert-Equal $releases[0].version $version
+        Assert-True ($null -eq $releases[0].commit) 'The newest entry must install from main'
+        Assert-True (@($releases|Where-Object {[version]$_.version -lt [version]'0.9.4'}).Count -eq 0) 'Versions before 0.9.4 cannot be installed over native services'
+        foreach($r in $releases){Assert-True ($r.note.Length -gt 0) "No note for $($r.version)"}
+        # Each older entry must point at a commit whose packaged installer is exactly that version.
+        $shallow=(& git -C $repo rev-parse --is-shallow-repository 2>$null) -eq 'true'
+        foreach($r in @($releases|Select-Object -Skip 1)){
+            $type=& git -C $repo cat-file -t $r.commit 2>$null
+            if($type -ne 'commit'){if($env:CI -or -not $shallow){throw "Commit $($r.commit) of $($r.version) is not in the repository history"};Write-Host "SKIP release commit check in shallow clone: $($r.version)";continue}
+            $text=(& git -C $repo show "$($r.commit):dist/install-omnibox-ai.ps1") -join "`n"
+            Assert-True ($text -match "OmniBox AI $([regex]::Escape($r.version)) payload OK") "Commit $($r.commit) does not contain the $($r.version) installer"
+        }
+        Assert-Throws {ConvertTo-AiReleaseList '{"schema_version":1,"releases":[{"version":"0.9.5","commit":null},{"version":"0.9.6","commit":"0123456789abcdef0123456789abcdef01234567"}]}'} '*от новой к старой*'
+        Assert-Throws {ConvertTo-AiReleaseList '{"schema_version":1,"releases":[{"version":"0.9.6","commit":"main"}]}'} '*коммит*'
+        Assert-Throws {ConvertTo-AiReleaseList '{"schema_version":1,"releases":[{"version":"0.9.6","commit":null},{"version":"0.9.5","commit":"../evil"}]}'} '*коммит*'
+    }
+    Test 'ai update installs the requested version from its release commit under the install lock' {
+        $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
+        $dir=Join-Path $testRoot 'update-version';$null=New-Item -ItemType Directory -Path $dir -Force
+        Set-Content -LiteralPath (Join-Path $dir '.omnibox-ai-install') -Value 'omnibox-ai 0.9.6'
+        $installer={param($v)[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("#requires -Version 7.4`n# OmniBox AI $v payload OK`n"+('#'*200)))}
+        $list='{"schema_version":1,"releases":[{"version":"0.9.6","commit":null,"note":"latest"},{"version":"0.9.5","commit":"bb763637e095b280069d49ff37cd71d86b9df504","note":"transactional"},{"version":"0.9.4","commit":"01727ebeb86c0e1088f1d9ec397f77f4df5ddb6c","note":"old"}]}'
+        & $u {
+            param($List,$Installer)
+            $script:requests=[Collections.Generic.List[string]]::new();$script:list=$List;$script:makeInstaller=$Installer;$script:served=@{}
+            function script:Get-Command {param($Name,$CommandType,$ErrorAction)[pscustomobject]@{Source='fake-gh'}}
+            function script:Read-Host {throw 'Unexpected token prompt'}
+            function script:Invoke-AiGhContents {
+                param($Executable,$Path,$Ref)
+                $script:requests.Add("$Path@$Ref")
+                if($Path -eq 'releases.json'){return @{type='file';encoding='base64';content=[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($script:list))}}
+                $v=if($script:served.Contains($Ref)){$script:served[$Ref]}else{'0.9.6'}
+                @{type='file';encoding='base64';content=(& $script:makeInstaller $v)}
+            }
+            function script:Invoke-AiDownloadedInstaller {
+                param([byte[]]$Bytes,$InstallDirectory)
+                # Another thread must not be able to take the install lock while the installer runs.
+                $job=Start-ThreadJob {$m=[Threading.Mutex]::new($false,'Global\omnibox-ai-install-v1');try{$m.WaitOne(0)}finally{$m.Dispose()}}
+                $script:lockFree=Receive-Job $job -Wait -AutoRemoveJob
+                $script:ran=[regex]::Match([Text.Encoding]::UTF8.GetString($Bytes),'OmniBox AI (\S+) payload').Groups[1].Value
+            }
+        } $list $installer
+        & $u {$script:served['01727ebeb86c0e1088f1d9ec397f77f4df5ddb6c']='0.9.4'}
+        $output=Invoke-AiUpdate -InstallDirectory $dir -Version '0.9.4' 6>&1 | Out-String
+        Assert-Equal (& $u {$script:ran}) '0.9.4'
+        Assert-True (& $u {$script:requests -contains 'dist/install-omnibox-ai.ps1@01727ebeb86c0e1088f1d9ec397f77f4df5ddb6c'}) 'Release commit not used'
+        Assert-True ($output -like '*Откат*0.9.6*0.9.4*' -and $output -like '*нет автоматического отката*') 'Downgrade not announced'
+        Assert-Equal (& $u {$script:lockFree}) $false
+        Import-Module (Join-Path $repo 'src/Install.Transaction.psm1')
+        $again=Enter-AiInstallLock -TimeoutSeconds 1; Exit-AiInstallLock $again
+        # Latest comes from main; the newest listed version is also served from main.
+        & $u {$script:ran='';$script:requests.Clear()}
+        $output=Invoke-AiUpdate -InstallDirectory $dir 6>&1 | Out-String
+        Assert-True ((& $u {$script:requests.ToArray()}) -join ',' -eq 'dist/install-omnibox-ai.ps1@main') 'Latest update read something else'
+        Assert-True ($output -like '*Переустановка*0.9.6*') 'Reinstall not announced'
+        & $u {$script:ran='';$script:served['bb763637e095b280069d49ff37cd71d86b9df504']='0.9.3'}
+        Assert-Throws {Invoke-AiUpdate -InstallDirectory $dir -Version '0.9.5'} '*0.9.3 вместо 0.9.5*'
+        Assert-Throws {Invoke-AiUpdate -InstallDirectory $dir -Version '0.8.0'} '*недоступна*'
+        Assert-Throws {Invoke-AiUpdate -InstallDirectory $dir -Version 'main'} '*x.y.z*'
+        Assert-Equal (& $u {$script:ran}) ''
+        $listing=Invoke-AiUpdate -InstallDirectory $dir -List 6>&1 | Out-String
+        Assert-True ($listing -match '0\.9\.6\s+\(latest\)\s+— последняя, установлена') 'Latest/installed marks missing'
+        Assert-True ($listing -match '0\.9\.4\s+\(old\)') 'Note missing'
+        Assert-Equal (& $u {$script:ran}) ''
     }
     Test 'install settings compare values: formatting and documented migrations are not differences' {
         $t = Import-Module (Join-Path $repo 'src/Install.Transaction.psm1') -Force -PassThru
