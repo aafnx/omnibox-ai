@@ -9,7 +9,7 @@ const pendingActions=new Set();
 const themeMedia=window.matchMedia('(prefers-color-scheme: dark)');
 const themes=['light','dark','system'];
 function applyTheme(value){document.documentElement.dataset.theme=value==='system'?(themeMedia.matches?'dark':'light'):value;themes.forEach(t=>{const b=$(`theme-${t}`);b.classList.toggle('active',t===value);b.setAttribute('aria-pressed',String(t===value));});}
-let theme='light';try{const saved=localStorage.getItem('omnibox-theme');if(['light','dark','system'].includes(saved))theme=saved;}catch{}
+let theme='system';try{const saved=localStorage.getItem('omnibox-theme');if(['light','dark','system'].includes(saved))theme=saved;}catch{}
 applyTheme(theme);
 themes.forEach(t=>$(`theme-${t}`).addEventListener('click',()=>{theme=t;applyTheme(theme);try{localStorage.setItem('omnibox-theme',theme);}catch{}}));
 // One switch: top right of the login screen, inside the top bar of the dashboard.
@@ -36,7 +36,7 @@ async function refresh(gpu,snapshotRequested=gpu) {
   if(refreshBusy)return;refreshBusy=true;
   try{
   const [data,apiConfig,stats]=await Promise.all([api(`/api/status${gpu?'?gpu=1':''}`),api('/api/gateway'),api('/api/activity')]);activity=stats; snapshot=data; $('version').textContent=`v${data.version}`; $('computer').textContent=data.computer;
-  $('server-count').textContent=`${data.backends.filter(b=>b.service==='Running').length} / ${data.backends.length}`; $('exclusive').textContent='Одна модель';
+  $('server-count').textContent=`${data.backends.filter(b=>b.service==='Running').length} / ${data.backends.length}`; renderModelSummary();
   if(gpu) { const g=data.gpu?.[0]; $('gpu-value').textContent=g?`${(g.used/1024).toFixed(1)} / ${(g.total/1024).toFixed(1)} ГБ`:'Нет данных'; $('gpu-bar').value=g?g.used/g.total*100:0; $('gpu-caption').textContent=g?`${g.name} · свободно ${(g.free/1024).toFixed(1)} ГБ`:'nvidia-smi недоступен.'; }
   renderEngines(); renderOperations(data.operations||[]);
   for(const id of ['model-backend']) { const select=$(id), old=select.value; select.replaceChildren(); data.backends.forEach(b=>select.add(new Option(b.name,b.name))); select.value=data.backends.some(b=>b.name===old)?old:data.default_backend; }
@@ -50,7 +50,15 @@ async function refresh(gpu,snapshotRequested=gpu) {
   else renderTelemetry({enabled:false,reason:idleTelemetryReason()});
   }finally{refreshBusy=false;}
 }
+// Third summary card: what is in memory now; one engine and one model at a time.
+function renderModelSummary(){
+  const running=snapshot.backends.find(b=>b.service==='Running'||b.service==='StartPending');
+  const model=running&&!['-','(none)',undefined,null,''].includes(running.loaded_model)?running.loaded_model:'';
+  $('kpi-model').textContent=model||(running?'Не загружена':'Нет');
+  $('kpi-model-caption').textContent=running?`${running.name} · ${badgeText(running).toLowerCase()}`:'Серверы остановлены. Одновременно работает одна модель.';
+}
 function badgeText(b) { if(b.service==='Running') return b.sleeping?'Модель спит':b.api==='Ready'?'API готов':'API недоступен'; return ({Stopped:'Остановлен',Missing:'Не установлен',StartPending:'Запускается',StopPending:'Останавливается'})[b.service]||b.service; }
+const unknownValues=new Set(['—','Нет данных','Время неизвестно','Сервер остановлен']);
 function renderEngines() {
   $('engines').replaceChildren();
   snapshot.backends.forEach(b=>{
@@ -63,8 +71,12 @@ function renderEngines() {
     const timer=card.querySelector('.engine-idle');timer.dataset.backend=b.name;timer.textContent=idleText(b);
     card.querySelector('.engine-residency').textContent=residencyText(b.residency);
     card.querySelector('.engine-error').textContent=(b.errors||[]).join('\n');
+    // Rows without a known value add noise; the badge already says whether the engine runs.
+    card.querySelectorAll('dd').forEach(dd=>{if(dd.parentElement)dd.parentElement.hidden=unknownValues.has(dd.textContent);});
     card.querySelectorAll('[data-action]').forEach(button=>{
-      button.disabled=button.dataset.action==='start' && (b.service==='Running'||b.service==='StartPending'||pendingActions.size>0||snapshot.operations?.some(o=>o.state==='running'&&o.action!=='download'&&o.action!=='pull')) || button.dataset.action==='stop' && b.service==='Stopped';
+      // Show the action that fits the state instead of a disabled twin: running engines offer Stop, stopped ones Start.
+      button.hidden=button.dataset.action==='start'&&(b.service==='Running'||b.service==='StartPending')||button.dataset.action==='stop'&&b.service==='Stopped';
+      button.disabled=button.dataset.action==='start' && (pendingActions.size>0||snapshot.operations?.some(o=>o.state==='running'&&o.action!=='download'&&o.action!=='pull'));
       button.addEventListener('click',()=>{if(button.dataset.action==='settings'){chooseBackend(b.name);switchTab('models');}else action({action:button.dataset.action,backend:b.name}).catch(e=>notice(e.message,true));});
     });
     const op=snapshot.operations?.find(o=>o.backend===b.name&&o.state==='running'&&!['download','pull','save'].includes(o.action));
@@ -208,7 +220,12 @@ $('login-form').addEventListener('submit',async e=>{e.preventDefault();$('login-
 $('logout').addEventListener('click',()=>api('/api/logout',{}).finally(showLogin));
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
 $('refresh').addEventListener('click',()=>refresh(true).catch(e=>notice(e.message,true)));
-$('stop-all').addEventListener('click',()=>action({action:'stopall'}).catch(e=>notice(e.message,true)));
+$('stop-all').addEventListener('click',()=>{
+  // Stopping interrupts the current generation: ask first when something runs.
+  const running=snapshot?.backends.some(b=>b.service==='Running'||b.service==='StartPending');
+  if(running&&!window.confirm('Остановить все серверы? Текущая генерация будет прервана, модель выгрузится из памяти.'))return;
+  action({action:'stopall'}).catch(e=>notice(e.message,true));
+});
 $('model-backend').addEventListener('change',e=>chooseBackend(e.target.value));
 $('settings-form').addEventListener('input',()=>{settingsDirty=true;formRevision++;});$('settings-form').addEventListener('change',()=>{settingsDirty=true;formRevision++;});
 $('settings-form').addEventListener('submit',e=>{e.preventDefault();action({action:'save',backend:selectedBackend,settings:collectSettings()}).catch(error=>notice(error.message,true));});

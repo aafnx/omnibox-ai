@@ -23,7 +23,7 @@ function run(code){return vm.runInContext(code,context);}
 (async()=>{
   run(source);await new Promise(setImmediate);
   assert.equal(context.document.documentElement.dataset.theme,'light');
-  assert.equal(nodes['theme-light'].attributes['aria-pressed'],'true');
+  assert.equal(nodes['theme-system'].attributes['aria-pressed'],'true');assert.equal(nodes['theme-light'].attributes['aria-pressed'],'false');
   nodes['theme-dark'].listeners.click[0]();
   assert.equal(context.document.documentElement.dataset.theme,'dark');assert.equal(store.get('omnibox-theme'),'dark');
   assert.equal(nodes['theme-dark'].attributes['aria-pressed'],'true');assert.equal(nodes['theme-light'].attributes['aria-pressed'],'false');
@@ -31,7 +31,14 @@ function run(code){return vm.runInContext(code,context);}
   run("placeThemeSwitch(false)");assert.ok(context.document.body.children.includes(nodes['theme-switch']));
   run("applyTheme('system')");assert.equal(context.document.documentElement.dataset.theme,'light');
   run("snapshot={backends:[{name:'bonsai',type:'prism',service:'Running',api:'Ready',sleeping:false,loaded_model:'model.gguf',selected_model:'model',settings:{context:32768,alias:'model'},models:[],errors:[]}],operations:[]};selectedBackend='bonsai';renderEngines();");
-  assert.equal(nodes.engines.children[0].querySelector('start').disabled,true);
+  assert.equal(nodes.engines.children[0].querySelector('start').hidden,true);assert.equal(nodes.engines.children[0].querySelector('stop').hidden,false);
+  run("renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'model.gguf');assert.ok(nodes['kpi-model-caption'].textContent.startsWith('bonsai · '));
+  // Stopping everything interrupts generation, so a running server needs confirmation.
+  let asked=0;context.window.confirm=()=>{asked++;return false;};const sent=requests.length;
+  nodes['stop-all'].listeners.click[0]();await new Promise(setImmediate);assert.equal(asked,1);assert.equal(requests.length,sent);
+  run("snapshot.backends[0].service='Stopped';renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'Нет');
+  nodes['stop-all'].listeners.click[0]();await new Promise(setImmediate);assert.equal(asked,1);assert.ok(requests.length>sent);
+  run("snapshot.backends[0].service='Running';renderEngines()");
   assert.equal(run('Boolean(monitoringActive())'),true);
   run("snapshot.backends[0].sleeping=true");assert.equal(run('Boolean(monitoringActive())'),false);
   run("snapshot.backends[0].sleeping=false;snapshot.backends[0].service='Stopped';snapshot.operations=[{id:'op',backend:'bonsai',action:'start',state:'running',elapsed_seconds:12,message:'Starting'}];renderEngines();renderOperations(snapshot.operations);");
@@ -62,5 +69,5 @@ function run(code){return vm.runInContext(code,context);}
   nodes['update-token'].value='one-use-secret';context.fetch=async(path,options)=>{requests.push({path,body:options.body});return{ok:true,status:202,json:async()=>({current:'0.9.4',phase:'checking',message:'Checking',gh_available:true,authenticated:false,code:''})}};
   nodes['update-token-form'].listeners.submit[0]({preventDefault:()=>{}});assert.equal(nodes['update-token'].value,'');await new Promise(setImmediate);
   assert.equal(JSON.parse(requests.at(-1).body).token,'one-use-secret');assert.ok([...store.values()].every(v=>!String(v).includes('secret')));
-  console.log('UI behavior: theme selection, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});
