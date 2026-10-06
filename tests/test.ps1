@@ -1704,6 +1704,10 @@ try {
         }
         Assert-True ((Get-Content -LiteralPath (Join-Path $repo 'CHANGELOG.md') -Raw) -match ('(?m)^## ' + [regex]::Escape($version) + ' ')) 'CHANGELOG has no entry for VERSION'
         Assert-True ((Get-Content -LiteralPath (Join-Path $repo 'README.md') -Raw).Contains("**$version**")) 'README states another version'
+        # The plan is updated with every release: current version and an entry in its progress log.
+        $roadmap = Get-Content -LiteralPath (Join-Path $repo 'docs/roadmap.md') -Raw
+        Assert-True ($roadmap -match ('версия \*\*' + [regex]::Escape($version) + '\*\*')) 'Roadmap states another version'
+        Assert-True ($roadmap -match ('(?m)^### ' + [regex]::Escape($version) + ' ')) 'Roadmap has no progress entry for VERSION'
     }
     Test 'self-contained package matches every current source file' {
         $setup = Join-Path $repo 'dist/install-omnibox-ai.ps1'
