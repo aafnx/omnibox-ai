@@ -229,7 +229,7 @@ function Get-AiDashboard {
         $rows += @{ name = $name; type = $b.type; service = $status.Service; startup = $status.Startup; api = $status.API; active_context = $status.Context; sleeping = $status.Sleeping; loaded_model = $status.Model; selected_model=$selectedModel; settings = $settings; models = $models; pending = $pending; can_restore = $restore; errors = $errors; residency=$residency;idle=$idle;endpoint = $b.base_url.TrimEnd('/') + '/v1' }
     }
     $gpu = @(); if ($IncludeGpu) { $gpu = @(Get-AiGpuData) }
-    return @{ version = '0.9.4'; default_backend = $config.default_backend; exclusive = $true; backends = $rows; gpu = $gpu; computer = [Environment]::MachineName }
+    return @{ version = $script:AiVersion; default_backend = $config.default_backend; exclusive = $true; backends = $rows; gpu = $gpu; computer = [Environment]::MachineName }
 }
 
 function Get-AiGatewayRuntime {

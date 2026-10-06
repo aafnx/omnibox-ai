@@ -6,7 +6,7 @@ $repo=Split-Path $PSScriptRoot -Parent
 $fixture=Join-Path ([IO.Path]::GetTempPath()) ('omnibox-install-flow-'+[Guid]::NewGuid().ToString('N'))
 $source=Join-Path $fixture 'source';$destination=Join-Path $fixture 'installed'
 $oldUserProfile=$env:USERPROFILE;$oldPath=$env:Path;$oldUsername=$env:USERNAME;$oldUserPath=[Environment]::GetEnvironmentVariable("Path","User")
-$global:FlowFailChange=$null;$global:FlowFailProbe=$false;$global:FlowServices=@{};$global:FlowCalls=[Collections.Generic.List[string]]::new()
+$global:FlowFailChange=$null;$global:FlowFailProbe=$false;$global:FlowFailFirewall=$false;$global:FlowServices=@{};$global:FlowCalls=[Collections.Generic.List[string]]::new()
 function Assert($Value,[string]$Message){if(-not $Value){throw $Message}}
 function global:Get-Command {
  param($Name,$CommandType,$ErrorAction)
@@ -48,13 +48,13 @@ function global:Start-Service {param($Name,$ErrorAction)
  $s=$global:FlowServices[$Name];$s.Status='Running';$s.State='Running';$global:FlowCalls.Add('start:'+ $Name)
  if($s.PathName -match '-Profile "([^"]+)"$'){Set-Content -LiteralPath ($Matches[1]+'.runtime.json') -Value '{"pid":null}';Set-Content -LiteralPath ($Matches[1]+'.ready') -Value 'ready'}
 }
-function global:Stop-Service {param($Name,$ErrorAction,[switch]$NoWait)$s=$global:FlowServices[$Name];$s.Status='Stopped';$s.State='Stopped';$global:FlowCalls.Add('stop:'+ $Name)}
+function global:Stop-Service {param($Name,$ErrorAction,[switch]$NoWait)if($global:FlowFailStop -eq $Name){if($global:FlowFailStopSkip -gt 0){$global:FlowFailStopSkip--}else{throw 'Fixture service stop failure'}};$s=$global:FlowServices[$Name];$s.Status='Stopped';$s.State='Stopped';$global:FlowCalls.Add('stop:'+ $Name)}
 function global:Remove-Service {param($Name,$ErrorAction)$global:FlowServices.Remove($Name);$global:FlowCalls.Add('remove:'+ $Name)}
 function global:Unblock-File {param($LiteralPath)}
 function global:Get-NetTCPConnection {param($LocalPort,$State,$ErrorAction)return $null}
 function global:Get-NetFirewallRule {param($Name,$ErrorAction)return $null}
 function global:Remove-NetFirewallRule {param($Name,$ErrorAction)}
-function global:New-NetFirewallRule {param($Name,$DisplayName,$Direction,$Action,$Enabled,$Protocol,$LocalPort,$Profile,$RemoteAddress)$global:FlowCalls.Add('firewall:'+ $Name)}
+function global:New-NetFirewallRule {param($Name,$DisplayName,$Direction,$Action,$Enabled,$Protocol,$LocalPort,$Profile,$RemoteAddress)if($global:FlowFailFirewall){throw 'Fixture firewall provider failure'};$global:FlowCalls.Add('firewall:'+ $Name)}
 function global:Invoke-WebRequest {param($Uri,$TimeoutSec)if($Uri -notlike 'http://127.0.0.1:*'){throw 'Unexpected fixture request'};return @{StatusCode=200}}
 try{
  $null=New-Item -ItemType Directory -Path $fixture
@@ -108,9 +108,116 @@ try{
  Assert ($gateway.key_hash -ceq $previousGateway.key_hash) 'Upgrade changed API key'
  Assert ($gateway.base_url -ceq $previousGateway.base_url) 'Upgrade changed endpoint'
  Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Upgraded panel not started'
- Assert ((Get-Service 'omnibox-ai').PathName -like '*src/Service.Host.exe*') 'Legacy panel was not migrated'
- Assert ((Get-Service 'bonsai').PathName -like '*src/Service.Host.exe*') 'Legacy backend was not migrated'
+ Assert ((Get-Service 'omnibox-ai').PathName -match 'src[\\/]Service\.Host\.exe') 'Legacy panel was not migrated'
+ Assert ((Get-Service 'bonsai').PathName -match 'src[\\/]Service\.Host\.exe') 'Legacy backend was not migrated'
  Write-Host 'PASS real installer body completes first installation and upgrade with mocked Windows providers'
+ # --- U1: every failure after the snapshot restores the previous installation ---
+ Import-Module (Join-Path $source 'src/Install.Transaction.psm1') -Force
+ $pwshPath=Join-Path $PSHOME $(if($IsWindows){'pwsh.exe'}else{'pwsh'})
+ # Make the installed copy distinguishable from the package and give it model history and gh access.
+ Set-Content -LiteralPath (Join-Path $destination 'VERSION') -Value '0.9.0'
+ Set-Content -LiteralPath (Join-Path $destination '.omnibox-ai-install') -Value 'omnibox-ai 0.9.0'
+ Add-Content -LiteralPath (Join-Path $destination 'src/Telemetry.ps1') -Value '# previous version'
+ $bonsaiXml=$config.backends.bonsai.service_config
+ Set-Content -LiteralPath ($bonsaiXml+'.ai-previous') -Value '<service><id>bonsai</id><arguments>-c 32768</arguments></service>'
+ Set-Content -LiteralPath ($bonsaiXml+'.ai-state.json') -Value '{"schema_version":1,"pending":false}'
+ $null=New-Item -ItemType Directory -Path (Join-Path $destination 'updates/auth') -Force
+ Set-Content -LiteralPath (Join-Path $destination 'updates/auth/github.dpapi') -Value 'fixture encrypted credential'
+ function Get-InstallState {
+  $state=[ordered]@{}
+  foreach($item in @(Get-ChildItem -LiteralPath $destination -Recurse -File -Force|Where-Object {$_.FullName -notmatch '[\\/](backups|logs)[\\/]' -and $_.Name -notmatch '\.(runtime\.json|ready)$'})){$state[$item.FullName.Substring($destination.Length)]=(Get-FileHash -LiteralPath $item.FullName).Hash}
+  foreach($path in @($bonsaiXml,($bonsaiXml+'.ai-previous'),($bonsaiXml+'.ai-state.json'),$config.backends.ollama.service_config)){$state[$path]=(Get-FileHash -LiteralPath $path).Hash}
+  foreach($name in @('omnibox-ai','bonsai','ollama')){$s=Get-Service $name;$state['service:'+$name]="$($s.PathName)|$($s.StartMode)|$($s.Status)"}
+  return $state
+ }
+ function Assert-SameState($Before,[string]$Label){
+  $after=Get-InstallState
+  foreach($key in @(@($Before.Keys)+@($after.Keys)|Select-Object -Unique)){Assert ($Before[$key] -ceq $after[$key]) "$Label changed $key"}
+ }
+ $marker=Join-Path $destination '.omnibox-ai-transaction.json'
+ $before=Get-InstallState
+ Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Fixture panel must run before failure tests'
+ $failures=[ordered]@{}
+ foreach($step in @('files','services','config','verify','panel','panel-started')){$failures["step $step"]=[scriptblock]::Create("`$env:OMNIBOX_AI_INSTALL_FAIL_STEP='$step'")}
+ $failures['firewall error after panel.json/gateway.json were written']={$global:FlowFailFirewall=$true}
+ foreach($name in $failures.Keys){
+  & $failures[$name]
+  $failed=$null
+  try{& (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate}catch{$failed=$_.Exception.Message}
+  finally{$env:OMNIBOX_AI_INSTALL_FAIL_STEP=$null;$global:FlowFailFirewall=$false}
+  Assert ($failed -like '*восстановлены*') "$name did not report restoration: $failed"
+  Assert ($global:OmniBoxInstallResult.status -eq 'rolled-back') "$name result is $($global:OmniBoxInstallResult.status)"
+  Assert (-not (Test-Path -LiteralPath $marker)) "$name left an unfinished journal"
+  Assert ((Get-Content -LiteralPath (Join-Path $destination 'VERSION') -Raw).Trim() -eq '0.9.0') "$name kept the new version"
+  Assert-SameState $before $name
+ }
+ Write-Host 'PASS failure at every installer step and inside panel setup restores files, settings, history, gh access and services; panel runs'
+
+ # A second installer (another process) is refused before any change.
+ $ready=Join-Path $fixture 'install-lock-ready'
+ $holder=Start-Process -FilePath $pwshPath -ArgumentList @('-NoLogo','-NoProfile','-Command',"`$m=[Threading.Mutex]::new(`$false,'Global\omnibox-ai-install-v1');`$null=`$m.WaitOne();Set-Content '$ready' x;Start-Sleep 60") -PassThru
+ try{
+  $deadline=[DateTime]::UtcNow.AddSeconds(30);while(-not(Test-Path $ready) -and [DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 100}
+  $refused=$null;try{& (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate}catch{$refused=$_.Exception.Message}
+  Assert ($refused -like '*Уже выполняется другая установка*') "Concurrent installer not refused: $refused"
+  Assert ($global:OmniBoxInstallResult.status -eq 'not-started') 'Refused installer reported changes'
+  Assert-SameState $before 'refused concurrent installer'
+ }finally{$holder.Kill();$holder.WaitForExit()}
+ Write-Host 'PASS concurrent installation is refused without changes'
+ # A snapshot that cannot be written changes nothing and restarts the panel.
+ $panelFile=Join-Path $destination 'panel.json';$panelHash=(Get-FileHash $panelFile).Hash
+ $backupsDir=Join-Path $destination 'backups';$parked=Join-Path $fixture 'parked-backups'
+ Move-Item -LiteralPath $backupsDir -Destination $parked;Set-Content -LiteralPath $backupsDir -Value 'a file where the snapshot directory should be'
+ $failed=$null
+ try{& (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate}catch{$failed=$_.Exception.Message}
+ finally{Remove-Item -LiteralPath $backupsDir -Force;Move-Item -LiteralPath $parked -Destination $backupsDir}
+ Assert ($failed -like '*установка не начата*') "Snapshot failure not reported: $failed"
+ Assert ($global:OmniBoxInstallResult.status -eq 'not-started') "Unexpected result $($global:OmniBoxInstallResult.status)"
+ Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Panel left stopped after a refused installation'
+ Assert ((Get-FileHash $panelFile).Hash -eq $panelHash) 'Refused installation changed panel.json'
+ Write-Host 'PASS installation without a snapshot changes nothing and leaves the panel running'
+
+ # An installer process that died midway leaves a running journal; the next run restores first.
+ $profiles=[ordered]@{'omnibox-ai'=(Join-Path $destination 'panel-service.xml')};$external=@()
+ foreach($name in $config.backends.Keys){$profiles[$name]=$config.backends[$name].service_config;$external+=@($config.backends[$name].service_config,($config.backends[$name].service_config+'.ai-previous'),($config.backends[$name].service_config+'.ai-state.json'))}
+ $manifest=Import-PowerShellDataFile (Join-Path $source 'package.psd1')
+ $crashed=New-AiInstallTransaction -Directory $destination -Files (@($manifest.Files)+@('config.json','panel.json','gateway.json','panel-service.xml','.omnibox-ai-install','src/Service.Host.exe','panel-service.exe')) -ServiceProfiles $profiles -ExternalFiles $external -PanelWasRunning $true -Version 'crashed'
+ Add-AiInstallStep $crashed 'files'
+ Set-Content -LiteralPath (Join-Path $destination 'VERSION') -Value 'half-copied'
+ Set-Content -LiteralPath (Join-Path $destination 'panel.json') -Value '{"truncated":'
+ Set-Content -LiteralPath ($bonsaiXml+'.ai-state.json') -Value 'damaged'
+ Stop-Service 'omnibox-ai';(Get-Service 'bonsai').PathName='"C:\half\migrated.exe"'
+ Assert (Test-Path -LiteralPath $marker) 'Crash journal missing'
+ & (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate
+ Assert ($global:OmniBoxInstallResult.status -eq 'installed') 'Installer after crash did not finish'
+ Assert (-not (Test-Path -LiteralPath $marker)) 'Crash journal remained'
+ $panelAfter=Get-Content (Join-Path $destination 'panel.json') -Raw|ConvertFrom-Json -AsHashtable
+ Assert ($panelAfter.credential.hash -ceq $previousPanel.credential.hash -and 'custom.example' -in $panelAfter.allowed_hosts) 'Crash recovery lost panel settings'
+ Assert ((Get-FileHash ($bonsaiXml+'.ai-state.json')).Hash -eq $before[$bonsaiXml+'.ai-state.json']) 'Crash recovery lost model history'
+ Assert ((Get-Content -LiteralPath (Join-Path $destination 'VERSION') -Raw).Trim() -eq (Get-Content (Join-Path $source 'VERSION') -Raw).Trim()) 'New version not installed after recovery'
+ Assert ((Get-Service 'bonsai').PathName -match 'src[\\/]Service\.Host\.exe') 'Backend command not migrated after recovery'
+ Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Panel not running after recovery and installation'
+ Write-Host 'PASS interrupted installation is rolled back before the next installation completes'
+ # An incomplete rollback keeps the journal; the next installer run retries the rollback first.
+ # The installer stops the running panel once before the snapshot; the rollback stop then fails.
+ $env:OMNIBOX_AI_INSTALL_FAIL_STEP='panel-started';$global:FlowFailStop='omnibox-ai';$global:FlowFailStopSkip=1
+ $failed=$null
+ try{& (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate}catch{$failed=$_.Exception.Message}
+ finally{$env:OMNIBOX_AI_INSTALL_FAIL_STEP=$null;$global:FlowFailStop=$null}
+ Assert ($global:OmniBoxInstallResult.status -eq 'rollback-failed') "Expected incomplete rollback, got $($global:OmniBoxInstallResult.status): $failed"
+ Assert ($failed -like '*неполное*') 'Incomplete rollback not reported'
+ Assert (Test-Path -LiteralPath $marker) 'Journal removed after an incomplete rollback'
+ & (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate
+ Assert ($global:OmniBoxInstallResult.status -eq 'installed') 'Retry after incomplete rollback did not install'
+ Assert (-not (Test-Path -LiteralPath $marker)) 'Journal remained after retry'
+ Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Panel not running after retry'
+ Write-Host 'PASS incomplete rollback keeps the journal and is retried before the next installation'
+
+ # The web worker owns both locks and runs the installer in its own thread.
+ $workerLock=Enter-AiInstallLock;Enter-AiControlLock $workerLock
+ try{& (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate}finally{Exit-AiInstallLock $workerLock}
+ Assert ($global:OmniBoxInstallResult.status -eq 'installed') 'Installer did not re-enter locks owned by its thread'
+ Write-Host 'PASS installer re-enters install and control locks held by the web worker thread'
  # A nonzero Windows provider result midway through migration must restore detached snapshots.
  $migrationConfig=Get-Content (Join-Path $destination 'config.json') -Raw|ConvertFrom-Json -AsHashtable
  $oldCommands=@{}
@@ -154,6 +261,7 @@ try{
  foreach($name in @('Get-Command','Get-Process','Get-Service','Get-CimInstance','Invoke-CimMethod','New-Service','Set-Service','Start-Service','Stop-Service','Remove-Service','Get-NetTCPConnection','Get-NetFirewallRule','Remove-NetFirewallRule','New-NetFirewallRule','Invoke-WebRequest','Unblock-File','Read-Host')){Remove-Item ('Function:global:'+ $name) -ErrorAction SilentlyContinue}
  $env:USERPROFILE=$oldUserProfile;$env:Path=$oldPath;$env:USERNAME=$oldUsername
  if($IsWindows){[Environment]::SetEnvironmentVariable("Path",$oldUserPath,"User")}
- Remove-Variable FlowServices,FlowCalls,FlowFailProbe,FlowFailChange -Scope Global -ErrorAction SilentlyContinue
+ $env:OMNIBOX_AI_INSTALL_FAIL_STEP=$null
+ Remove-Variable FlowServices,FlowCalls,FlowFailProbe,FlowFailChange,FlowFailFirewall,FlowFailStop,FlowFailStopSkip,OmniBoxInstallResult -Scope Global -ErrorAction SilentlyContinue
  if(Test-Path $fixture){Remove-Item -LiteralPath $fixture -Recurse -Force}
 }

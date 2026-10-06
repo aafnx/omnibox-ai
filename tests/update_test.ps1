@@ -2,6 +2,7 @@
 $ErrorActionPreference='Stop'
 Set-StrictMode -Version Latest
 $root=Split-Path $PSScriptRoot -Parent
+$version=(Get-Content -LiteralPath (Join-Path $root 'VERSION') -Raw).Trim()
 $m=Import-Module (Join-Path $root 'src/Web.Update.psm1') -Force -PassThru
 $dir=Join-Path ([IO.Path]::GetTempPath()) ('omnibox-update-tests-'+[Guid]::NewGuid().ToString('N'))
 $null=New-Item -ItemType Directory -Path $dir
@@ -20,7 +21,7 @@ try{
     } $bytes
     Test 'web package uses delegated gh credential and validates version/payload without execution' {
         $p=Get-AiWebInstaller $dir
-        Assert ($p.version -eq '0.9.4') 'Version missing'
+        Assert ($p.version -eq $version) 'Version missing'
         Assert ((& $m {$script:sentToken}) -eq 'delegated-secret') 'Credential not delegated'
         Assert ($p.bytes.Length -eq $bytes.Length) 'Package differs'
         Assert ($p.sha256 -eq [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant()) 'File hash differs'
@@ -99,7 +100,7 @@ try{
             Assert ((Get-Content (Join-Path $stage.FullName 'update.xml') -Raw) -match 'update-worker.ps1') 'Wrong worker profile'
             Assert ([IO.File]::ReadAllBytes((Join-Path $stage.FullName 'src/Service.Host.exe')).Length -eq 3) 'EXE not staged'
             $calls=@(& $m {$script:serviceCalls.ToArray()})
-            Assert ($calls.Count -eq 2 -and $calls[0] -like '*updates/run-*/src/Service.Host.exe*') 'SCM worker is not independent'
+            Assert ($calls.Count -eq 2 -and $calls[0] -match 'updates[\\/]run-[a-f0-9]{32}[\\/]src[\\/]Service\.Host\.exe') 'SCM worker is not independent'
             Assert ((Get-Content (Join-Path $fixture 'updates/result.json') -Raw|ConvertFrom-Json).phase -eq 'installing') 'No durable guard'
             $failed=$false;try{& $m {param($r,$f)Start-AiWebUpdateWorker $r $f ('0'*64) '9.9.9'} $fixture $installer}catch{$failed=$true}
             Assert $failed 'Modified package accepted'
@@ -150,8 +151,9 @@ try{
         function Start-Service {param($Name,$ErrorAction)$global:fixtureWorkerCalls.Add('start:'+ $Name)}
         function Remove-Service {param($Name,$ErrorAction)$global:fixtureWorkerCalls.Add('remove:'+ $Name)}
         try{
-            foreach($failure in @($false,$true)){
-                $installed=Join-Path $dir ('worker-'+$failure);$stage=Join-Path $installed 'updates/run-fixture'
+            foreach($scenario in @('success','failure','rolled-back','busy')){
+                $failure=$scenario -ne 'success'
+                $installed=Join-Path $dir ('worker-'+$scenario);$stage=Join-Path $installed 'updates/run-fixture'
                 $null=New-Item -ItemType Directory -Path $stage,(Join-Path $installed 'src'),(Join-Path $installed 'models'),(Join-Path $installed 'updates/auth') -Force
                 Copy-Item (Join-Path $root 'scripts/update-worker.ps1') $stage
                 Copy-Item (Join-Path $root 'src/Service.Install.psm1') (Join-Path $installed 'src')
@@ -165,13 +167,28 @@ try{
                 $originalCommand=New-AiLegacyServiceCommand (Get-Process -Id $PID).Path $installed (Join-Path $installed 'panel-service.xml')
                 $global:fixtureWorkerService=[pscustomobject]@{Name='omnibox-ai';ProcessId=0;State='Stopped';PathName=$originalCommand;StartMode='Auto'}
                 $installer='param($InstallDirectory,[switch]$NonInteractive,[switch]$NoProfileUpdate); if(-not $NonInteractive -or -not $NoProfileUpdate){throw "Bad invocation"}; Set-Content (Join-Path $InstallDirectory "ai.ps1") "updated app"; Set-AiServiceCommand -Name omnibox-ai -Command (New-AiNativeServiceCommand (Get-Process -Id $PID).Path $InstallDirectory (Join-Path $InstallDirectory "panel-service.xml")); '
-                if($failure){$installer+='throw "fixture installer failure secret must not appear in status"'}
+                if($scenario -eq 'failure'){$installer+='throw "fixture installer failure secret must not appear in status"'}
+                # A transactional installer restores everything itself and reports it; the worker must not restore again.
+                if($scenario -eq 'rolled-back'){$installer='param($InstallDirectory,[switch]$NonInteractive,[switch]$NoProfileUpdate); $global:OmniBoxInstallResult=@{status="rolled-back"}; throw "fixture rollback secret must not appear in status"'}
+                if($scenario -eq 'busy'){$installer='throw "installer must not run while another installation holds the lock"'}
                 Set-Content (Join-Path $stage 'installer.ps1') $installer
-                & (Join-Path $stage 'update-worker.ps1') -Root $installed -ServiceName 'omnibox-ai-update-fixture' -Version '9.9.9'
+                $holder=$null
+                if($scenario -eq 'busy'){
+                    $ready=Join-Path $installed 'lock-ready'
+                    $holder=Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoLogo','-NoProfile','-Command',"`$m=[Threading.Mutex]::new(`$false,'Global\omnibox-ai-install-v1');`$null=`$m.WaitOne();Set-Content '$ready' x;Start-Sleep 60") -PassThru
+                    $deadline=[DateTime]::UtcNow.AddSeconds(30);while(-not(Test-Path $ready) -and [DateTime]::UtcNow -lt $deadline){Start-Sleep -Milliseconds 100}
+                }
+                $changesBefore=@($global:fixtureWorkerCalls|Where-Object {$_ -like 'change:*'}).Count
+                try{& (Join-Path $stage 'update-worker.ps1') -Root $installed -ServiceName 'omnibox-ai-update-fixture' -Version '9.9.9'}
+                finally{if($null -ne $holder){$holder.Kill();$holder.WaitForExit()}}
+                $changes=@($global:fixtureWorkerCalls|Where-Object {$_ -like 'change:*'}).Count-$changesBefore
                 $result=Get-Content (Join-Path $installed 'updates/result.json') -Raw|ConvertFrom-Json
                 Assert ($result.phase -eq $(if($failure){'failed'}else{'done'})) 'Wrong worker outcome'
                 Assert ((Get-Content (Join-Path $installed 'ai.ps1')).Trim() -eq $(if($failure){'previous app'}else{'updated app'})) 'Wrong restoration'
                 if($failure){Assert ($global:fixtureWorkerService.PathName -eq $originalCommand) 'SCM command was not restored'}
+                if($scenario -in @('rolled-back','busy')){Assert ($changes -eq 0) "Worker changed services after $scenario"}
+                if($scenario -eq 'rolled-back'){Assert ($result.message -like '*восстановлены установщиком*') 'Installer rollback not reported'}
+                if($scenario -eq 'busy'){Assert ($result.message -like '*Уже выполняется другая установка*') 'Busy installation not reported'}
                 Assert ($result.message -notlike '*secret*') 'Raw error leaked'
                 Assert ((Get-Content (Join-Path $installed 'gateway.json')) -like '*fixture-key-hash*') 'API key changed'
                 Assert ((Get-Content (Join-Path $installed 'models/model.gguf')).Trim() -eq 'untouched weights') 'Model weights touched'
@@ -200,7 +217,7 @@ if sys.argv[1:3]==['auth','login']:
 elif sys.argv[1:3]==['auth','token']: print('fixture-token-not-real')
 else: print(open(__file__+'.json').read())
 '@
-        [IO.File]::WriteAllText($fake,$program,[Text.UTF8Encoding]::new($false));Copy-Item $fixture ($fake+'.json');& chmod +x $fake
+        [IO.File]::WriteAllText($fake,$program.Replace("`r`n","`n"),[Text.UTF8Encoding]::new($false));Copy-Item $fixture ($fake+'.json');& chmod +x $fake
         & $m {param($exe,$moduleFile)
             $script:realGh=$exe
             Remove-Item Function:script:Invoke-AiUpdateGh
@@ -214,7 +231,7 @@ else: print(open(__file__+'.json').read())
         Test 'device code gh process completes, delegates credential and removes temporary gh profile' {
             $state=[hashtable]::Synchronized(@{cancel=$false;code='';message=''})
             $package=Invoke-AiWebGhLogin $dir $state
-            Assert ($package.version -eq '0.9.4') 'Login did not download'
+            Assert ($package.version -eq $version) 'Login did not download'
             Assert ((& $m {$script:saved}) -eq 'fixture-token-not-real') 'Login token not delegated'
             Assert ($state.code -eq '') 'Code not cleared'
             Assert (@(Get-ChildItem (Join-Path $dir 'updates/auth') -Directory).Count -eq 0) 'gh config leaked'

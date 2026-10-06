@@ -5,6 +5,8 @@ Set-StrictMode -Version Latest
 $repo = Split-Path $PSScriptRoot -Parent
 $modulePath = Join-Path $repo 'src/OmniBox.Ai.psm1'
 $example = Join-Path $repo 'config.example.json'
+$version = (Get-Content -LiteralPath (Join-Path $repo 'VERSION') -Raw).Trim()
+$manifest = Import-PowerShellDataFile -LiteralPath (Join-Path $repo 'package.psd1')
 $script:passed = 0
 $script:failed = 0
 $testRoot = Join-Path ([IO.Path]::GetTempPath()) ('omnibox-ai-tests-' + [Guid]::NewGuid().ToString('N'))
@@ -99,7 +101,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.9.4'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') $version
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -1009,7 +1011,7 @@ try {
     Test 'native service command quotes executable, script and compatible profile paths' {
         Import-Module (Join-Path $repo 'src/Service.Install.psm1') -Force
         $cmd=New-AiNativeServiceCommand '/program files/pwsh' '/tools/ai' '/models/service.xml'
-        Assert-True ($cmd.StartsWith('"/tools/ai/src/Service.Host.exe"'))
+        Assert-True ($cmd.StartsWith('"' + (Join-Path '/tools/ai' 'src/Service.Host.exe') + '"')) 'Host path is not the first quoted token'
         Assert-True ($cmd.Contains('-Profile "/models/service.xml"'))
         Assert-True (-not $cmd.Contains('winsw'))
         Assert-Throws {New-AiNativeServiceCommand '/bad"path' '/tools/ai' '/model.xml'} '*Invalid service path*'
@@ -1138,7 +1140,7 @@ try {
         $u=Import-Module (Join-Path $repo 'src/Update.Helpers.psm1') -Force -PassThru
         $before=@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count
         $output=Invoke-AiDownloadedInstaller -Bytes ([IO.File]::ReadAllBytes((Join-Path $repo 'dist/install-omnibox-ai.ps1'))) -CheckOnly
-        Assert-True ($output -like '*0.9.4 payload OK*')
+        Assert-True ($output -like "*$version payload OK*")
         Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before
         Assert-Throws {Invoke-AiDownloadedInstaller -Bytes ([Text.Encoding]::UTF8.GetBytes("throw 'fixture installer error'"))} '*fixture installer error*'
         Assert-Equal (@(Get-ChildItem ([IO.Path]::GetTempPath()) -Filter 'omnibox-ai-install-*.ps1').Count) $before
@@ -1154,26 +1156,149 @@ try {
         Assert-True (& $m {$script:updateToken})
         Assert-Throws {Invoke-Ai -Arguments @('update','--wrong') -ConfigPath 'missing'} '*ai update*'
     }
+    Test 'install settings compare values: formatting and documented migrations are not differences' {
+        $t = Import-Module (Join-Path $repo 'src/Install.Transaction.psm1') -Force -PassThru
+        $dir = Join-Path $testRoot 'settings-values'; $null = New-Item -ItemType Directory -Path (Join-Path $dir 'updates/auth') -Force
+        $xmlPath = Join-Path $dir 'bonsai.xml'
+        Set-Content -LiteralPath $xmlPath -Value '<service><id>bonsai</id><arguments>-m model.gguf  -c 32768</arguments><env name="A" value="1"/></service>'
+        Set-Content -LiteralPath ($xmlPath + '.ai-previous') -Value '<service><id>bonsai</id></service>'
+        Set-Content -LiteralPath ($xmlPath + '.ai-state.json') -Value '{"pending":false}'
+        Set-Content -LiteralPath (Join-Path $dir 'updates/auth/github.dpapi') -Value 'encrypted'
+        $config = [ordered]@{ schema_version = 1; default_backend = 'bonsai'; exclusive = $true; backends = [ordered]@{ bonsai = [ordered]@{ type = 'prism'; service = 'bonsai'; service_config = $xmlPath; active_model = 'm' } } }
+        $config | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $dir 'config.json')
+        $credential = @{ salt = 's'; hash = 'h'; iterations = 210000 }
+        @{ schema_version = 1; port = 18090; allowed_hosts = @('192.168.1.77', 'Custom.Example'); credential = $credential; ssh_target = 'u@h'; remote_addresses = @('LocalSubnet') } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $dir 'panel.json')
+        @{ schema_version = 1; enabled = $true; port = 18090; base_url = 'https://llm.example/v1/'; backend = 'bonsai'; require_key = $true; key_hash = ('a' * 64) } | ConvertTo-Json | Set-Content (Join-Path $dir 'gateway.json')
+        $before = Get-AiInstallSettings $dir
+        $expected = Get-AiExpectedInstallSettings $before @{ 'allowed_hosts.extra' = @('localhost') }
+        # Rewrite everything as the installer would: other key order and formatting, added defaults and runtime_path.
+        $config.backends.bonsai.runtime_path = $xmlPath + '.runtime.json'
+        $reordered = [ordered]@{ backends = $config.backends; exclusive = $true; default_backend = 'bonsai'; schema_version = 1 }
+        [IO.File]::WriteAllText((Join-Path $dir 'config.json'), ($reordered | ConvertTo-Json -Depth 8 -Compress))
+        @{ trusted_proxy_addresses = @(); public_origin = ''; remote_addresses = @('LocalSubnet'); ssh_target = 'u@h'; credential = @{ iterations = 210000; hash = 'h'; salt = 's' }; allowed_hosts = @('custom.example', '192.168.1.77', 'localhost'); port = 18090; schema_version = 1 } | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $dir 'panel.json')
+        @{ key_hash = ('a' * 64); require_key = $true; backend = 'bonsai'; base_url = 'https://llm.example/v1'; port = 18090; enabled = $true; schema_version = 1 } | ConvertTo-Json | Set-Content (Join-Path $dir 'gateway.json')
+        Set-Content -LiteralPath $xmlPath -Value "<?xml version=`"1.0`"?>`n<service>`n  <id>bonsai</id>`n  <arguments>-m model.gguf -c 32768</arguments>`n  <env value=`"1`" name=`"A`" />`n</service>"
+        Assert-Equal (@(Compare-AiInstallSettings $expected (Get-AiInstallSettings $dir)).Count) 0
+        Assert-AiInstallSettings $expected $dir
+    }
+    Test 'install settings detect lost hosts, changed secrets, model settings and touched history' {
+        $dir = Join-Path $testRoot 'settings-values'
+        $base = Get-AiInstallSettings $dir
+        $expected = Get-AiExpectedInstallSettings $base
+        $cases = @(
+            @{ file = 'panel.json'; change = { param($v) $v.allowed_hosts = @('192.168.1.77') }; pattern = '*allowed_hosts*custom.example*' },
+            @{ file = 'panel.json'; change = { param($v) $v.credential.hash = 'other' }; pattern = '*panel.credential*' },
+            @{ file = 'gateway.json'; change = { param($v) $v.key_hash = ('b' * 64) }; pattern = '*gateway.key_hash*' },
+            @{ file = 'gateway.json'; change = { param($v) $v.require_key = $false }; pattern = '*gateway.require_key*' },
+            @{ file = 'config.json'; change = { param($v) $v.backends.bonsai.active_model = 'other' }; pattern = '*config.backends*' }
+        )
+        foreach ($case in $cases) {
+            $path = Join-Path $dir $case.file; $original = [IO.File]::ReadAllBytes($path)
+            try {
+                $value = Get-Content $path -Raw | ConvertFrom-Json -AsHashtable; & $case.change $value
+                $value | ConvertTo-Json -Depth 8 | Set-Content $path
+                Assert-Throws { Assert-AiInstallSettings $expected $dir } $case.pattern
+            } finally { [IO.File]::WriteAllBytes($path, $original) }
+        }
+        $xmlPath = Join-Path $dir 'bonsai.xml'
+        foreach ($path in @($xmlPath, ($xmlPath + '.ai-state.json'), (Join-Path $dir 'updates/auth/github.dpapi'))) {
+            $original = [IO.File]::ReadAllBytes($path)
+            try {
+                if ($path -eq $xmlPath) { Set-Content $path '<service><id>bonsai</id><arguments>-m model.gguf -c 65536</arguments><env name="A" value="1"/></service>' }
+                else { [IO.File]::AppendAllText($path, ' ') }
+                Assert-Throws { Assert-AiInstallSettings $expected $dir } '*не пройдена*'
+            } finally { [IO.File]::WriteAllBytes($path, $original) }
+        }
+        # Settings the user asked to change are expected to change.
+        $port = Get-AiExpectedInstallSettings $base @{ 'panel.port' = 18091 }
+        $panel = Get-Content (Join-Path $dir 'panel.json') -Raw | ConvertFrom-Json -AsHashtable; $panel.port = 18091
+        $original = [IO.File]::ReadAllBytes((Join-Path $dir 'panel.json'))
+        try { $panel | ConvertTo-Json -Depth 8 | Set-Content (Join-Path $dir 'panel.json'); Assert-AiInstallSettings $port $dir }
+        finally { [IO.File]::WriteAllBytes((Join-Path $dir 'panel.json'), $original) }
+    }
+    Test 'install lock refuses a second installer and is re-entrant for the owning thread' {
+        $t = Import-Module (Join-Path $repo 'src/Install.Transaction.psm1') -Force -PassThru
+        $exe = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
+        $ready = Join-Path $testRoot 'lock-ready'
+        $holder = Start-Process -FilePath $exe -ArgumentList @('-NoLogo', '-NoProfile', '-Command', "`$m=[Threading.Mutex]::new(`$false,'Global\omnibox-ai-install-v1');`$null=`$m.WaitOne();Set-Content '$ready' x;Start-Sleep 30") -PassThru
+        try {
+            $deadline = [DateTime]::UtcNow.AddSeconds(30); while (-not (Test-Path $ready) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 100 }
+            Assert-True (Test-Path $ready) 'Lock holder did not start'
+            Assert-Throws { Enter-AiInstallLock -TimeoutSeconds 1 } '*Уже выполняется другая установка*'
+        } finally { $holder.Kill(); $holder.WaitForExit() }
+        $lock = Enter-AiInstallLock -TimeoutSeconds 5
+        try {
+            Enter-AiControlLock $lock -TimeoutSeconds 1
+            # The web worker owns both locks and runs the installer in the same thread.
+            $nested = Enter-AiInstallLock -TimeoutSeconds 1; Enter-AiControlLock $nested -TimeoutSeconds 1; Exit-AiInstallLock $nested
+            $m = New-TestModule; & $m { function script:Assert-AiAdministrator {} }
+            Assert-Equal (& $m { Invoke-AiLocked { 'control inside install' } }) 'control inside install'
+        } finally { Exit-AiInstallLock $lock }
+        $again = Enter-AiInstallLock -TimeoutSeconds 1; Exit-AiInstallLock $again
+    }
+    Test 'VERSION is the single source of the application version' {
+        Assert-True ($version -match '^\d+\.\d+\.\d+$') 'VERSION must be x.y.z'
+        $sources = @($manifest.Files + $manifest.InstallerFiles + @('scripts/setup.template.ps1', 'scripts/build-setup.ps1') | Where-Object { $_ -match '\.(ps1|psm1|psd1|cs|js|html)$' })
+        foreach ($file in $sources) {
+            $text = Get-Content -LiteralPath (Join-Path $repo $file) -Raw
+            Assert-True ($text -notmatch [regex]::Escape("'$version'")) "Hard-coded version in $file"
+            Assert-True ($text -notmatch 'OmniBox AI \d+\.\d+\.\d+|omnibox-ai \d+\.\d+\.\d+') "Hard-coded version text in $file"
+        }
+        Assert-True ((Get-Content -LiteralPath (Join-Path $repo 'CHANGELOG.md') -Raw) -match ('(?m)^## ' + [regex]::Escape($version) + ' ')) 'CHANGELOG has no entry for VERSION'
+        Assert-True ((Get-Content -LiteralPath (Join-Path $repo 'README.md') -Raw).Contains("**$version**")) 'README states another version'
+    }
     Test 'self-contained package matches every current source file' {
         $setup = Join-Path $repo 'dist/install-omnibox-ai.ps1'
         $text = Get-Content $setup -Raw
         $encoded = [regex]::Match($text, '(?m)^\$payload = ''([^'']+)''').Groups[1].Value
+        $sha = [regex]::Match($text, '(?m)^\$expectedSha = ''([a-f0-9]{64})''').Groups[1].Value
         Assert-True ($encoded.Length -gt 0)
+        # The generated wrapper is exactly the current template with this version and payload.
+        $template = (Get-Content -LiteralPath (Join-Path $repo 'scripts/setup.template.ps1') -Raw) -replace "`r?`n", "`r`n"
+        $expected = $template.Replace('__VERSION__', $version).Replace('__PAYLOAD_SHA256__', $sha).Replace('__PAYLOAD_BASE64__', $encoded)
+        Assert-True (($text -replace "`r?`n", "`r`n") -ceq $expected) 'dist was not built from the current template/VERSION: run scripts/build-setup.ps1'
         $memory = [IO.MemoryStream]::new([Convert]::FromBase64String($encoded))
         $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Read)
         try {
-            Assert-Equal $archive.Entries.Count 44
+            $names = @($archive.Entries | ForEach-Object FullName)
+            Assert-Equal ($names -join ',') ((@($manifest.Files) + @($manifest.InstallerFiles)) -join ',')
             foreach ($entry in $archive.Entries) {
                 Assert-True ($entry.FullName -notmatch '(^/|\.\.)')
-                $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)
+                $reader = [IO.StreamReader]::new($entry.Open(), [Text.UTF8Encoding]::new($false), $false)
                 try { $embedded = $reader.ReadToEnd() } finally { $reader.Dispose() }
-                Assert-Equal $embedded (Get-Content -LiteralPath (Join-Path $repo $entry.FullName) -Raw)
+                $current = (Get-Content -LiteralPath (Join-Path $repo $entry.FullName) -Raw).Replace("`r`n", "`n")
+                if ([IO.Path]::GetExtension($entry.FullName) -in $manifest.CrlfExtensions) { $current = $current.Replace("`n", "`r`n") }
+                Assert-True ($embedded -ceq $current) "Package differs from source: $($entry.FullName). Run scripts/build-setup.ps1"
             }
         } finally { $archive.Dispose(); $memory.Dispose() }
         $exe = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
         $output = & $exe -NoLogo -NoProfile -File $setup -CheckOnly
         Assert-Equal $global:LASTEXITCODE 0
-        Assert-True ($output -like '*payload OK*')
+        Assert-True ($output -like "*$version payload OK*")
+    }
+    Test 'package build is independent of checkout line endings' {
+        $copy = Join-Path $testRoot 'eol-checkout'
+        foreach ($file in @($manifest.Files) + @($manifest.InstallerFiles) + @('scripts/build-setup.ps1', 'scripts/setup.template.ps1')) {
+            $target = Join-Path $copy $file
+            $null = New-Item -ItemType Directory -Path (Split-Path $target -Parent) -Force
+            # Opposite line endings from the packaged form must produce the same payload content.
+            $content = (Get-Content -LiteralPath (Join-Path $repo $file) -Raw).Replace("`r`n", "`n")
+            if ([IO.Path]::GetExtension($file) -notin $manifest.CrlfExtensions) { $content = $content.Replace("`n", "`r`n") }
+            [IO.File]::WriteAllText($target, $content, [Text.UTF8Encoding]::new($false))
+        }
+        $exe = Join-Path $PSHOME $(if ($IsWindows) { 'pwsh.exe' } else { 'pwsh' })
+        $built = Join-Path $copy 'dist/install-omnibox-ai.ps1'
+        $null = & $exe -NoLogo -NoProfile -File (Join-Path $copy 'scripts/build-setup.ps1') -OutputPath $built
+        Assert-Equal $global:LASTEXITCODE 0
+        $pattern = '(?m)^\$payload = ''([^'']+)'''
+        $read = {
+            param([string]$Setup)
+            $bytes = [Convert]::FromBase64String([regex]::Match((Get-Content -LiteralPath $Setup -Raw), $pattern).Groups[1].Value)
+            $zip = [IO.Compression.ZipArchive]::new([IO.MemoryStream]::new($bytes))
+            try { @($zip.Entries | ForEach-Object { $r = [IO.StreamReader]::new($_.Open()); try { $_.FullName + '=' + $r.ReadToEnd() } finally { $r.Dispose() } }) -join "`0" }
+            finally { $zip.Dispose() }
+        }
+        Assert-True ((& $read $built) -ceq (& $read (Join-Path $repo 'dist/install-omnibox-ai.ps1'))) 'Payload content depends on checkout line endings'
     }
     Test 'self-contained package corruption is rejected before installation' {
         $text = Get-Content (Join-Path $repo 'dist/install-omnibox-ai.ps1') -Raw
