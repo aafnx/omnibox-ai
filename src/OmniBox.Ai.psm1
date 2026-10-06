@@ -48,9 +48,27 @@ function Get-AiBackend {
     param($Config, [string]$Name)
     if (-not $Name) { $Name = $Config.default_backend }
     if (-not $Config.backends.Contains($Name)) {
-        throw "Неизвестный сервер '$Name'. Доступны: $($Config.backends.Keys -join ', ')."
+        throw "Неизвестный движок '$Name'. Доступны: $(@($Config.backends.Keys | ForEach-Object { Get-AiCliName $Config $_ }) -join ', ')."
     }
     return $Config.backends[$Name]
+}
+
+# Messages name engines by runtime (PrismML, Ollama); the config key stays a service detail.
+function Get-AiEngineName {
+    param($Config, [string]$Name)
+    if (-not $Config.backends.Contains($Name)) { return $Name }
+    $type = $Config.backends[$Name].type
+    $label = switch ($type) { 'prism' { 'PrismML' } 'ollama' { 'Ollama' } default { $Name } }
+    if (@($Config.backends.Values | Where-Object { $_.type -eq $type }).Count -gt 1) { return "$label ($Name)" }
+    return $label
+}
+
+# The name to type in ai commands: prismml for the single PrismML engine.
+function Get-AiCliName {
+    param($Config, [string]$Name)
+    if ($Config.backends.Contains($Name) -and $Config.backends[$Name].type -eq 'prism' -and -not $Config.backends.Contains('prismml') -and
+        @($Config.backends.Values | Where-Object { $_.type -eq 'prism' }).Count -eq 1) { return 'prismml' }
+    return $Name
 }
 
 function ConvertTo-AiContext {
@@ -175,7 +193,6 @@ function Save-AiServiceXml {
             if ($errors.Count) { throw "Не удалось сохранить XML: $cause. Восстановление файлов: $($errors -join '; ')" }
             throw "Не удалось сохранить XML; прежние файлы восстановлены: $cause"
         }
-        Write-Host 'Предыдущие настройки сохранены для автоматического отката и ai restore.'
     } finally { $stream.Dispose() }
 }
 
@@ -273,7 +290,7 @@ function Read-AiStartOptions {
         } elseif ($arg -match '^--context=(.*)$') {
             if ($null -ne $context) { throw 'Укажи --context только один раз.' }
             $context = ConvertTo-AiContext $Matches[1]
-        } elseif ($arg.StartsWith('-') -or $named) { throw "Неизвестный аргумент '$arg'. Использование: ai start/restart [backend] [--context 128k]" }
+        } elseif ($arg.StartsWith('-') -or $named) { throw "Неизвестный аргумент '$arg'. Использование: ai start/restart [движок] [--context 128k]" }
         else { $name = $arg; $named = $true }
     }
     return @{ name = $name; context = $context }
@@ -340,10 +357,11 @@ function Stop-AiBackend {
     param($Config, [string]$Name)
     $backend = Get-AiBackend $Config $Name
     $service = Get-AiService $backend.service
-    if ($null -eq $service) { Write-Host "$Name`: служба не установлена, пропущено."; return }
-    if ([string]$service.Status -eq 'Stopped') { Write-Host "$Name`: уже остановлен."; return }
+    $engine = Get-AiEngineName $Config $Name
+    if ($null -eq $service) { Write-Host "$engine`: служба не установлена."; return }
+    if ([string]$service.Status -eq 'Stopped') { Write-Host "$engine`: уже остановлен."; return }
     Stop-AiService -Name $backend.service -TimeoutSeconds $Config.stop_timeout_seconds
-    Write-Host "$Name`: остановлен."
+    Write-Host "$engine`: остановлен."
 }
 
 function Wait-AiReady {
@@ -353,7 +371,7 @@ function Wait-AiReady {
     while ($watch.Elapsed.TotalSeconds -lt $Config.startup_timeout_seconds) {
         $service = Get-AiService $backend.service
         if ($null -eq $service -or [string]$service.Status -eq 'Stopped') {
-            throw "$Name`: служба завершилась. Посмотри ai logs $Name."
+            throw "$(Get-AiEngineName $Config $Name): служба завершилась. Журнал: ai logs $(Get-AiCliName $Config $Name)."
         }
         try {
             if ($backend.type -eq 'prism') {
@@ -366,7 +384,7 @@ function Wait-AiReady {
         } catch { Write-Verbose $_.Exception.Message }
         Invoke-AiDelay
     }
-    throw "$Name`: API не готов за $($Config.startup_timeout_seconds) с. Служба не остановлена автоматически; проверь ai status и ai logs $Name."
+    throw "$(Get-AiEngineName $Config $Name): API не ответил за $($Config.startup_timeout_seconds) с. Служба оставлена как есть; проверь ai status и ai logs $(Get-AiCliName $Config $Name)."
 }
 
 function Set-AiSingleModelLimits {
@@ -393,11 +411,11 @@ function Start-AiBackend {
         if ($other -ne $Name) { Stop-AiBackend $Config $other }
     }
     if ([string]$service.Status -notin @('Running', 'StartPending')) { Start-AiService $backend.service }
-    Write-Host "$Name`: ожидание API..."
+    Write-Host "$(Get-AiEngineName $Config $Name): запуск…"
     Wait-AiReady $Config $Name
     $state=Read-AiRecoveryState $backend
     if($null -ne $state -and $state.pending){$state.pending=$false;Write-AiRecoveryState $backend $state}
-    Write-Host "$Name`: API готов — $($backend.base_url)/v1"
+    Write-Host "$(Get-AiEngineName $Config $Name): готов · $($backend.base_url)/v1"
 }
 
 function Get-AiStatus {
@@ -431,6 +449,21 @@ function Get-AiStatus {
             } catch { $row.API = 'Unavailable' }
         }
         [pscustomobject]$row
+    }
+}
+
+# Engine first, then its state and model: "PrismML: работает · API готов".
+function Format-AiStatusRow {
+    param($Config, $Row)
+    $state = switch ($Row.Service) { 'Running' { 'работает' } 'Stopped' { 'остановлен' } 'StartPending' { 'запускается' } 'StopPending' { 'останавливается' } 'Missing' { 'служба не установлена' } default { $Row.Service } }
+    $api = switch ($Row.API) { 'Ready' { ' · API готов' } 'Unavailable' { ' · API недоступен' } default { '' } }
+    "$(Get-AiEngineName $Config $Row.Backend): $state$api"
+    if ($Row.Service -eq 'Running') {
+        $model = if ($Row.Model -in @('-', '(none)', '')) { 'не загружена' } else { $Row.Model }
+        $details = @("модель: $model")
+        if ($null -ne $Row.Context) { $details += "контекст $($Row.Context)" }
+        if ($Row.Sleeping) { $details += 'модель выгружена до запроса' }
+        '  ' + ($details -join ' · ')
     }
 }
 
@@ -515,15 +548,16 @@ function Show-AiHelp {
     "OmniBox AI $script:AiVersion — управление локальными серверами"
     @'
 
-ai start [backend] [--context 128k]  Запуск; по умолчанию PrismML. Другой остановится.
+ai start [движок] [--context 128k]  Запуск; по умолчанию prismml. Другой движок остановится.
 ai stop [prismml|ollama]       Остановка; без имени — все настроенные серверы.
-ai restart [backend] [--context 128k] Перезапуск, при необходимости с новым контекстом.
-ai context [backend] [128k]   Просмотр/сохранение контекста для следующего запуска.
-ai restore [backend]         Возврат предыдущего XML; сохраняет состояние запуска.
-ai status                    Службы, API, модель, контекст, сон и видеопамять.
+ai restart [движок] [--context 128k] Перезапуск, при необходимости с новым контекстом.
+ai context [движок] [128k]    Просмотр/сохранение контекста для следующего запуска.
+ai restore [движок]          Возврат предыдущих настроек движка.
+ai status                    Движки, их модели, контекст и видеопамять.
 ai power                     Причины пробуждения, таймеры и блокировки сна Windows.
-ai logs [backend] [N] [stream] Последние N строк; stream: all, err, out, host.
-ai endpoint [backend]         OpenAI-совместимый адрес (с localhost самого ПК).
+ai storage [clean]           Место на диске; clean — удалить устаревшие журналы и временные файлы.
+ai logs [движок] [N] [stream] Последние N строк; stream: all, err, out, host.
+ai endpoint [движок]          OpenAI-совместимый адрес (с localhost самого ПК).
 ai config                    Путь и содержимое конфигурации.
 ai update [--token]           Установка последней версии через gh; --token — ввод токена вручную.
 ai update --list              Доступные версии с примечаниями; отмечены последняя и установленная.
@@ -589,7 +623,7 @@ function Invoke-Ai {
     switch ($command) {
         { $_ -in @('start', 'stop', 'restart') } {
             if ($command -eq 'stop') {
-                if ($rest.Count -gt 1) { throw 'Использование: ai stop [backend]' }
+                if ($rest.Count -gt 1) { throw 'Использование: ai stop [движок]' }
                 $options = @{ name = $(if ($rest.Count) { $rest[0] } else { $config.default_backend }); context = $null }
             } else { $options = Read-AiStartOptions $rest $config.default_backend }
             $name = $options.name
@@ -622,7 +656,7 @@ function Invoke-Ai {
             }
         }
         'restore' {
-            if ($rest.Count -gt 1) { throw 'Использование: ai restore [backend]' }
+            if ($rest.Count -gt 1) { throw 'Использование: ai restore [движок]' }
             $name = if ($rest.Count) { $rest[0] } else { $config.default_backend }
             $backend = Get-AiBackend $config $name
             Assert-AiAdministrator
@@ -630,43 +664,58 @@ function Invoke-Ai {
                 $state = Read-AiRecoveryState $backend
                 if ($null -eq $state) { throw 'Нет предыдущих настроек для восстановления.' }
                 if (-not $state.pending -and $state.current_sha256 -ceq $state.previous_sha256) {
-                    Write-Host "$name`: предыдущие настройки уже восстановлены."; return
+                    Write-Host "$(Get-AiEngineName $config $name): предыдущие настройки уже восстановлены."; return
                 }
                 $service = Get-AiService $backend.service
                 $wasRunning = $null -ne $service -and [string]$service.Status -eq 'Running'
                 Stop-AiBackend $config $name
                 Restore-AiServiceXml $backend
                 if ($wasRunning) { Start-AiBackend $config $name }
-                Write-Host "$name`: предыдущие настройки восстановлены."
+                Write-Host "$(Get-AiEngineName $config $name): предыдущие настройки восстановлены."
             }
         }
         'context' {
-            if ($rest.Count -gt 2) { throw 'Использование: ai context [backend] [128k]' }
+            if ($rest.Count -gt 2) { throw 'Использование: ai context [движок] [128k]' }
             $name = $config.default_backend; $value = $null
             if ($rest.Count -eq 2) { $name = $rest[0]; $value = $rest[1] }
             elseif ($rest.Count -eq 1) {
                 if ($config.backends.Contains($rest[0])) { $name = $rest[0] }
                 elseif ($rest[0] -match '^\d') { $value = $rest[0] }
-                else { throw "Неизвестный сервер '$($rest[0])'." }
+                else { $null = Get-AiBackend $config $rest[0] }
             }
             $backend = Get-AiBackend $config $name
             if ($null -eq $value) {
-                Write-Host "$name`: настроенный контекст = $(Get-AiConfiguredContext $backend) токенов. Фактический: ai status / ai ollama ps."
+                Write-Host "$(Get-AiEngineName $config $name): контекст $(Get-AiConfiguredContext $backend) токенов. Фактический — в ai status."
             } else {
                 $tokens = ConvertTo-AiContext $value
                 Assert-AiAdministrator
                 Invoke-AiLocked {
                     $preparedXml = New-AiContextXml $backend $tokens
                     Save-AiServiceXml $backend $preparedXml
-                    Write-Host "$name`: сохранено $tokens токенов для следующего запуска. Работающий сервер не перезапущен. Применить сейчас: ai restart $name"
+                    Write-Host "$(Get-AiEngineName $config $name): контекст $tokens токенов сохранён для следующего запуска. Применить сейчас: ai restart $(Get-AiCliName $config $name)"
                 }
             }
+        }
+        'storage' {
+            if ($rest.Count -gt 1 -or ($rest.Count -and $rest[0] -ne 'clean')) { throw 'Использование: ai storage [clean]' }
+            Import-Module (Join-Path $PSScriptRoot 'Storage.Helpers.psm1')
+            $root = Split-Path ([IO.Path]::GetFullPath($ConfigPath)) -Parent
+            $mb = { param($Bytes) '{0} МБ' -f [math]::Round($Bytes / 1MB, 1).ToString([Globalization.CultureInfo]::InvariantCulture) }
+            if ($rest.Count) {
+                Assert-AiAdministrator
+                $result = Invoke-AiStorageCleanup $root $config
+                Write-Host "Удалено файлов: $($result.removed), освобождено $(& $mb $result.freed_bytes)."
+            }
+            $usage = Get-AiStorageUsage $root $config
+            $keep = if ($usage.log_retention_days) { "хранятся $($usage.log_retention_days) дн." } else { 'срок хранения не ограничен' }
+            Write-Host "Журналы: $(& $mb $usage.logs_bytes) (файлов: $($usage.log_files)), $keep"
+            if ($usage.logs_over_limit) { Write-Host "Журналы больше порога $($usage.log_warn_mb) МБ. Очистить устаревшие: ai storage clean" }
+            Write-Host "Резервные копии: $(& $mb $usage.backups_bytes) · обновления: $(& $mb $usage.updates_bytes) · временные файлы: $(& $mb $usage.temp_bytes)"
         }
         'status' {
             if ($rest.Count) { throw 'Использование: ai status' }
             $rows = @(Get-AiStatus $config)
-            $rows | Format-Table Backend, Engine, Service, Startup, API, Context, Sleeping -AutoSize | Out-Host
-            foreach ($row in $rows) { Write-Host "$($row.Backend) model: $($row.Model)" }
+            foreach ($row in $rows) { Format-AiStatusRow $config $row | ForEach-Object { Write-Host $_ } }
             Show-AiGpu
         }
         'power' {
@@ -675,14 +724,14 @@ function Invoke-Ai {
             Show-AiPower
         }
         'logs' {
-            if ($rest.Count -gt 3) { throw 'Использование: ai logs [backend] [N] [all|err|out|host]' }
+            if ($rest.Count -gt 3) { throw 'Использование: ai logs [движок] [N] [all|err|out|host]' }
             $name = if ($rest.Count -ge 1) { $rest[0] } else { $config.default_backend }
             $tail = if ($rest.Count -ge 2) { [int]$rest[1] } else { 60 }
             $stream = if ($rest.Count -ge 3) { $rest[2] } else { 'all' }
             Show-AiLogs $config $name $tail $stream
         }
         'endpoint' {
-            if ($rest.Count -gt 1) { throw 'Использование: ai endpoint [backend]' }
+            if ($rest.Count -gt 1) { throw 'Использование: ai endpoint [движок]' }
             $name = if ($rest.Count) { $rest[0] } else { $config.default_backend }
             (Get-AiBackend $config $name).base_url.TrimEnd('/') + '/v1'
         }

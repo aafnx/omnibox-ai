@@ -33,7 +33,7 @@ function New-AiGitHubSource {
     # One source per command: gh when available, otherwise a token entered once and kept only in memory.
     param([switch]$UseToken)
     $gh=if(-not $UseToken){Get-Command gh -CommandType Application -ErrorAction SilentlyContinue|Select-Object -First 1}else{$null}
-    if($null -ne $gh){Write-Host 'Используется авторизация GitHub CLI…';return @{gh=$gh.Source;secret=$null}}
+    if($null -ne $gh){return @{gh=$gh.Source;secret=$null}}
     return @{gh=$null;secret=(Read-Host 'GitHub token (omnibox-ai: Contents Read)' -AsSecureString)}
 }
 function Close-AiGitHubSource {

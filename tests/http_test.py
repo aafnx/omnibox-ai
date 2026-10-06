@@ -239,6 +239,29 @@ class HttpTests(unittest.TestCase):
             self.assertEqual(self.call('/api/login', {'password': 'incorrect'}, auth=False)[0], 401)
         self.assertEqual(self.call('/api/login', {'password': PASSWORD}, auth=False)[0], 429)
 
+    def test_09b_storage_usage_settings_and_cleanup(self):
+        self.assertEqual(self.call('/api/storage', auth=False)[0], 401)
+        code, data, _ = self.call('/api/storage')
+        self.assertEqual(code, 200)
+        self.assertGreater(data['logs_bytes'], 0)
+        self.assertEqual(data['log_retention_days'], 30)
+        self.assertEqual(self.call('/api/storage', {'action': 'save', 'log_retention_days': 7})[0], 403)
+        code, data, _ = self.call('/api/storage', {'action': 'save', 'log_retention_days': 7, 'log_warn_mb': 10}, csrf=self.csrf)
+        self.assertEqual(code, 200)
+        self.assertEqual((data['log_retention_days'], data['log_warn_mb']), (7, 10))
+        self.assertEqual(json.loads((self.fixture.root / 'storage.json').read_text())['log_retention_days'], 7)
+        self.assertEqual(self.call('/api/storage', {'action': 'save', 'log_retention_days': 9999}, csrf=self.csrf)[0], 400)
+        self.assertEqual(self.call('/api/storage', {'action': 'delete', 'path': '/'}, csrf=self.csrf)[0], 400)
+        old = self.fixture.root / 'logs' / 'ollama-service.out.log.1'
+        old.write_text('old\n')
+        stamp = time.time() - 10 * 86400
+        os.utime(old, (stamp, stamp))
+        code, data, _ = self.call('/api/storage', {'action': 'cleanup'}, csrf=self.csrf)
+        self.assertEqual(code, 200)
+        self.assertEqual(data['cleanup']['removed'], 1)
+        self.assertFalse(old.exists())
+        self.assertTrue((self.fixture.root / 'logs' / 'bonsai-service.err.log').exists())
+
     def test_09a_brand_assets_and_unified_events_are_available(self):
         for path in ('/favicon.svg','/brand-light.svg','/brand-dark.svg'):
             with urllib.request.urlopen(self.fixture.url+path) as response:

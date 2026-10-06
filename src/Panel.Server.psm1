@@ -81,6 +81,7 @@ function Start-OmniBoxPanel {
     param([string]$Root, [string]$PanelConfigPath = (Join-Path $Root 'panel.json'), [string]$EngineModulePath = (Join-Path $Root 'src/OmniBox.Ai.psm1'), [string]$CatalogModulePath = (Join-Path $PSScriptRoot 'Model.Catalog.psm1'), [string]$UpdateModulePath = (Join-Path $PSScriptRoot 'Web.Update.psm1'))
     Import-Module (Join-Path $PSScriptRoot 'Panel.Security.psm1') -Force
     Import-Module (Join-Path $PSScriptRoot 'Gateway.Helpers.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot 'Storage.Helpers.psm1') -Force
     Import-Module $EngineModulePath -Force
     Import-Module $UpdateModulePath -Force
     $updates=New-AiWebUpdateState $Root
@@ -93,6 +94,8 @@ function Start-OmniBoxPanel {
     if ($gateway.enabled) { $apiHosts = @(@($apiHosts + ([Uri]$gateway.base_url).Host) | Select-Object -Unique) }
     if (-not ('OmniBox.OpenAiProxy' -as [type])) { Add-Type -Path @((Join-Path $PSScriptRoot 'Inference.Stats.cs'),(Join-Path $PSScriptRoot 'OpenAi.Proxy.cs')) }
     [OmniBox.InferenceStats]::Configure((Join-Path $Root 'logs/requests'))
+    # Panel start (normally Windows boot) is the only automatic cleanup point: no timers.
+    try { $null = Invoke-AiStorageCleanup $Root (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable) } catch { Write-Host "Очистка журналов пропущена: $($_.Exception.Message)" }
     $listener = [Net.HttpListener]::new()
     foreach ($hostName in $panel.allowed_hosts) { $listener.Prefixes.Add("http://${hostName}:$($panel.port)/") }
     if ($gateway.enabled -and $gatewayPort -ne $panel.port) { foreach ($hostName in $apiHosts) { $listener.Prefixes.Add("http://${hostName}:$gatewayPort/") } }
@@ -220,6 +223,17 @@ function Start-OmniBoxPanel {
                         $data.operations = @(Update-AiPanelOperations $operations)
                         foreach($b in $data.backends){if(($b.service -eq 'Stopped' -or $b.sleeping) -and -not [OmniBox.InferenceStats]::IsActive([string]$b.name)){[OmniBox.InferenceStats]::EndModelSession([string]$b.name)}}
                         Send-AiHttpResponse $context 200 $data
+                    }
+                    'GET /api/storage' { Send-AiHttpResponse $context 200 (Get-AiStorageUsage $Root (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable)) }
+                    'POST /api/storage' {
+                        $body = Read-AiHttpJson $request
+                        $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
+                        $result = $null
+                        if ($body.action -eq 'save') { $changes = @{}; foreach ($key in @($body.Keys | Where-Object { $_ -ne 'action' })) { $changes[$key] = $body[$key] }; $null = Save-AiStorageSettings $Root $changes }
+                        elseif ($body.action -eq 'cleanup') { $result = Invoke-AiStorageCleanup $Root $config }
+                        else { throw 'Неизвестное действие с журналами.' }
+                        $usage = Get-AiStorageUsage $Root $config; $usage.cleanup = $result
+                        Send-AiHttpResponse $context 200 $usage
                     }
                     'GET /api/logs' {
                         $config = Get-Content $configPath -Raw | ConvertFrom-Json -AsHashtable

@@ -1,6 +1,7 @@
 config.json
 panel.json
 gateway.json
+storage.json
 logs/
 *.ai-previous
 *.ai-state.json

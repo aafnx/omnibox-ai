@@ -39,13 +39,16 @@
 | `src/Panel.Server.psm1`, `Panel.Security.psm1`, `Panel.Install.psm1` | HTTP-сервер, сессии/CSRF/PBKDF2, установка службы панели, ACL, Firewall |
 | `src/Gateway.Helpers.psm1`, `OpenAi.Proxy.cs`, `Inference.Stats.cs` | Настройки `/v1`, прокси, учёт генерации и журнал запросов |
 | `src/Web.Update.psm1`, `Update.Helpers.psm1`, `scripts/update-worker.ps1` | Обновление из панели и CLI |
+| `src/Storage.Helpers.psm1` | Объём и очистка журналов, резервных копий и временных файлов; `storage.json` |
 | `scripts/build-setup.ps1`, `scripts/setup.template.ps1` | Сборка `dist/` |
 | `releases.json` | Устанавливаемые версии: версия, коммит выпуска, примечание. Читается из `main` командой `ai update` |
 | `web/` | Интерфейс панели. Оформление — по брендбуку `docs/brand/` |
 | `tests/` | Тесты (см. ниже) |
 | `docs/` | Документация пользователя и архитектура; `docs/roadmap.md` — план и приоритеты |
 
-Пользовательские файлы установки `config.json`, `panel.json`, `gateway.json`, `logs/`, `backups/`, `updates/` в git не попадают.
+Пользовательские файлы установки `config.json`, `panel.json`, `gateway.json`, `storage.json`, `logs/`, `backups/`, `updates/` в git не попадают.
+
+Программа не должна копить файлы на ПК: всё, что пишется на диск (журналы, резервные копии, временные файлы), имеет ротацию, срок хранения или удаление в `src/Storage.Helpers.psm1`. Очистка — только при запуске панели, установке или по действию пользователя, без таймеров.
 
 ## Порядок работы
 
