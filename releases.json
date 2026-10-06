@@ -2,8 +2,14 @@
   "schema_version": 1,
   "releases": [
     {
-      "version": "0.11.0",
+      "version": "0.12.0",
       "commit": null,
+      "date": "2026-10-06",
+      "note": "движок PrismML вместо Bonsai, обычный и продвинутый режим настроек"
+    },
+    {
+      "version": "0.11.0",
+      "commit": "f5f556bca0bb0c7a5052642be58db322eaaa82ba",
       "date": "2026-10-06",
       "note": "Thinking, сэмплинг, кванты KV-кеша, mlock и потоки в настройках модели"
     },

@@ -515,8 +515,8 @@ function Show-AiHelp {
     "OmniBox AI $script:AiVersion — управление локальными серверами"
     @'
 
-ai start [backend] [--context 128k]  Запуск; по умолчанию bonsai. Другой остановится.
-ai stop [bonsai|ollama]        Остановка; без имени — все настроенные серверы.
+ai start [backend] [--context 128k]  Запуск; по умолчанию PrismML. Другой остановится.
+ai stop [prismml|ollama]       Остановка; без имени — все настроенные серверы.
 ai restart [backend] [--context 128k] Перезапуск, при необходимости с новым контекстом.
 ai context [backend] [128k]   Просмотр/сохранение контекста для следующего запуска.
 ai restore [backend]         Возврат предыдущего XML; сохраняет состояние запуска.
@@ -532,14 +532,15 @@ ai access                    Адреса панели/API, режим ключ�
 ai password reset [--generate] Сброс пароля панели; Enter — генерация.
 ai panel info/reset-password  Те же команды восстановления панели.
 ai ollama [аргументы]         Передача в Ollama; serve запрещён, run меняет выбранную модель.
-ai run/pull/list/ps/show/...  Сокращения команд Ollama, не команды Bonsai.
+ai run/pull/list/ps/show/...  Сокращения команд Ollama, не команды PrismML.
 ai version                   Версия ai.
 ai help                      Эта справка.
 
 Остановить все серверы: ai stop. Статус и журналы не загружают модель.
 Контекст: 32k=32768, 128k=131072, 192k=196608 токенов.
-ai context bonsai 128k — сохранить, без перезапуска работающего сервера.
-ai restart bonsai --context 128k — сохранить и применить сейчас.
+ai context prismml 128k — сохранить, без перезапуска работающего сервера.
+ai restart prismml --context 128k — сохранить и применить сейчас.
+prismml — имя движка; его служба Windows по-прежнему называется bonsai, и это имя тоже работает.
 ai start --context не меняет уже работающую модель: используй restart.
 У Ollama это default OLLAMA_CONTEXT_LENGTH; модель/API могут переопределить num_ctx.
 Ошибка запуска после смены контекста: автоматический откат предыдущего XML.
@@ -580,6 +581,11 @@ function Invoke-Ai {
         return
     }
     $config = Read-AiConfig $ConfigPath
+    # The engine is shown as PrismML; its service and config key keep the historical name.
+    $prism = @($config.backends.Keys | Where-Object { $config.backends[$_].type -eq 'prism' })
+    if ($command -in @('start','stop','restart','context','restore','logs','endpoint') -and $prism.Count -eq 1 -and -not $config.backends.Contains('prismml')) {
+        $rest = @($rest | ForEach-Object { if ($_ -eq 'prismml') { $prism[0] } else { $_ } })
+    }
     switch ($command) {
         { $_ -in @('start', 'stop', 'restart') } {
             if ($command -eq 'stop') {

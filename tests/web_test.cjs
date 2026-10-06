@@ -36,7 +36,13 @@ function run(code){return vm.runInContext(code,context);}
   nodes.placement.value='cpu';run("syncKvOffload(true)");assert.equal(nodes['kv-offload'].value,'off');assert.equal(nodes['kv-offload'].disabled,true);
   nodes.placement.value='gpu';run("syncKvOffload(true)");assert.equal(nodes['kv-offload'].value,'on');assert.equal(nodes['kv-offload'].disabled,false);
   nodes['kv-offload'].value='off';run("syncKvOffload(false)");assert.equal(nodes['kv-offload'].value,'off');
-  run("renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'model.gguf');assert.ok(nodes['kpi-model-caption'].textContent.startsWith('bonsai · '));
+  run("renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'model.gguf');assert.ok(nodes['kpi-model-caption'].textContent.startsWith('PrismML · '));
+  // The prism engine is shown as PrismML whatever its historical config key.
+  assert.equal(nodes.engines.children[0].querySelector('h2').textContent,'PrismML');assert.equal(run("engineName('unknown')"),'unknown');
+  // Basic mode hides advanced groups; the choice is remembered per browser.
+  run("applySettingsMode()");assert.equal(nodes.advanced.hidden,true);assert.equal(nodes.generation.hidden,true);assert.equal(nodes['mode-hint'].hidden,false);assert.equal(nodes['settings-mode'].hidden,false);
+  nodes['mode-pro'].listeners.click[0]();assert.equal(nodes.advanced.hidden,false);assert.equal(nodes.generation.hidden,false);assert.equal(store.get('omnibox-settings-mode'),'pro');assert.equal(nodes['mode-pro'].attributes['aria-pressed'],'true');
+  nodes['mode-basic'].listeners.click[0]();assert.equal(nodes.advanced.hidden,true);assert.equal(store.get('omnibox-settings-mode'),'basic');
   // Stopping everything interrupts generation, so a running server needs confirmation.
   let asked=0;context.window.confirm=()=>{asked++;return false;};const sent=requests.length;
   nodes['stop-all'].listeners.click[0]();await new Promise(setImmediate);assert.equal(asked,1);assert.equal(requests.length,sent);
@@ -75,5 +81,5 @@ function run(code){return vm.runInContext(code,context);}
   nodes['update-token'].value='one-use-secret';context.fetch=async(path,options)=>{requests.push({path,body:options.body});return{ok:true,status:202,json:async()=>({current:'0.9.4',phase:'checking',message:'Checking',gh_available:true,authenticated:false,code:''})}};
   nodes['update-token-form'].listeners.submit[0]({preventDefault:()=>{}});assert.equal(nodes['update-token'].value,'');await new Promise(setImmediate);
   assert.equal(JSON.parse(requests.at(-1).body).token,'one-use-secret');assert.ok([...store.values()].every(v=>!String(v).includes('secret')));
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});
