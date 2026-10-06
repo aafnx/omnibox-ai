@@ -463,6 +463,15 @@ try {
         Assert-True ($text -like '*function prompt { "keep" }*')
         Assert-Equal ([regex]::Matches($text, [regex]::Escape('# >>> omnibox-ai PATH >>>')).Count) 1
     }
+    Test 'CLI accepts prismml as the name of the single PrismML engine' {
+        $m = New-TestModule; $f = New-ContextFixture
+        Invoke-Ai @('context','prismml','64k') $f.path
+        Assert-Equal ([string](& $m { param($b) Get-AiConfiguredContext $b } $f.config.backends.bonsai)) '65536'
+        & $m { $script:services.bonsai.Status = 'Running' }
+        Invoke-Ai @('stop','prismml') $f.path
+        Assert-True ((Get-Calls $m) -contains 'stop:bonsai')
+        Assert-Throws { Invoke-Ai @('context','prism','64k') $f.path } '*Неизвестный сервер*'
+    }
     Test 'unapplied context edits keep the original restore point' {
         $m = New-TestModule; $f = New-ContextFixture
         $original = Get-Content $f.bonsai -Raw

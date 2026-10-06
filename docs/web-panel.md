@@ -40,19 +40,26 @@
 | Загрузить | Bonsai: применить форму и загрузить GGUF. Ollama: загрузить выбранную установленную модель |
 | Выгрузить | Bonsai: остановить службу и освободить модель/кеш. Ollama: выгрузить все модели, сохранив API работающим |
 
-Для **Bonsai/PrismML** доступны локальный GGUF, API-alias, контекст, время простоя, GPU layers, слои MoE в RAM (`--n-cpu-moe`), Flash Attention, K/V cache, batch/micro-batch.
+Для **PrismML** доступны локальный GGUF, API-alias, контекст, время простоя, GPU layers, слои MoE в RAM (`--n-cpu-moe`), Flash Attention, K/V cache, batch/micro-batch.
 
-Параметры Bonsai/PrismML сгруппированы как в LM Studio:
+Настройки модели открываются в одном из двух режимов; выбор запоминается в браузере.
+
+- **Обычный** — модель, контекст, Thinking, размещение (VRAM, RAM или вместе), выгрузка после простоя и имя модели в API.
+- **Продвинутый** — дополнительно группы «Память и скорость» и «Размышления и сэмплинг». Для Ollama режимов нет: у неё только базовые настройки.
+
+Скрытые в обычном режиме параметры не сбрасываются: сохраняются значения, заданные ранее в продвинутом режиме.
+
+Параметры PrismML и их аргументы llama-server; группы продвинутого режима устроены как в LM Studio:
 
 | Группа | Настройка | Аргумент llama-server |
 |---|---|---|
+| Обычный режим | Thinking: как в шаблоне, включено, выключено | `--reasoning` |
 | Память и скорость | Слои на GPU, слои MoE в RAM, Flash Attention | `-ngl`, `--n-cpu-moe`, `-fa` |
 | | Кванты KV-кеша: f16, bf16, q8_0, q5_1, q5_0, q4_1, iq4_nl, q4_0 | `-ctk`, `-ctv` |
 | | KV-кеш на GPU (в режиме RAM · CPU всегда выключен) | `--no-kv-offload` |
 | | Batch, micro-batch, потоки CPU | `-b`, `-ub`, `-t` |
 | | Загрузка весов: mmap, mlock, mmap + mlock, без mmap | `--load-mode` |
-| Thinking и сэмплинг | Thinking: как в шаблоне, включено, выключено | `--reasoning` |
-| | Уровень и лимит размышлений | `--reasoning-effort`, `--reasoning-budget` |
+| Размышления и сэмплинг | Уровень и лимит размышлений | `--reasoning-effort`, `--reasoning-budget` |
 | | Temperature, Top-K, Top-P, Min-P | `--temp`, `--top-k`, `--top-p`, `--min-p` |
 | | Repeat, presence и frequency penalty | `--repeat-penalty`, `--presence-penalty`, `--frequency-penalty` |
 | | Максимум токенов ответа, seed | `-n`, `-s` |

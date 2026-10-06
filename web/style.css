@@ -128,6 +128,11 @@ footer{display:flex;justify-content:space-between;font-size:12px;color:var(--mut
 .panel>label{max-width:450px}
 .panel-top{display:flex;align-items:end;justify-content:space-between;gap:20px;padding-bottom:22px;margin-bottom:22px;border-bottom:1px solid var(--border)}
 .backend-label{max-width:260px;width:100%}
+.panel-top-side{display:flex;align-items:center;gap:12px;flex-wrap:wrap;justify-content:flex-end}
+.segmented{display:inline-flex;gap:2px;padding:3px;border:1px solid var(--border);border-radius:12px;background:var(--surface)}
+.segment{min-height:32px;padding:0 14px;border:0;border-radius:9px;background:none;color:var(--muted);font-size:13px;font-weight:600}
+.segment:hover{color:var(--text)}
+.segment.active{background:var(--accent-soft);color:var(--accent-text)}
 .footnote{margin-top:18px;font-size:12px}
 .notice{padding:14px 18px;background:var(--ok-soft);border:1px solid color-mix(in srgb,var(--ok) 30%,transparent);border-radius:var(--radius-s);color:var(--ok);margin-top:20px;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}
 .notice.error{background:var(--error-soft);border-color:color-mix(in srgb,var(--error) 30%,transparent);color:var(--error)}
@@ -269,6 +274,9 @@ body>.theme-switch{position:absolute;top:18px;right:20px;z-index:10}
 }
 /* Phones: logo row on top, sections in a bottom tab bar within thumb reach. */
 @media(max-width:720px){
+  .panel-top{flex-direction:column;align-items:stretch}
+  .backend-label{max-width:none}
+  .panel-top-side{justify-content:space-between}
   .shell{display:block}
   .sidebar{position:static;height:auto;padding:12px 17px;border-right:0;border-bottom:1px solid var(--border);flex-direction:row;align-items:center}
   .brand-logo{width:178px;margin-left:-14px}
