@@ -39,6 +39,7 @@ function Read-AiConfig {
         if ($backend.type -eq 'ollama' -and [string]::IsNullOrWhiteSpace($backend.executable)) {
             throw "Не задан executable для $name."
         }
+        if ($backend.Contains('models_directory') -and ($backend.models_directory -isnot [string] -or -not [IO.Path]::IsPathFullyQualified($backend.models_directory))) { throw "models_directory для $name должен быть полным путём." }
         if($backend.Contains('active_model') -and ($backend.active_model -isnot [string] -or $backend.active_model.Length -gt 200 -or $backend.active_model -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_./:-]*$' -or $backend.active_model.Contains('..'))){throw "Некорректное имя выбранной модели: $name"}
     }
     return $config
@@ -405,6 +406,7 @@ function Start-AiBackend {
     $service = Get-AiService $backend.service
     if ($null -eq $service) { throw "Служба '$($backend.service)' не установлена. ai не устанавливает движки." }
     if ([string]$service.StartType -eq 'Disabled') { throw "Служба '$($backend.service)' отключена. Другие серверы не остановлены." }
+    if ($backend.type -eq 'prism' -and (Test-Path -LiteralPath $backend.service_config -PathType Leaf) -and -not (Get-AiLaunchSettings $backend).model) { throw "$(Get-AiEngineName $Config $Name): модель не выбрана. Выберите GGUF в разделе «Модели и настройки»." }
     Set-AiSingleModelLimits $Config $Name $service
     $service=Get-AiService $backend.service
     foreach ($other in $Config.backends.Keys) {
@@ -509,7 +511,9 @@ function Invoke-AiOllama {
             Set-AiSelectedModel $ConfigPath $name $NativeArguments[1]
         }
     }
+    # The profile names the version the service runs; config keeps the path of the original install.
     $exe = $matches[0].executable
+    try { $profileExe = Get-AiProfileExecutable (Read-AiServiceXml $matches[0]) $matches[0].service_config; if ($profileExe -and (Test-Path -LiteralPath $profileExe -PathType Leaf)) { $exe = $profileExe } } catch { }
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Ollama не найден: $exe" }
     $oldHost = [Environment]::GetEnvironmentVariable('OLLAMA_HOST', 'Process')
     $oldModels = [Environment]::GetEnvironmentVariable('OLLAMA_MODELS', 'Process')
@@ -556,6 +560,11 @@ ai restore [движок]          Возврат предыдущих наст�
 ai status                    Движки, их модели, контекст и видеопамять.
 ai power                     Причины пробуждения, таймеры и блокировки сна Windows.
 ai storage [clean]           Место на диске; clean — удалить устаревшие журналы и временные файлы.
+ai engine                    Установленные движки и их версии.
+ai engine versions prismml    Доступные версии движка (prismml или ollama) на GitHub.
+ai engine install ollama [v]  Установить движок или переключить на версию; без версии — последняя.
+ai engine update prismml      Обновить движок до последней версии; при сбое запуска — откат.
+ai engine remove ollama       Удалить службу и файлы движка; модели остаются на диске.
 ai logs [движок] [N] [stream] Последние N строк; stream: all, err, out, host.
 ai endpoint [движок]          OpenAI-совместимый адрес (с localhost самого ПК).
 ai config                    Путь и содержимое конфигурации.
@@ -696,6 +705,37 @@ function Invoke-Ai {
                 }
             }
         }
+        'engine' {
+            $usage = 'Использование: ai engine [versions | install | update | remove] [prismml | ollama] [версия]'
+            if (-not $rest.Count) {
+                foreach ($engine in Get-AiEngineOverview $ConfigPath) {
+                    if (-not $engine.installed) { Write-Host "$($engine.label): не установлен · установить: ai engine install $($engine.cli)"; continue }
+                    $version = if ($engine.version) { "версия $($engine.version)" } elseif ($engine.executable) { "установлен вне OmniBox: $($engine.executable)" } else { 'версия неизвестна' }
+                    $state = if ($engine.state -eq 'Missing') { ' · служба не найдена' } else { '' }
+                    Write-Host "$($engine.label): $version$state"
+                    if (@($engine.versions).Count -gt 1) { Write-Host "  скачанные версии: $(@($engine.versions) -join ', ')" }
+                }
+                return
+            }
+            if ($rest[0] -notin @('versions', 'install', 'update', 'remove') -or $rest.Count -lt 2 -or $rest.Count -gt 3 -or ($rest[0] -in @('versions', 'update', 'remove') -and $rest.Count -gt 2)) { throw $usage }
+            $type = if ($config.backends.Contains($rest[1])) { $config.backends[$rest[1]].type } else { ConvertTo-AiEngineType $rest[1] }
+            $name = @($config.backends.Keys | Where-Object { $config.backends[$_].type -eq $type }) | Select-Object -First 1
+            $label = (Get-AiEngineKind $type).label
+            $version = if ($rest.Count -eq 3) { $rest[2] } else { '' }
+            if ($rest[0] -eq 'versions') {
+                $current = if ($name) { @(Get-AiEngineOverview $ConfigPath | Where-Object type -eq $type)[0].version } else { '' }
+                foreach ($release in @(Get-AiEngineReleases $type | Select-Object -First 15)) {
+                    $marks = @(); if ($release.prerelease) { $marks += 'предварительная' }; if ($release.tag -ceq $current) { $marks += 'установлена' }
+                    Write-Host ("{0} · {1}{2}" -f $release.tag, ([string]$release.published).Substring(0, [Math]::Min(10, ([string]$release.published).Length)), $(if ($marks.Count) { " ($($marks -join ', '))" } else { '' }))
+                }
+                return
+            }
+            Assert-AiAdministrator
+            if ($rest[0] -eq 'install' -and -not $name) { Write-Host (Install-AiEngine $ConfigPath $type $version); return }
+            if (-not $name) { throw "$label не установлен. Установить: ai engine install $((Get-AiEngineKind $type).name)" }
+            if ($rest[0] -eq 'remove') { Write-Host (Uninstall-AiEngine $ConfigPath $name); return }
+            Write-Host (Set-AiEngineVersion $ConfigPath $name $version)
+        }
         'storage' {
             if ($rest.Count -gt 1 -or ($rest.Count -and $rest[0] -ne 'clean')) { throw 'Использование: ai storage [clean]' }
             Import-Module (Join-Path $PSScriptRoot 'Storage.Helpers.psm1')
@@ -751,4 +791,5 @@ function Invoke-Ai {
 . (Join-Path $PSScriptRoot 'Panel.Engine.ps1')
 . (Join-Path $PSScriptRoot 'Panel.Cli.ps1')
 . (Join-Path $PSScriptRoot 'Telemetry.ps1')
-Export-ModuleMember -Function Invoke-Ai, Get-AiDashboard, Invoke-AiPanelAction, Get-AiTelemetry, Get-AiGatewayRuntime
+. (Join-Path $PSScriptRoot 'Engine.Manager.ps1')
+Export-ModuleMember -Function Invoke-Ai, Get-AiDashboard, Invoke-AiPanelAction, Get-AiTelemetry, Get-AiGatewayRuntime, Get-AiEngineOverview, Get-AiEngineReleases

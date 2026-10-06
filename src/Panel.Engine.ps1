@@ -114,11 +114,19 @@ function Get-AiLaunchSettings {
     return $settings
 }
 
-function Get-AiPrismModels {
+# GGUF files live next to the selected model; a fresh engine without one uses models_directory.
+function Get-AiPrismModelDirectory {
     param($Backend)
     $settings = Get-AiLaunchSettings $Backend
-    if (-not $settings.model) { return @() }
-    $directory = Split-Path ([IO.Path]::GetFullPath($settings.model)) -Parent
+    if ($settings.model) { return Split-Path ([IO.Path]::GetFullPath($settings.model)) -Parent }
+    if ($Backend.Contains('models_directory') -and $Backend.models_directory) { return [string]$Backend.models_directory }
+    return ''
+}
+
+function Get-AiPrismModels {
+    param($Backend)
+    $directory = Get-AiPrismModelDirectory $Backend
+    if (-not $directory) { return @() }
     if (-not (Test-Path -LiteralPath $directory -PathType Container)) { return @() }
     return @(Get-ChildItem -LiteralPath $directory -File -Filter '*.gguf' |
         Where-Object { $_.Name -notmatch '(?i)mmproj|projector' -and -not $_.LinkType } |
@@ -226,9 +234,9 @@ function New-AiLaunchXml {
 }
 
 function Invoke-AiModelRequest {
-    param($Backend, [string]$Path, $Body, [int]$Timeout = 180)
+    param($Backend, [string]$Path, $Body, [int]$Timeout = 180, [ValidateSet('Post','Delete')][string]$Method = 'Post')
     $headers=@{};if($Backend.Contains('upstream_api_key') -and $Backend.upstream_api_key){$headers.Authorization='Bearer '+$Backend.upstream_api_key}
-    Invoke-RestMethod -Uri ($Backend.base_url.TrimEnd('/') + $Path) -Headers $headers -Method Post -ContentType 'application/json; charset=utf-8' -Body ($Body | ConvertTo-Json -Depth 10 -Compress) -TimeoutSec $Timeout -ErrorAction Stop
+    Invoke-RestMethod -Uri ($Backend.base_url.TrimEnd('/') + $Path) -Headers $headers -Method $Method -ContentType 'application/json; charset=utf-8' -Body ($Body | ConvertTo-Json -Depth 10 -Compress) -TimeoutSec $Timeout -ErrorAction Stop
 }
 
 function Get-AiGpuData {
@@ -370,15 +378,19 @@ function Assert-AiModelName {
 function Invoke-AiPanelAction {
     param([string]$ConfigPath, [System.Collections.IDictionary]$Request)
     $config = Read-AiConfig $ConfigPath
-    foreach ($key in $Request.Keys) { if ($key -notin @('action','backend','settings','model','url','filename','sha256')) { throw "Неизвестное поле: $key" } }
+    foreach ($key in $Request.Keys) { if ($key -notin @('action','backend','settings','model','url','filename','sha256','engine','version')) { throw "Неизвестное поле: $key" } }
     $operationName = [string]$Request.action
-    if ($operationName -notin @('start','stop','restart','stopall','save','apply','restore','load','unload','pull','download')) { throw 'Неизвестная операция панели.' }
+    if ($operationName -notin @('start','stop','restart','stopall','save','apply','restore','load','unload','pull','download','engine-install','engine-update','engine-remove','model-delete')) { throw 'Неизвестная операция панели.' }
+    if ($operationName -eq 'engine-install') { Assert-AiAdministrator; return Install-AiEngine $ConfigPath (ConvertTo-AiEngineType ([string]$Request.engine)) ([string]$Request.version) }
     $name = if ($Request.Contains('backend')) { [string]$Request.backend } else { $config.default_backend }
     $b = Get-AiBackend $config $name
     Assert-AiAdministrator
     if ($operationName -eq 'stopall') { Invoke-Ai @('stop') $ConfigPath; return 'Все настроенные ИИ-серверы остановлены.' }
     if ($operationName -in @('start','stop','restart','restore')) { Invoke-Ai @($operationName,$name) $ConfigPath; return "$name`: операция $operationName завершена." }
     if ($operationName -eq 'download') { return Save-AiPrismDownload $b $Request }
+    if ($operationName -eq 'engine-update') { return Set-AiEngineVersion $ConfigPath $name ([string]$Request.version) }
+    if ($operationName -eq 'engine-remove') { return Uninstall-AiEngine $ConfigPath $name }
+    if ($operationName -eq 'model-delete') { return Remove-AiEngineModel $ConfigPath $name ([string]$Request.model) }
     if ($operationName -eq 'pull') {
         if ($b.type -ne 'ollama') { throw 'Скачивание по имени доступно для Ollama.' }
         Assert-AiModelName ([string]$Request.model)
@@ -443,8 +455,9 @@ function Save-AiPrismDownload {
     if ($filename -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,159}\.gguf$' -or $filename.Contains('..') -or $filename -match '(?i)mmproj|projector') { throw 'Имя GGUF: латиница/цифры/дефис/подчёркивание, без пути и projector.' }
     $sha = if ($Request.Contains('sha256')) { [string]$Request.sha256 } else { '' }
     if ($sha -and $sha -notmatch '^[a-fA-F0-9]{64}$') { throw 'SHA256 должен содержать 64 hex-символа.' }
-    $settings = Get-AiLaunchSettings $Backend
-    $directory = Split-Path ([IO.Path]::GetFullPath($settings.model)) -Parent
+    $directory = Get-AiPrismModelDirectory $Backend
+    if (-not $directory) { throw 'Не задан каталог моделей PrismML.' }
+    $null = New-Item -ItemType Directory -Path $directory -Force
     $target = Join-Path $directory $filename
     if (Test-Path -LiteralPath $target) { throw 'Файл уже существует; перезапись моделей запрещена.' }
     # A download killed by a reboot or update leaves its .part file; one older than the download timeout is dead.

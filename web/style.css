@@ -78,6 +78,13 @@ summary{cursor:pointer;font-size:13px;font-weight:600}
 .advanced-grid{grid-template-columns:repeat(3,1fr);margin:20px 0}
 .button-row{display:flex;flex-wrap:wrap;gap:8px}
 .info-line{color:var(--ok);font-size:13px;margin:15px 0;white-space:pre-wrap}
+.engine-manager{display:grid;gap:14px}
+.engine-manage{border:1px solid var(--border);border-radius:var(--radius-s);padding:16px 18px;background:var(--surface2)}
+.engine-manage-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.engine-manage-head h3{margin:0}
+.engine-manage .button-row{flex-wrap:wrap;align-items:center}
+.engine-manage select{max-width:320px}
+.danger-text{color:var(--error)}
 .warning-line{color:var(--warn);background:var(--warn-soft);border-radius:var(--radius-s);padding:10px 14px;font-size:13px;margin:12px 0}
 
 /* ---- Progress: the brand light runs along every bar ---- */

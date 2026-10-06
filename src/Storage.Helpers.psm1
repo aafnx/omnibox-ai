@@ -124,6 +124,7 @@ function Get-AiStorageUsage {
         logs_bytes = $logBytes; log_files = $logs.Count; content_bytes = $contentBytes; request_log = $settings.request_log
         backups_bytes = Get-AiDirectorySize (Join-Path $Root 'backups')
         updates_bytes = Get-AiDirectorySize (Join-Path $Root 'updates') @('auth')
+        engines_bytes = Get-AiDirectorySize (Join-Path $Root 'engines') @('logs')
         temp_bytes = $tempBytes
         log_retention_days = $settings.log_retention_days; log_warn_mb = $settings.log_warn_mb
     }
@@ -142,6 +143,11 @@ function Invoke-AiStorageCleanup {
         $items += @(Get-AiLogFiles $Root $Config | Where-Object { $_.LastWriteTimeUtc -lt $limit })
     }
     $items += @(Get-AiStaleTempItems)
+    # Engine downloads unpack into engines\.staging-*; one left by a killed panel is dead after a day.
+    $engines = Join-Path $Root 'engines'
+    if (Test-Path -LiteralPath $engines -PathType Container) {
+        $items += @(Get-ChildItem -LiteralPath $engines -Directory -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\.staging-[0-9a-f]{32}$' -and -not $_.LinkType -and $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddDays(-1) })
+    }
     $removed = 0; $freed = 0L
     foreach ($item in $items) {
         $size = if ($item -is [IO.DirectoryInfo]) { Get-AiDirectorySize $item.FullName } else { $item.Length }

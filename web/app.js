@@ -16,7 +16,7 @@ themes.forEach(t=>$(`theme-${t}`).addEventListener('click',()=>{theme=t;applyThe
 function placeThemeSwitch(inDashboard){const target=inDashboard?$('topbar-actions'):document.body;if(target)target.append($('theme-switch'));}
 themeMedia.addEventListener('change',()=>{if(theme==='system')applyTheme(theme);});
 const fields = {placement:'placement',context:'context',idle_minutes:'idle',alias:'alias',gpu_layers:'gpu-layers',n_cpu_moe:'n-cpu-moe',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch',kv_offload:'kv-offload',threads:'threads',load_mode:'load-mode',reasoning:'reasoning',reasoning_effort:'reasoning-effort',reasoning_budget:'reasoning-budget',temperature:'temperature',top_k:'top-k',top_p:'top-p',min_p:'min-p',repeat_penalty:'repeat-penalty',presence_penalty:'presence-penalty',frequency_penalty:'frequency-penalty',max_tokens:'max-tokens',seed:'seed'};
-const labels = {start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
+const labels = {'engine-install':'Установка движка','engine-update':'Обновление движка','engine-remove':'Удаление движка','model-delete':'Удаление модели',start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
 async function api(path, body) {
   const response = await fetch(path, {method:body === undefined?'GET':'POST',credentials:'same-origin',headers:body === undefined?{}:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:body === undefined?undefined:JSON.stringify(body)});
   const data = await response.json();
@@ -31,7 +31,7 @@ function schedulePoll() { clearTimeout(pollTimer); if(!loggedIn)return; pollTime
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&loggedIn)refresh(false,true).catch(e=>notice(e.message,true));});
 function backend() { return snapshot?.backends.find(b=>b.name===selectedBackend); }
 function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; $('catalog-results').replaceChildren(); $('catalog-status').textContent=''; renderSettings(); }
-function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates')refreshUpdateStatus().catch(e=>notice(e.message,true)); }
+function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates'){refreshUpdateStatus().catch(e=>notice(e.message,true));refreshEngines().catch(e=>notice(e.message,true));} }
 async function refresh(gpu,snapshotRequested=gpu) {
   if(refreshBusy)return;refreshBusy=true;
   try{
@@ -97,7 +97,7 @@ function renderOperations(operations) {
     const title=document.createElement('span');title.textContent=`${labels[op.action]||op.action}${op.backend?' · '+engineName(op.backend):''}`;
     const message=document.createElement('span');message.className='operation-message';message.textContent=op.message;
     row.append(icon,title,message);if(op.state==='running'){const box=document.createElement('div');box.className='operation-progress';const progress=document.createElement('progress');const text=document.createElement('span');text.textContent=`${Math.floor(op.elapsed_seconds||0)} с · ${labels[op.action]||op.action}…`;box.append(progress,text);row.append(box);}$('operations').append(row);
-    if(op.state!=='running'&&!completed.has(op.id)){completed.add(op.id);if(!notified){notice(op.message,op.state==='failed');notified=true;}if(op.state==='done'&&op.backend===selectedBackend&&submittedForms.get(op.id)===formRevision)settingsDirty=false;submittedForms.delete(op.id);}
+    if(op.state!=='running'&&!completed.has(op.id)){completed.add(op.id);if(String(op.action).startsWith('engine-')&&activeTab==='updates')refreshEngines().catch(()=>{});if(!notified){notice(op.message,op.state==='failed');notified=true;}if(op.state==='done'&&op.backend===selectedBackend&&submittedForms.get(op.id)===formRevision)settingsDirty=false;submittedForms.delete(op.id);}
   });
 }
 // Idle panel: no periodic sampling. The user gets one sample when opening or refreshing the panel.
@@ -159,7 +159,7 @@ function renderSettings() {
   $('settings-status').textContent=b.pending?'Есть сохранённые настройки. Они ещё не применены к работающему серверу.':b.type==='ollama'?'Серверные значения по умолчанию. Параметры внешнего клиента могут их переопределить.':'При ошибке запуска с новыми настройками выполняется откат.';
   $('restore').disabled=!b.can_restore;
   $('loaded-model').textContent=b.sleeping?'Модель спит; новый запрос может её загрузить.':b.loaded_model==='-'||b.loaded_model==='(none)'?'Модель не загружена.':b.loaded_model;
-  $('load-model').disabled=!(b.models||[]).length; $('unload-model').disabled=b.service!=='Running';
+  $('load-model').disabled=!(b.models||[]).length;$('delete-model').disabled=!(b.models||[]).length; $('unload-model').disabled=b.service!=='Running';
   const prism=b.type==='prism';$('pull-label').hidden=prism;['url-label','filename-label','sha-label'].forEach(id=>$(id).hidden=!prism);
   $('download-hint').textContent=prism?'Скачайте GGUF по прямой ссылке Hugging Face. Формат Bonsai PQ2 поддерживает только PrismML.':'Укажите имя и тег из библиотеки Ollama. Сначала запустите сервер Ollama.';
 }
@@ -225,6 +225,51 @@ async function showCatalogFiles(repository) {
   data.files.forEach(f=>{const row=document.createElement('article');row.className='catalog-file';const title=document.createElement('strong');title.textContent=f.name;const meta=document.createElement('span');meta.className='muted';meta.textContent=`${f.bytes?(f.bytes/1024**3).toFixed(2)+' ГБ':'Размер не указан'}${f.prism_only?' · нужен PrismML':''}${f.split?' · многотомный файл':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent='Скачать на ПК';const b=backend();const tag=`hf.co/${repository}:${f.name}`;button.disabled=f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200));button.addEventListener('click',()=>{const b=backend();if(!b||f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200))){notice('Этот файл не поддерживается выбранным движком.',true);return;}const body=b.type==='prism'?{action:'download',backend:selectedBackend,url:f.url,filename:f.filename,sha256:f.sha256}:{action:'pull',backend:selectedBackend,model:tag};action(body).catch(e=>notice(e.message,true));});row.append(title,meta,button);$('catalog-results').append(row);});
   }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
 }
+// Engine versions come from GitHub only when the owner asks; installs run as panel operations.
+let engineReleases={};
+function engineStatusText(e){
+  if(!e.installed)return 'Не установлен';
+  if(e.state==='Missing')return 'Служба не найдена';
+  return e.version?`Версия ${e.version}`:'Установлен вне OmniBox';
+}
+function renderEngineManager(engines){
+  const root=$('engine-manager');root.replaceChildren();
+  engines.forEach(e=>{
+    const box=document.createElement('div');box.className='engine-manage';box.dataset.engine=e.cli;
+    const head=document.createElement('div');head.className='engine-manage-head';const title=document.createElement('h3');title.textContent=e.label;const badge=document.createElement('span');badge.className='badge';badge.textContent=engineStatusText(e);head.append(title,badge);
+    const info=document.createElement('p');info.className='muted';info.textContent=e.installed?(e.managed?`Служба ${e.service}. Скачанные версии: ${(e.versions||[]).join(', ')||'—'}.`:`Служба ${e.service}. Файл: ${e.executable||'не найден'}. Обновление перенесёт движок в каталог OmniBox; прежние файлы останутся на месте.`):'Будут созданы служба Windows (ручной запуск) и профиль. Модели скачиваются отдельно.';
+    const row=document.createElement('div');row.className='button-row';
+    const select=document.createElement('select');select.className='engine-version';select.setAttribute('aria-label',`Версия ${e.label}`);
+    const releases=engineReleases[e.cli]||[];select.hidden=!releases.length;
+    releases.forEach(r=>select.add(new Option(`${r.tag} · ${String(r.published).slice(0,10)}${r.size?` · ${(r.size/1024**3).toFixed(1)} ГБ`:''}${r.prerelease?' · предварительная':''}${r.tag===e.version?' · установлена':''}`,r.tag)));
+    const button=(text,cls,handler)=>{const b=document.createElement('button');b.type='button';b.className=cls;b.textContent=text;b.addEventListener('click',()=>handler().catch(err=>notice(err.message,true)));return b;};
+    const versions=button(releases.length?'Обновить список':'Показать версии','secondary small',()=>loadEngineReleases(e.cli));
+    const latest=button(e.installed?'Обновить до последней':'Установить последнюю','primary small',()=>engineAction(e,''));
+    const chosen=button('Установить выбранную','secondary small',()=>engineAction(e,select.value));chosen.hidden=!releases.length;
+    row.append(select,chosen,versions,latest);
+    if(e.installed)row.append(button('Удалить','text-button danger-text',()=>removeEngine(e)));
+    box.append(head,info,row);root.append(box);
+  });
+}
+async function refreshEngines(){const data=await api('/api/engines');renderEngineManager(data.engines);return data.engines;}
+async function loadEngineReleases(cli){
+  notice('Загружаем список версий с GitHub…');
+  const {id}=await api('/api/engine-releases',{engine:cli});
+  for(let i=0;i<60;i++){await new Promise(r=>setTimeout(r,1000));const r=await api(`/api/engine-releases?id=${id}`);
+    if(r.state==='done'){engineReleases[cli]=r.releases;await refreshEngines();notice(r.releases.length?'Версии загружены.':'Подходящих сборок для Windows не найдено.');return;}
+    if(r.state==='failed')throw new Error(r.error);}
+  throw new Error('GitHub не ответил за минуту.');
+}
+async function engineAction(e,version){
+  const target=version||'последней версии';
+  if(e.installed&&!window.confirm(`Перевести ${e.label} на ${target}? Работающий движок перезапустится; при ошибке вернётся прежняя версия.`))return;
+  if(!e.installed&&!window.confirm(`Установить ${e.label} (${target})? Будут скачаны файлы с GitHub и создана служба Windows.`))return;
+  await action(e.installed?{action:'engine-update',backend:e.name,version}:{action:'engine-install',engine:e.cli,version});
+}
+async function removeEngine(e){
+  if(!window.confirm(`Удалить ${e.label}? Служба и скачанные OmniBox файлы движка будут удалены, модели останутся на диске.`))return;
+  await action({action:'engine-remove',backend:e.name});
+}
 // Disk usage is computed only on login and on the Logs tab, never on the status poll.
 let storageDirty=false,requestLog='metadata';
 // Request text is stored only in content mode; metadata rows offer nothing to open.
@@ -241,7 +286,7 @@ async function showRequestContent(id){const c=await api(`/api/request-content?id
 function formatMb(bytes){return `${((bytes||0)/1024**2).toFixed(1)} МБ`;}
 function renderStorage(u){
   requestLog=u.request_log||'metadata';
-  $('storage-summary').textContent=`Журналы: ${formatMb(u.logs_bytes)} (файлов: ${u.log_files}${u.content_bytes?`, содержимое запросов: ${formatMb(u.content_bytes)}`:''}) · резервные копии: ${formatMb(u.backups_bytes)} · обновления: ${formatMb(u.updates_bytes)}${u.temp_bytes?` · временные файлы: ${formatMb(u.temp_bytes)}`:''}`;
+  $('storage-summary').textContent=`Журналы: ${formatMb(u.logs_bytes)} (файлов: ${u.log_files}${u.content_bytes?`, содержимое запросов: ${formatMb(u.content_bytes)}`:''}) · резервные копии: ${formatMb(u.backups_bytes)} · обновления: ${formatMb(u.updates_bytes)}${u.engines_bytes?` · движки: ${formatMb(u.engines_bytes)}`:''}${u.temp_bytes?` · временные файлы: ${formatMb(u.temp_bytes)}`:''}`;
   $('storage-warning').hidden=!u.logs_over_limit;$('storage-warning').textContent=`Журналы занимают больше ${u.log_warn_mb} МБ. Сократите срок хранения или удалите устаревшие.`;
   if(!storageDirty){const select=$('log-retention');if(![...select.options].some(o=>o.value===String(u.log_retention_days)))select.add(new Option(`${u.log_retention_days} дн.`,String(u.log_retention_days)));select.value=String(u.log_retention_days);$('log-warn').value=u.log_warn_mb;$('request-log').value=requestLog;}
   if(activity&&snapshot)renderActivity();
@@ -264,6 +309,9 @@ $('settings-form').addEventListener('submit',e=>{e.preventDefault();action({acti
 $('apply').addEventListener('click',()=>{if($('settings-form').reportValidity())action({action:'apply',backend:selectedBackend,settings:collectSettings()}).catch(e=>notice(e.message,true));});
 $('restore').addEventListener('click',()=>action({action:'restore',backend:selectedBackend}).catch(e=>notice(e.message,true)));
 $('load-model').addEventListener('click',()=>{const b=backend();const body={action:'load',backend:selectedBackend};if(b.type==='prism'){if(!$('settings-form').reportValidity())return;body.settings=collectSettings();}else {body.model=$('model-choice').value;if(settingsDirty){if(!$('settings-form').reportValidity())return;body.settings=collectSettings();}}action(body).catch(e=>notice(e.message,true));});
+$('delete-model').addEventListener('click',()=>{const b=backend();const select=$('model-choice');const label=select.options[select.selectedIndex]?.text||select.value;if(!select.value)return;
+  if(!window.confirm(b.type==='prism'?`Удалить модель ${label}? Файл будет удалён с диска.`:`Удалить модель ${label} из Ollama?`))return;
+  action({action:'model-delete',backend:selectedBackend,model:select.value}).catch(e=>notice(e.message,true));});
 $('unload-model').addEventListener('click',()=>action({action:'unload',backend:selectedBackend,model:$('model-choice').value}).catch(e=>notice(e.message,true)));
 $('download-form').addEventListener('submit',e=>{e.preventDefault();const b=backend();const body=b.type==='prism'?{action:'download',backend:selectedBackend,url:$('download-url').value.trim(),filename:$('download-filename').value.trim(),sha256:$('download-sha').value.trim()}:{action:'pull',backend:selectedBackend,model:$('pull-name').value.trim()};action(body).catch(error=>notice(error.message,true));});
 $('refresh-logs').addEventListener('click',()=>refreshLogs().catch(e=>notice(e.message,true)));

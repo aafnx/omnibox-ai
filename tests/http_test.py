@@ -262,6 +262,36 @@ class HttpTests(unittest.TestCase):
         self.assertFalse(old.exists())
         self.assertTrue((self.fixture.root / 'logs' / 'bonsai-service.err.log').exists())
 
+    def test_09c_engine_overview_and_release_lookup(self):
+        self.assertEqual(self.call('/api/engines', auth=False)[0], 401)
+        code, data, _ = self.call('/api/engines')
+        self.assertEqual(code, 200)
+        self.assertEqual([e['cli'] for e in data['engines']], ['prismml', 'ollama'])
+        self.assertEqual(self.call('/api/engine-releases', {'engine': 'prismml'})[0], 403)
+        self.assertEqual(self.call('/api/engine-releases', {'engine': 'kobold'}, csrf=self.csrf)[0], 400)
+        code, data, _ = self.call('/api/engine-releases', {'engine': 'prismml'}, csrf=self.csrf)
+        self.assertEqual(code, 202)
+        deadline = time.monotonic() + 10
+        while True:
+            state = self.call('/api/engine-releases?id=' + data['id'])[1]
+            if state['state'] != 'running' or time.monotonic() > deadline:
+                break
+            time.sleep(.1)
+        self.assertEqual(state['state'], 'done')
+        self.assertEqual(state['releases'][0], {'tag': 'b10760', 'published': '2026-10-06T00:00:00Z', 'prerelease': False, 'size': 150})
+        code, data, _ = self.call('/api/engine-releases', {'engine': 'ollama'}, csrf=self.csrf)
+        while True:
+            state = self.call('/api/engine-releases?id=' + data['id'])[1]
+            if state['state'] != 'running':
+                break
+            time.sleep(.1)
+        self.assertEqual(state['state'], 'failed')
+        self.assertIn('rate limit', state['error'])
+        self.assertEqual(self.call('/api/engine-releases?id=unknown')[0], 400)
+        code, op, _ = self.call('/api/actions', {'action': 'engine-install', 'engine': 'ollama', 'version': ''}, csrf=self.csrf)
+        self.assertEqual(code, 202)
+        self.wait_operation(op['id'])
+
     def test_09a_brand_assets_and_unified_events_are_available(self):
         for path in ('/favicon.svg','/brand-light.svg','/brand-dark.svg'):
             with urllib.request.urlopen(self.fixture.url+path) as response:

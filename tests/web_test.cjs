@@ -46,6 +46,17 @@ function run(code){return vm.runInContext(code,context);}
   assert.equal(run("contentCell({id:'a'})").textContent,'—');run("requestLog='content'");assert.equal(run("contentCell({id:'a'})").children[0].textContent,'Открыть');run("requestLog='metadata'");
   const shown=run("formatRequestContent({model:'m',route:'/v1/chat/completions',started:new Date().toISOString(),status:200,truncated:false,request:{messages:[{role:'user',content:'hi'}]},reasoning_text:'think',response_text:'answer'})");
   assert.ok(shown.includes('[user] hi')&&shown.includes('РАЗМЫШЛЕНИЯ\n\nthink')&&shown.includes('ОТВЕТ\n\nanswer'));
+  // Engine manager: status text, install vs update actions and version list after a lookup.
+  assert.equal(run("engineStatusText({installed:false})"),'Не установлен');assert.equal(run("engineStatusText({installed:true,state:'Stopped',version:''})"),'Установлен вне OmniBox');
+  run("engineReleases={prismml:[{tag:'b2',published:'2026-10-02T00:00:00Z',prerelease:false},{tag:'b1',published:'2026-09-01T00:00:00Z',prerelease:true}]};renderEngineManager([{type:'prism',label:'PrismML',cli:'prismml',installed:true,name:'bonsai',service:'bonsai',state:'Stopped',version:'b2',managed:true,versions:['b2'],executable:'x'},{type:'ollama',label:'Ollama',cli:'ollama',installed:false,versions:[]}])");
+  const [prismBox,ollamaBox]=nodes['engine-manager'].children;const prismRow=prismBox.children[2],ollamaRow=ollamaBox.children[2];
+  assert.equal(prismBox.children[0].children[1].textContent,'Версия b2');assert.equal(prismRow.children[0].children.length,2);assert.ok(prismRow.children[0].children[0].text.includes('установлена'));
+  assert.equal(prismRow.children[3].textContent,'Обновить до последней');assert.equal(prismRow.children[4].textContent,'Удалить');
+  assert.equal(ollamaRow.children[0].hidden,true);assert.equal(ollamaRow.children[3].textContent,'Установить последнюю');assert.equal(ollamaRow.children.length,4);
+  const engineCalls=[];context.window.confirm=()=>true;const realAction=run('action');run('action=async body=>{globalThis.__sent.push(body);}');context.__sent=engineCalls;
+  await run("engineAction({installed:true,label:'PrismML',name:'bonsai',cli:'prismml'},'b1')");await run("engineAction({installed:false,label:'Ollama',cli:'ollama'},'')");await run("removeEngine({label:'PrismML',name:'bonsai'})");
+  assert.equal(JSON.stringify(engineCalls),JSON.stringify([{action:'engine-update',backend:'bonsai',version:'b1'},{action:'engine-install',engine:'ollama',version:''},{action:'engine-remove',backend:'bonsai'}]));
+  context.__realAction=realAction;run('action=globalThis.__realAction');
   run("renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'model.gguf');assert.ok(nodes['kpi-model-caption'].textContent.startsWith('PrismML · '));
   // The prism engine is shown as PrismML whatever its historical config key.
   assert.equal(nodes.engines.children[0].querySelector('h2').textContent,'PrismML');assert.equal(run("engineName('unknown')"),'unknown');
@@ -91,5 +102,5 @@ function run(code){return vm.runInContext(code,context);}
   nodes['update-token'].value='one-use-secret';context.fetch=async(path,options)=>{requests.push({path,body:options.body});return{ok:true,status:202,json:async()=>({current:'0.9.4',phase:'checking',message:'Checking',gh_available:true,authenticated:false,code:''})}};
   nodes['update-token-form'].listeners.submit[0]({preventDefault:()=>{}});assert.equal(nodes['update-token'].value,'');await new Promise(setImmediate);
   assert.equal(JSON.parse(requests.at(-1).body).token,'one-use-secret');assert.ok([...store.values()].every(v=>!String(v).includes('secret')));
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});
