@@ -15,10 +15,12 @@ function Get-AiSystemSample {
 }
 
 function Get-AiTelemetry {
-    param([string]$ConfigPath)
+    # -Snapshot: one sample the user asked for (panel opened or refreshed), even with every engine stopped.
+    # Periodic polling stays limited to running engines.
+    param([string]$ConfigPath,[switch]$Snapshot)
     $config=Read-AiConfig $ConfigPath
     $running=@($config.backends.Values|Where-Object{$s=Get-AiService $_.service;$null -ne $s -and [string]$s.Status -in @('Running','StartPending')})
-    if(-not $running.Count){return @{enabled=$false;timestamp=[DateTime]::UtcNow.ToString('o');reason='Серверы остановлены; опрос ресурсов выключен.'}}
+    if(-not $running.Count -and -not $Snapshot){return @{enabled=$false;timestamp=[DateTime]::UtcNow.ToString('o');reason='Серверы остановлены; опрос ресурсов выключен.'}}
     if('OmniBox.InferenceStats' -as [type]){
         foreach($name in $config.backends.Keys){$b=$config.backends[$name];if($b.type -eq 'prism' -and [OmniBox.InferenceStats]::IsActive($name)){
             $requestId=[OmniBox.InferenceStats]::ActiveId($name)

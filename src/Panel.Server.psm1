@@ -180,8 +180,10 @@ function Start-OmniBoxPanel {
                             $telemetryCache=if($null -ne $result){$result}else{@{enabled=$true;error='Датчики временно недоступны.'}}
                             Remove-Job $telemetryJob -Force;$telemetryJob=$null
                         }
+                        # once=1 is a single sample requested by the user; it never starts periodic polling.
+                        $once=$request.QueryString['once'] -eq '1'
                         if($null -eq $telemetryJob -and ([DateTime]::UtcNow-$telemetryTime).TotalSeconds -ge 3){
-                            $telemetryJob=Start-ThreadJob -ArgumentList $EngineModulePath,$configPath -ScriptBlock {param($Module,$Config)Import-Module $Module -Force;Get-AiTelemetry $Config}
+                            $telemetryJob=Start-ThreadJob -ArgumentList $EngineModulePath,$configPath,$once -ScriptBlock {param($Module,$Config,$Once)Import-Module $Module -Force;Get-AiTelemetry $Config -Snapshot:$Once}
                             $telemetryTime=[DateTime]::UtcNow
                         }
                         $data=if($null -ne $telemetryCache){$telemetryCache.Clone()}else{@{enabled=$true;sample=$null}}

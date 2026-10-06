@@ -25,5 +25,5 @@ function Get-AiGatewayRuntime {
     if($Name -ne 'bonsai' -or $c.service -ne 'Running'){return @{available=$false;status=503;reason='Selected engine is stopped.'}}
     return @{available=$true;model='bonsai-2-27b';context=196608;type=$(if($c.Contains('gateway_type')){$c.gateway_type}else{'prism'});placement=$(if($c.Contains('gateway_placement')){$c.gateway_placement}else{'auto'})}
 }
-function Get-AiTelemetry {param($ConfigPath)@{enabled=$true;sample=@{timestamp=[DateTime]::UtcNow.ToString('o');cpu_percent=22;ram_total_gb=32;ram_used_gb=16;ram_percent=50;cpu_temperature=$null;gpu=@();errors=@()}}}
+function Get-AiTelemetry {param($ConfigPath,[switch]$Snapshot)@{enabled=$true;sample=@{timestamp=[DateTime]::UtcNow.ToString('o');cpu_percent=22;ram_total_gb=32;ram_used_gb=16;ram_percent=50;cpu_temperature=$null;gpu=@();errors=@()}}}
 Export-ModuleMember -Function Get-AiDashboard,Invoke-AiPanelAction,Get-AiGatewayRuntime,Get-AiTelemetry
