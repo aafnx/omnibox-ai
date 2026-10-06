@@ -111,6 +111,13 @@ try{
  Assert ((Get-Service 'omnibox-ai').PathName -match 'src[\\/]Service\.Host\.exe') 'Legacy panel was not migrated'
  Assert ((Get-Service 'bonsai').PathName -match 'src[\\/]Service\.Host\.exe') 'Legacy backend was not migrated'
  Write-Host 'PASS real installer body completes first installation and upgrade with mocked Windows providers'
+ # Every run adds snapshots; a successful run prunes them to the newest three per kind.
+ for($i=0;$i -lt 3;$i++){& (Join-Path $source 'install.ps1') -InstallDirectory $destination -NoProfileUpdate}
+ $backupItems=@(Get-ChildItem -LiteralPath (Join-Path $destination 'backups') -Directory)
+ Assert (@($backupItems|Where-Object Name -match '^\d{8}-\d{6}-[0-9a-f]{8}$').Count -eq 3) 'Old install snapshots were not pruned'
+ Assert (@($backupItems|Where-Object Name -like 'services-*').Count -eq 3) 'Old service backups were not pruned'
+ Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Panel not running after repeated upgrades'
+ Write-Host 'PASS repeated upgrades keep only the newest three backups of each kind'
  # --- U1: every failure after the snapshot restores the previous installation ---
  Import-Module (Join-Path $source 'src/Install.Transaction.psm1') -Force
  $pwshPath=Join-Path $PSHOME $(if($IsWindows){'pwsh.exe'}else{'pwsh'})

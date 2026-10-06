@@ -146,12 +146,9 @@ function Install-AiPanelService {
         try { $null = Invoke-WebRequest -Uri "http://127.0.0.1:$($Options.port)/" -TimeoutSec 2; $ready = $true; break } catch { Start-Sleep -Milliseconds 500 }
     }
     if (-not $ready) { throw "Панель не ответила. Журналы: $Directory\logs\panel-service.err.log и panel-service.host.log" }
-    Write-Host "Веб-панель: http://${hostName}:$($Options.port)"
-    if ($Options.public_origin) { Write-Host "Через NAS после настройки proxy: $($Options.public_origin)" }
-    if($GatewayOptions.enabled){Write-Host "OpenAI Base URL: $($GatewayOptions.base_url)";if($GatewayOptions.generated_key){Write-Host "API key (сохрани в Bitwarden): $($GatewayOptions.generated_key)"}}
+    Write-Host "Панель: http://${hostName}:$($Options.port)$(if ($Options.public_origin) { " · через NAS: $($Options.public_origin)" })"
+    if($GatewayOptions.enabled){Write-Host "API: $($GatewayOptions.base_url)";if($GatewayOptions.generated_key){Write-Host "API key (сохрани в Bitwarden): $($GatewayOptions.generated_key)"}}
     if ($password) { Write-Host "Сгенерированный пароль панели: $password"; Write-Host 'Сохрани пароль в Bitwarden: открытым текстом он нигде не сохраняется.' }
-    else { Write-Host 'Пароль панели: выбранный при первой установке.' }
-    Write-Host 'Панель запускается с Windows. ИИ-движки сами не запускаются.'
 }
 
 Export-ModuleMember -Function Get-AiPanelInstallOptions, Get-AiGatewayInstallOptions, Install-AiPanelService, New-AiPanelServiceXml

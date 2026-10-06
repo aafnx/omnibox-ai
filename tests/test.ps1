@@ -115,7 +115,7 @@ try {
     }
     Test 'unknown backend does not mutate services' {
         $m = New-TestModule
-        Assert-Throws { Invoke-Ai -Arguments @('start', 'other') -ConfigPath $example } '*Неизвестный сервер*'
+        Assert-Throws { Invoke-Ai -Arguments @('start', 'other') -ConfigPath $example } '*Неизвестный движок*'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'unknown command fails rather than forwarding a typo' {
@@ -470,7 +470,7 @@ try {
         & $m { $script:services.bonsai.Status = 'Running' }
         Invoke-Ai @('stop','prismml') $f.path
         Assert-True ((Get-Calls $m) -contains 'stop:bonsai')
-        Assert-Throws { Invoke-Ai @('context','prism','64k') $f.path } '*Неизвестный сервер*'
+        Assert-Throws { Invoke-Ai @('context','prism','64k') $f.path } '*Неизвестный движок*prismml*'
     }
     Test 'unapplied context edits keep the original restore point' {
         $m = New-TestModule; $f = New-ContextFixture
@@ -1081,6 +1081,80 @@ try {
         $x=& $m {param($b)New-AiLaunchXml $b @{placement='hybrid';gpu_layers='12'}} $b
         Assert-Equal (& $m {param($x)Get-AiArgumentValue @(Get-AiPrismArguments $x) @('-ngl') ''} $x) '12'
         Assert-Throws {& $m {param($b)New-AiLaunchXml $b @{placement='hybrid'}} $b} '*1 до 98*'
+    }
+    Test 'storage cleanup removes only expired OmniBox logs and stale installer temp files' {
+        $root=Join-Path $testRoot ([Guid]::NewGuid().ToString('N'));$engineLogs=Join-Path $root 'engine-logs';$profiles=Join-Path $root 'profiles';$temp=Join-Path $root 'tmp'
+        foreach($d in @("$root/logs/requests",$engineLogs,"$profiles/logs",$temp)){$null=New-Item -ItemType Directory -Path $d -Force}
+        $config=@{backends=@{bonsai=@{type='prism';log_directory=$engineLogs;log_prefix='bonsai-service';service_config=(Join-Path $profiles 'bonsai.xml')}}}
+        $old=[DateTime]::UtcNow.AddDays(-40)
+        $files=[ordered]@{
+            "$engineLogs/bonsai-service.err.log"=$false;"$engineLogs/bonsai-service.out.log.2"=$true;"$engineLogs/bonsai-service.wrapper.log"=$true
+            "$profiles/logs/bonsai.bootstrap.log"=$true;"$root/logs/panel-service.host.log.1"=$true;"$root/logs/requests/requests.jsonl.2"=$true
+            "$engineLogs/model.gguf"=$false;"$engineLogs/notes.txt"=$false;"$root/logs/requests/requests.jsonl"=$false
+        }
+        foreach($path in $files.Keys){Set-Content -LiteralPath $path -Value 'x';if($files[$path] -or $path -like '*notes.txt' -or $path -like '*model.gguf'){(Get-Item -LiteralPath $path).LastWriteTimeUtc=$old}}
+        $stale=Join-Path $temp ('omnibox-ai-package-'+('a'*32));$fresh=Join-Path $temp ('omnibox-ai-runtime-'+('b'*32));$other=Join-Path $temp 'omnibox-ai-tests-keep'
+        foreach($d in @($stale,$fresh,$other)){$null=New-Item -ItemType Directory -Path $d}
+        (Get-Item -LiteralPath $stale).LastWriteTimeUtc=$old;(Get-Item -LiteralPath $other).LastWriteTimeUtc=$old
+        $saved=@{TMP=$env:TMP;TEMP=$env:TEMP;TMPDIR=$env:TMPDIR}
+        try{
+            $env:TMP=$temp;$env:TEMP=$temp;$env:TMPDIR=$temp
+            Import-Module (Join-Path $repo 'src/Storage.Helpers.psm1') -Force
+            Assert-Equal @(Get-AiLogFiles $root $config).Count 7
+            $result=Invoke-AiStorageCleanup $root $config
+            Assert-Equal $result.removed 6
+            foreach($path in $files.Keys){Assert-Equal (Test-Path -LiteralPath $path) (-not $files[$path]) $path}
+            Assert-True (-not (Test-Path -LiteralPath $stale));Assert-True (Test-Path -LiteralPath $fresh);Assert-True (Test-Path -LiteralPath $other)
+        } finally {foreach($k in $saved.Keys){Set-Item "env:$k" -Value $saved[$k] -ErrorAction SilentlyContinue}}
+    }
+    Test 'storage settings validate values, survive corrupt files and zero retention keeps logs' {
+        $root=Join-Path $testRoot ([Guid]::NewGuid().ToString('N'));$null=New-Item -ItemType Directory -Path "$root/logs" -Force
+        Import-Module (Join-Path $repo 'src/Storage.Helpers.psm1') -Force
+        Assert-Equal (Read-AiStorageSettings $root).log_retention_days 30
+        Set-Content -LiteralPath (Join-Path $root 'storage.json') -Value '{broken'
+        Assert-Equal (Read-AiStorageSettings $root).log_warn_mb 200
+        $null=Save-AiStorageSettings $root @{log_retention_days='0';log_warn_mb=50}
+        $s=Read-AiStorageSettings $root;Assert-Equal $s.log_retention_days 0;Assert-Equal $s.log_warn_mb 50
+        Assert-Throws {Save-AiStorageSettings $root @{log_retention_days='400'}} '*365*'
+        Assert-Throws {Save-AiStorageSettings $root @{log_warn_mb='5'}} '*10*'
+        Assert-Throws {Save-AiStorageSettings $root @{log_retention_days='7 --x'}} '*целые*'
+        Assert-Throws {Save-AiStorageSettings $root @{path='C:\'}} '*Неизвестная*'
+        $log=Join-Path $root 'logs/panel-service.out.log';Set-Content -LiteralPath $log -Value ('x'*2048);(Get-Item $log).LastWriteTimeUtc=[DateTime]::UtcNow.AddDays(-400)
+        Assert-Equal (Invoke-AiStorageCleanup $root $null).removed 0;Assert-True (Test-Path -LiteralPath $log)
+        $usage=Get-AiStorageUsage $root $null;Assert-True ($usage.logs_bytes -ge 2048);Assert-Equal $usage.log_files 1;Assert-True (-not $usage.logs_over_limit)
+        $null=Save-AiStorageSettings $root @{log_warn_mb=10};Set-Content -LiteralPath $log -Value ('x'*(11MB));Assert-True (Get-AiStorageUsage $root $null).logs_over_limit
+    }
+    Test 'install backups keep the newest three per kind and never the snapshot of an unfinished install' {
+        $root=Join-Path $testRoot ([Guid]::NewGuid().ToString('N'));$backups=Join-Path $root 'backups'
+        Import-Module (Join-Path $repo 'src/Storage.Helpers.psm1') -Force
+        $names=@();for($i=1;$i -le 5;$i++){$name="2026100$i-120000-0000000$i";$names+=$name;$d=New-Item -ItemType Directory -Path (Join-Path $backups $name) -Force;$d.LastWriteTimeUtc=[DateTime]::UtcNow.AddDays(-10+$i)}
+        for($i=1;$i -le 4;$i++){$d=New-Item -ItemType Directory -Path (Join-Path $backups ("services-"+[Guid]::NewGuid())) -Force;$d.LastWriteTimeUtc=[DateTime]::UtcNow.AddDays(-10+$i)}
+        $null=New-Item -ItemType Directory -Path (Join-Path $backups 'manual-copy') -Force
+        @{snapshot=(Join-Path $backups $names[0])}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $root '.omnibox-ai-transaction.json')
+        Assert-Equal (Remove-AiOldBackups $root 3 @((Join-Path $backups $names[1]))) 1
+        $left=@(Get-ChildItem -LiteralPath $backups -Directory|ForEach-Object Name)
+        foreach($name in $names){Assert-True ($left -contains $name) $name}
+        Assert-Equal @($left|Where-Object{$_ -like 'services-*'}).Count 3;Assert-True ($left -contains 'manual-copy')
+        Remove-Item -LiteralPath (Join-Path $root '.omnibox-ai-transaction.json') -Force
+        $null=Remove-AiOldBackups $root 3 @()
+        Assert-Equal @(Get-ChildItem -LiteralPath $backups -Directory|Where-Object Name -match '^\d{8}').Count 3
+    }
+    Test 'CLI storage reports usage and clean requires administrator' {
+        $m=New-TestModule;$f=New-ContextFixture
+        $null=Invoke-Ai @('storage') $f.path
+        Assert-True (-not ((Get-Calls $m) -contains 'admin'))
+        $null=Invoke-Ai @('storage','clean') $f.path
+        Assert-True ((Get-Calls $m) -contains 'admin')
+        Assert-Throws {Invoke-Ai @('storage','all') $f.path} '*ai storage*'
+    }
+    Test 'PrismML download removes partial files left by killed downloads' {
+        $m=New-TestModule;$f=New-WebModelFixture;$b=$f.config.backends.bonsai
+        $dir=Split-Path (& $m {param($b)(Get-AiLaunchSettings $b).model} $b) -Parent
+        $stale=Join-Path $dir ('.download-'+('c'*32)+'.part');$fresh=Join-Path $dir ('.download-'+('d'*32)+'.part')
+        Set-Content $stale 'x';Set-Content $fresh 'x';(Get-Item -LiteralPath $stale -Force).LastWriteTimeUtc=[DateTime]::UtcNow.AddHours(-5)
+        & $m {function script:Invoke-WebRequest {throw 'offline'}}
+        Assert-Throws {& $m {param($b)Save-AiPrismDownload $b @{url='https://huggingface.co/a/b/resolve/main/m.gguf';filename='m-new.gguf'}} $b} '*offline*'
+        Assert-True (-not (Test-Path -LiteralPath $stale));Assert-True (Test-Path -LiteralPath $fresh)
     }
     Test 'Prism MoE expert offload writes one --n-cpu-moe, clears it at zero and on CPU placement' {
         $m=New-TestModule;$f=New-WebModelFixture;$b=$f.config.backends.bonsai

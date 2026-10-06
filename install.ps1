@@ -53,9 +53,8 @@ function Undo-InterruptedInstallation([string]$Directory) {
 Undo-InterruptedInstallation $InstallDirectory
 
 $installed = Test-Path -LiteralPath (Join-Path $InstallDirectory '.omnibox-ai-install') -PathType Leaf
-if ($installed -and -not $Reconfigure) { $NonInteractive = $true; Write-Host 'Обновление: существующие настройки сохраняются, мастер не запускается.' }
-Write-Host "OmniBox AI $version — установка / обновление на этом ПК"
-Write-Host 'Используются уже установленные службы Bonsai и Ollama.'
+if ($installed -and -not $Reconfigure) { $NonInteractive = $true; Write-Host "OmniBox AI $version`: обновление, настройки сохраняются." }
+else { Write-Host "OmniBox AI $version`: установка." }
 if(-not $NonInteractive){Write-Host 'Enter сохраняет предложенное значение.'}
 $setup = Get-AiSetupOptions -InstallDirectory $InstallDirectory -ConfigLoader $configLoader -ContextReader $contextReader -NonInteractive:$NonInteractive -Reconfigure:$Reconfigure -DefaultBackend $DefaultBackend -Context $Context -StartServer:$StartServer
 $InstallDirectory = $setup.directory
@@ -146,7 +145,7 @@ foreach ($name in $setup.config.backends.Keys) {
     $serviceProfiles[$backend.service] = $backend.service_config
     $externalFiles += @($backend.service_config, ($backend.service_config + '.ai-previous'), ($backend.service_config + '.ai-state.json'))
 }
-$snapshotFiles = @($files) + @('config.json', 'panel.json', 'gateway.json', 'panel-service.xml', '.omnibox-ai-install', 'src/Service.Host.exe', 'panel-service.exe')
+$snapshotFiles = @($files) + @('config.json', 'panel.json', 'gateway.json', 'storage.json', 'panel-service.xml', '.omnibox-ai-install', 'src/Service.Host.exe', 'panel-service.exe')
 try { $transaction = New-AiInstallTransaction -Directory $destination -Files $snapshotFiles -ServiceProfiles $serviceProfiles -ExternalFiles $externalFiles -PanelWasRunning $panelWasRunning -Version $version }
 catch { if ($panelWasRunning) { try { Start-Service 'omnibox-ai' -ErrorAction Stop } catch { } }; throw "Резервная копия не создана; установка не начата: $($_.Exception.Message)" }
 $global:OmniBoxInstallResult.snapshot = $transaction.snapshot
@@ -163,7 +162,7 @@ try {
     $configPath = Join-Path $destination 'config.json'
     if (-not (Test-Path -LiteralPath $configPath)) {
         Copy-Item -LiteralPath (Join-Path $destination 'config.example.json') -Destination $configPath
-    } else { Write-Host 'Существующие параметры config.json сохранены.' }
+    }
     Add-AiInstallStep $transaction 'services'
     Import-Module (Join-Path $destination 'src/Service.Install.psm1') -Force
     $serviceBackup=Install-AiNativeServices -Directory $destination -PwshPath $pwsh -Config $setup.config -ValidatedRuntimePath (Join-Path $runtimeStage 'src/Service.Host.exe')
@@ -223,20 +222,25 @@ if (-not $NoProfileUpdate) {
     Import-Module (Join-Path $destination 'src/Install.Helpers.psm1') -Force
     Update-AiPowerShellProfile -ProfilePath $PROFILE.CurrentUserAllHosts -InstallDirectory $destination -BackupDirectory (Join-Path $destination 'backups/profiles')
 }
-Write-Host "Установлено: $destination"
 if ($null -ne $setup.context) { Invoke-Ai -Arguments @('context', $setup.backend, [string]$setup.context) -ConfigPath $configPath }
 if ($setup.start) {
     $service = Get-Service -Name $setup.config.backends[$setup.backend].service -ErrorAction Stop
     $action = if ([string]$service.Status -eq 'Stopped') { 'start' } else { 'restart' }
     Invoke-Ai -Arguments @($action, $setup.backend) -ConfigPath $configPath
-} else { Write-Host 'Запуск не выбран. Новый контекст, если задан, применится при следующем запуске.' }
-Write-Host 'WinSW заменён встроенным Windows service runtime. Параметры запуска и таймер простоя сохранены.'
-Write-Host 'В этом процессе PATH обновлён. Если установщик запущен через дочерний pwsh, переподключись по SSH или добавь путь в прежнюю сессию вручную.'
-Write-Host 'Проверка: ai help; ai context bonsai; ai status'
+}
+# Housekeeping after commit: old snapshots, expired logs and temp files of killed runs. Never fails the install.
+try {
+    Import-Module (Join-Path $destination 'src/Storage.Helpers.psm1') -Force
+    $null = Remove-AiOldBackups $destination 3 @($transaction.snapshot)
+    $null = Invoke-AiStorageCleanup $destination $setup.config
+} catch { Write-Host "Очистка старых файлов пропущена: $($_.Exception.Message)" }
+# A first install changes PATH, which only new sessions see.
+if (-not $installed) { Write-Host 'Команда ai доступна в новых сессиях терминала.' }
+Write-Host "Готово: OmniBox AI $version в $destination. Состояние: ai status · справка: ai help"
 
 # Delegate the installing user's existing gh login to SYSTEM, encrypted and ACL protected.
 Import-Module (Join-Path $destination 'src/Web.Update.psm1') -Force
-if(Sync-AiUpdateCredential $destination){Write-Host 'Доступ gh подключён к обновлениям веб-панели (Windows DPAPI).'}
+$null=Sync-AiUpdateCredential $destination
 
 } finally {
     if ($runtimeStage -and (Test-Path -LiteralPath $runtimeStage)) { Remove-Item -LiteralPath $runtimeStage -Recurse -Force }

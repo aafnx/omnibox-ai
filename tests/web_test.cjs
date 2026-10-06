@@ -36,6 +36,12 @@ function run(code){return vm.runInContext(code,context);}
   nodes.placement.value='cpu';run("syncKvOffload(true)");assert.equal(nodes['kv-offload'].value,'off');assert.equal(nodes['kv-offload'].disabled,true);
   nodes.placement.value='gpu';run("syncKvOffload(true)");assert.equal(nodes['kv-offload'].value,'on');assert.equal(nodes['kv-offload'].disabled,false);
   nodes['kv-offload'].value='off';run("syncKvOffload(false)");assert.equal(nodes['kv-offload'].value,'off');
+  // Disk usage: warning only above the configured log volume; unknown retention values stay selectable.
+  nodes['log-retention'].options=[{value:'30'}];nodes['log-retention'].add=o=>nodes['log-retention'].options.push(o);
+  run("renderStorage({logs_bytes:5*1024**2,log_files:4,backups_bytes:1024**2,updates_bytes:0,temp_bytes:0,log_retention_days:30,log_warn_mb:200,logs_over_limit:false})");
+  assert.equal(nodes['storage-warning'].hidden,true);assert.ok(nodes['storage-summary'].textContent.includes('5.0 МБ (файлов: 4)'));assert.equal(nodes['log-warn'].value,200);
+  run("renderStorage({logs_bytes:300*1024**2,log_files:9,backups_bytes:0,updates_bytes:0,temp_bytes:0,log_retention_days:45,log_warn_mb:200,logs_over_limit:true})");
+  assert.equal(nodes['storage-warning'].hidden,false);assert.ok(nodes['storage-warning'].textContent.includes('200 МБ'));assert.equal(nodes['log-retention'].value,'45');
   run("renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'model.gguf');assert.ok(nodes['kpi-model-caption'].textContent.startsWith('PrismML · '));
   // The prism engine is shown as PrismML whatever its historical config key.
   assert.equal(nodes.engines.children[0].querySelector('h2').textContent,'PrismML');assert.equal(run("engineName('unknown')"),'unknown');
@@ -81,5 +87,5 @@ function run(code){return vm.runInContext(code,context);}
   nodes['update-token'].value='one-use-secret';context.fetch=async(path,options)=>{requests.push({path,body:options.body});return{ok:true,status:202,json:async()=>({current:'0.9.4',phase:'checking',message:'Checking',gh_available:true,authenticated:false,code:''})}};
   nodes['update-token-form'].listeners.submit[0]({preventDefault:()=>{}});assert.equal(nodes['update-token'].value,'');await new Promise(setImmediate);
   assert.equal(JSON.parse(requests.at(-1).body).token,'one-use-secret');assert.ok([...store.values()].every(v=>!String(v).includes('secret')));
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

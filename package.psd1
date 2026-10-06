@@ -7,7 +7,7 @@
         'src/Gateway.Helpers.psm1', 'src/OpenAi.Proxy.cs', 'src/Model.Catalog.psm1', 'src/Panel.Server.psm1',
         'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Install.Transaction.psm1',
         'src/Update.Helpers.psm1', 'src/Web.Update.psm1', 'scripts/update-worker.ps1', 'scripts/get-install.ps1',
-        'src/Setup.Helpers.psm1',
+        'src/Setup.Helpers.psm1', 'src/Storage.Helpers.psm1',
         'web/index.html', 'web/style.css', 'web/app.js', 'web/favicon.svg', 'web/brand-light.svg', 'web/brand-dark.svg',
         'web/inter-400.woff.base64', 'web/inter-600.woff.base64', 'web/inter-license.txt',
         'config.example.json', 'README.md',

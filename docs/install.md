@@ -116,7 +116,7 @@ ai status
 ```
 
 ```powershell
-ai context bonsai
+ai context prismml
 ```
 
 Если установку запускал дочерний `pwsh`, переподключись по SSH или добавь путь в текущий процесс:

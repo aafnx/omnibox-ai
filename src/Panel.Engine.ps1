@@ -447,6 +447,8 @@ function Save-AiPrismDownload {
     $directory = Split-Path ([IO.Path]::GetFullPath($settings.model)) -Parent
     $target = Join-Path $directory $filename
     if (Test-Path -LiteralPath $target) { throw 'Файл уже существует; перезапись моделей запрещена.' }
+    # A download killed by a reboot or update leaves its .part file; one older than the download timeout is dead.
+    Get-ChildItem -LiteralPath $directory -File -Force -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\.download-[0-9a-f]{32}\.part$' -and $_.LastWriteTimeUtc -lt [DateTime]::UtcNow.AddHours(-3) } | Remove-Item -Force -ErrorAction SilentlyContinue
     $temporary = Join-Path $directory ('.download-' + [Guid]::NewGuid().ToString('N') + '.part')
     try {
         Invoke-WebRequest -Uri $uri.AbsoluteUri -OutFile $temporary -MaximumRedirection 10 -TimeoutSec 7200
