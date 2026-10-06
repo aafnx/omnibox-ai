@@ -100,7 +100,7 @@ try{
             Assert ((Get-Content (Join-Path $stage.FullName 'update.xml') -Raw) -match 'update-worker.ps1') 'Wrong worker profile'
             Assert ([IO.File]::ReadAllBytes((Join-Path $stage.FullName 'src/Service.Host.exe')).Length -eq 3) 'EXE not staged'
             $calls=@(& $m {$script:serviceCalls.ToArray()})
-            Assert ($calls.Count -eq 2 -and $calls[0] -like '*updates/run-*/src/Service.Host.exe*') 'SCM worker is not independent'
+            Assert ($calls.Count -eq 2 -and $calls[0] -match 'updates[\\/]run-[a-f0-9]{32}[\\/]src[\\/]Service\.Host\.exe') 'SCM worker is not independent'
             Assert ((Get-Content (Join-Path $fixture 'updates/result.json') -Raw|ConvertFrom-Json).phase -eq 'installing') 'No durable guard'
             $failed=$false;try{& $m {param($r,$f)Start-AiWebUpdateWorker $r $f ('0'*64) '9.9.9'} $fixture $installer}catch{$failed=$true}
             Assert $failed 'Modified package accepted'

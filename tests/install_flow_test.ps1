@@ -108,8 +108,8 @@ try{
  Assert ($gateway.key_hash -ceq $previousGateway.key_hash) 'Upgrade changed API key'
  Assert ($gateway.base_url -ceq $previousGateway.base_url) 'Upgrade changed endpoint'
  Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Upgraded panel not started'
- Assert ((Get-Service 'omnibox-ai').PathName -like '*src/Service.Host.exe*') 'Legacy panel was not migrated'
- Assert ((Get-Service 'bonsai').PathName -like '*src/Service.Host.exe*') 'Legacy backend was not migrated'
+ Assert ((Get-Service 'omnibox-ai').PathName -match 'src[\\/]Service\.Host\.exe') 'Legacy panel was not migrated'
+ Assert ((Get-Service 'bonsai').PathName -match 'src[\\/]Service\.Host\.exe') 'Legacy backend was not migrated'
  Write-Host 'PASS real installer body completes first installation and upgrade with mocked Windows providers'
  # A nonzero Windows provider result midway through migration must restore detached snapshots.
  $migrationConfig=Get-Content (Join-Path $destination 'config.json') -Raw|ConvertFrom-Json -AsHashtable

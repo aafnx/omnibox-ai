@@ -26,20 +26,28 @@ jobs:
       - name: PowerShell version
         run: $PSVersionTable.PSVersion.ToString(); if ($PSVersionTable.PSVersion -lt [version]'7.4') { throw 'PowerShell 7.4+ required' }
       - name: Core tests
+        if: ${{ !cancelled() }}
         run: ./tests/test.ps1
       - name: Update tests
+        if: ${{ !cancelled() }}
         run: ./tests/update_test.ps1
       - name: Installer flow tests
+        if: ${{ !cancelled() }}
         run: ./tests/install_flow_test.ps1
       - name: Native host tests (real SCM probe)
+        if: ${{ !cancelled() }}
         run: ./tests/native_host_test.ps1
       - name: Real SCM tests
+        if: ${{ !cancelled() }}
         run: ./tests/scm_test.ps1
       - name: HTTP integration tests
+        if: ${{ !cancelled() }}
         run: python tests/http_test.py
       - name: Web UI tests
+        if: ${{ !cancelled() }}
         run: node tests/web_test.cjs
       - name: dist/ is built from current sources
+        if: ${{ !cancelled() }}
         run: |
           ./scripts/build-setup.ps1 -OutputPath "$env:RUNNER_TEMP/install-omnibox-ai.ps1"
           & "$env:RUNNER_TEMP/install-omnibox-ai.ps1" -CheckOnly
@@ -54,14 +62,20 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Core tests
+        if: ${{ !cancelled() }}
         run: ./tests/test.ps1
       - name: Update tests
+        if: ${{ !cancelled() }}
         run: ./tests/update_test.ps1
       - name: Installer flow tests
+        if: ${{ !cancelled() }}
         run: ./tests/install_flow_test.ps1
       - name: Native host tests
+        if: ${{ !cancelled() }}
         run: ./tests/native_host_test.ps1
       - name: HTTP integration tests
+        if: ${{ !cancelled() }}
         run: python3 tests/http_test.py
       - name: Web UI tests
+        if: ${{ !cancelled() }}
         run: node tests/web_test.cjs
