@@ -56,6 +56,8 @@ function run(code){return vm.runInContext(code,context);}
   assert.ok(run("idleText({service:'Running',idle:{expires_at:new Date(Date.now()+61000).toISOString(),estimated:true}})").startsWith('≈ 1:'));
   assert.equal(run("idleText({service:'Running',idle:{busy:true}})"),'После завершения запроса');
   assert.ok(run("residencyText({mode:'hybrid',gpu_layers:12,total_layers:60})").includes('12/60'));
+  assert.ok(run("residencyText({mode:'hybrid',gpu_layers:41,total_layers:41,cpu_moe_layers:999})").includes('эксперты 41 слоёв в RAM'));
+  assert.ok(!run("residencyText({mode:'vram',gpu_layers:41,total_layers:41,cpu_moe_layers:null})").includes('эксперты'));
   run("renderUpdateStatus({current:'0.9.4',latest:'0.9.4',phase:'checking',message:'Checking',gh_available:true,authenticated:true,code:''})");
   assert.equal(nodes['update-check'].disabled,true);assert.equal(nodes['update-progress'].hidden,false);assert.equal(nodes['update-apply'].hidden,true);
   run("renderUpdateStatus({current:'0.9.4',latest:'0.9.4',phase:'ready',message:'Ready',gh_available:true,authenticated:true,code:''})");

@@ -1073,6 +1073,41 @@ try {
         Assert-Equal (& $m {param($x)Get-AiArgumentValue @(Get-AiPrismArguments $x) @('-ngl') ''} $x) '12'
         Assert-Throws {& $m {param($b)New-AiLaunchXml $b @{placement='hybrid'}} $b} '*1 до 98*'
     }
+    Test 'Prism MoE expert offload writes one --n-cpu-moe, clears it at zero and on CPU placement' {
+        $m=New-TestModule;$f=New-WebModelFixture;$b=$f.config.backends.bonsai
+        $moe={param($x)Get-AiArgumentValue @(Get-AiPrismArguments $x) @('--n-cpu-moe','-ncmoe') ''}
+        Assert-Equal (& $m {param($b)(Get-AiLaunchSettings $b).n_cpu_moe} $b) '0'
+        $x=& $m {param($b)New-AiLaunchXml $b @{n_cpu_moe='30'}} $b
+        Assert-Equal (& $m $moe $x) '30';Assert-Equal @(([string]$x.service.arguments -split ' ')|Where-Object{$_ -eq '--n-cpu-moe'}).Count 1
+        Assert-Equal (& $m {param($x)Get-AiArgumentValue @(Get-AiPrismArguments $x) @('-ngl') ''} $x) '99'
+        $x.Save($b.service_config)
+        Assert-Equal (& $m {param($b)(Get-AiLaunchSettings $b).n_cpu_moe} $b) '30'
+        $x=& $m {param($b)New-AiLaunchXml $b @{n_cpu_moe='12'}} $b;Assert-Equal (& $m $moe $x) '12'
+        Assert-Equal @(([string]$x.service.arguments -split ' ')|Where-Object{$_ -eq '--n-cpu-moe'}).Count 1
+        $x=& $m {param($b)New-AiLaunchXml $b @{n_cpu_moe='0'}} $b;Assert-True (-not $x.service.arguments.Contains('cpu-moe'))
+        Assert-True ($x.service.arguments.Contains('--port 18080 --jinja'))
+        $x=& $m {param($b)New-AiLaunchXml $b @{placement='cpu';n_cpu_moe='30'}} $b;Assert-True (-not $x.service.arguments.Contains('cpu-moe'))
+        Assert-Throws {& $m {param($b)New-AiLaunchXml $b @{n_cpu_moe='5 --host 0.0.0.0'}} $b} '*MoE*'
+        Assert-Throws {& $m {param($b)New-AiLaunchXml $b @{n_cpu_moe='1000'}} $b} '*MoE*'
+        Assert-Throws {& $m {param($b)New-AiLaunchXml $b @{n_cpu_moe=''}} $b} '*MoE*'
+        Assert-Throws {Invoke-AiPanelAction $f.path @{action='save';backend='ollama';settings=@{n_cpu_moe='10'}}} '*Неизвестная настройка*'
+    }
+    Test 'Prism --cpu-moe flag reads as all experts in RAM and is replaced by an explicit count' {
+        $m=New-TestModule;$f=New-WebModelFixture;$b=$f.config.backends.bonsai
+        $x=& $m {param($b)Read-AiServiceXml $b} $b;$x.service.arguments=[string]$x.service.arguments+' --cpu-moe';$x.Save($b.service_config)
+        Assert-Equal (& $m {param($b)(Get-AiLaunchSettings $b).n_cpu_moe} $b) '999'
+        $x=& $m {param($b)New-AiLaunchXml $b @{n_cpu_moe='20'}} $b
+        Assert-True (-not (@(([string]$x.service.arguments -split ' ')) -contains '--cpu-moe'))
+        Assert-Equal (& $m {param($x)Get-AiArgumentValue @(Get-AiPrismArguments $x) @('--n-cpu-moe') ''} $x) '20'
+    }
+    Test 'dashboard reports MoE experts in RAM as hybrid residency' {
+        $m=New-TestModule;$f=New-WebModelFixture;$b=$f.config.backends.bonsai
+        & $m {$script:services.bonsai.Status='Running';$script:services.ollama.Status='Stopped'}
+        $x=& $m {param($b)New-AiLaunchXml $b @{n_cpu_moe='24'}} $b;$x.Save($b.service_config)
+        @{running=$true;started=[DateTimeOffset]::Now.ToString('o');gpu_layers=41;total_layers=41}|ConvertTo-Json|Set-Content -LiteralPath ($b.service_config+'.runtime.json')
+        $d=Get-AiDashboard $f.path;$row=$d.backends|Where-Object name -eq 'bonsai'
+        Assert-Equal $row.residency.mode 'hybrid';Assert-Equal $row.residency.cpu_moe_layers 24;Assert-Equal $row.settings.n_cpu_moe '24'
+    }
     Test 'Ollama CPU placement disables GPU discovery and automatic placement restores prior masks' {
         $f=New-ContextFixture;$m=New-TestModule;$b=$f.config.backends.ollama
         $x=& $m {param($b)New-AiLaunchXml $b @{placement='cpu'}} $b

@@ -2,7 +2,7 @@
 function Get-AiDashboard {
     param([string]$ConfigPath, [switch]$IncludeGpu)
     $state = Get-Content $ConfigPath -Raw | ConvertFrom-Json -AsHashtable
-    $settings=@{context=$state.context;idle_minutes=30;model='C:\ai\models\bonsai\bonsai-2-27b-pq2_0.gguf';alias='bonsai-2-27b';gpu_layers='99';cache_key='q8_0';cache_value='q8_0';flash_attention='on';batch='512';ubatch='128'}
+    $settings=@{context=$state.context;idle_minutes=30;model='C:\ai\models\bonsai\bonsai-2-27b-pq2_0.gguf';alias='bonsai-2-27b';gpu_layers='99';n_cpu_moe='0';cache_key='q8_0';cache_value='q8_0';flash_attention='on';batch='512';ubatch='128'}
     $gpu=@();if($IncludeGpu){$gpu=@(@{name='NVIDIA GeForce RTX 5080';total=16303;used=15020;free=958})}
     return @{version='0.9.4';computer='OMNIBOX';default_backend='bonsai';exclusive=$true;gpu=$gpu;backends=@(
         @{name='bonsai';type='prism';service=$state.service;startup='Manual';api='Ready';active_context=[int]$state.context;sleeping=$false;loaded_model='bonsai-2-27b-pq2_0.gguf';settings=$settings;models=@(@{name='bonsai-2-27b-pq2_0.gguf';id=$settings.model;bytes=7800000000});pending=$false;can_restore=$true;errors=@();endpoint='http://127.0.0.1:18080/v1'},
