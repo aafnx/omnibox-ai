@@ -26,4 +26,6 @@ function Get-AiGatewayRuntime {
     return @{available=$true;model='bonsai-2-27b';context=196608;type=$(if($c.Contains('gateway_type')){$c.gateway_type}else{'prism'});placement=$(if($c.Contains('gateway_placement')){$c.gateway_placement}else{'auto'})}
 }
 function Get-AiTelemetry {param($ConfigPath,[switch]$Snapshot)@{enabled=$true;sample=@{timestamp=[DateTime]::UtcNow.ToString('o');cpu_percent=22;ram_total_gb=32;ram_used_gb=16;ram_percent=50;cpu_temperature=$null;gpu=@();errors=@()}}}
-Export-ModuleMember -Function Get-AiDashboard,Invoke-AiPanelAction,Get-AiGatewayRuntime,Get-AiTelemetry
+function Get-AiEngineOverview {param($ConfigPath)@(@{type='prism';label='PrismML';cli='prismml';installed=$true;name='bonsai';service='bonsai';state='Running';version='b10754';executable='C:\tools\ai\engines\prism\b10754\llama-server.exe';managed=$true;versions=@('b10754')},@{type='ollama';label='Ollama';cli='ollama';installed=$false;name=$null;service=$null;state='NotInstalled';version='';executable='';managed=$false;versions=@()})}
+function Get-AiEngineReleases {param($Type)Start-Sleep -Milliseconds 300;if($Type -eq 'prism'){@(@{tag='b10760';published='2026-10-06T00:00:00Z';prerelease=$false;assets=@(@{size=100}, @{size=50})},@{tag='b10754';published='2026-10-02T00:00:00Z';prerelease=$false;assets=@(@{size=90})})}else{throw 'rate limit exceeded'}}
+Export-ModuleMember -Function Get-AiDashboard,Invoke-AiPanelAction,Get-AiGatewayRuntime,Get-AiTelemetry,Get-AiEngineOverview,Get-AiEngineReleases

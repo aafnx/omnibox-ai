@@ -39,6 +39,7 @@
 | `src/Panel.Server.psm1`, `Panel.Security.psm1`, `Panel.Install.psm1` | HTTP-сервер, сессии/CSRF/PBKDF2, установка службы панели, ACL, Firewall |
 | `src/Gateway.Helpers.psm1`, `OpenAi.Proxy.cs`, `Inference.Stats.cs` | Настройки `/v1`, прокси, учёт генерации и журнал запросов |
 | `src/Web.Update.psm1`, `Update.Helpers.psm1`, `scripts/update-worker.ps1` | Обновление из панели и CLI |
+| `src/Engine.Manager.ps1` | Установка, обновление, выбор версии и удаление движков из выпусков GitHub; удаление моделей |
 | `src/Storage.Helpers.psm1` | Объём и очистка журналов, резервных копий и временных файлов; `storage.json` |
 | `scripts/build-setup.ps1`, `scripts/setup.template.ps1` | Сборка `dist/` |
 | `releases.json` | Устанавливаемые версии: версия, коммит выпуска, примечание. Читается из `main` командой `ai update` |

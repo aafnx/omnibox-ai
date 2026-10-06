@@ -51,12 +51,13 @@ function Update-AiPanelOperations {
 
 function Start-AiPanelOperation {
     param($Operations, [string]$EngineModulePath, [string]$ConfigPath, $Body)
-    $category = if ($Body.action -in @('pull','download')) { 'download' } else { 'control' }
+    $category = if ($Body.action -in @('pull','download')) { 'download' } elseif ($Body.action -like 'engine-*') { 'engine' } else { 'control' }
     if (@($Operations.Values | Where-Object { $_.category -eq $category -and $null -ne $_.job -and $_.job.State -notin @('Completed','Failed','Stopped') }).Count) { throw 'Операция этого типа ещё выполняется. Дождись результата.' }
     # Body travels as structured data. There is no shell, command text, or eval endpoint.
-    $guarded=$Body.action -in @('start','stop','restart','stopall','apply','restore','load','unload') -and ('OmniBox.InferenceStats' -as [type])
+    # engine-update is not guarded: its download may take minutes; the restart itself runs under the control lock.
+    $guarded=$Body.action -in @('start','stop','restart','stopall','apply','restore','load','unload','engine-remove') -and ('OmniBox.InferenceStats' -as [type])
     if($guarded){
-        $cancel=$Body.action -in @('stop','stopall','unload')
+        $cancel=$Body.action -in @('stop','stopall','unload','engine-remove')
         if(-not [OmniBox.InferenceStats]::BeginControl($cancel)){throw 'Модель занята генерацией или другой операцией. Дождись завершения либо останови сервер.'}
         if($Body.Contains('backend')){[OmniBox.InferenceStats]::EndModelSession([string]$Body.backend)}
     }
@@ -104,7 +105,7 @@ function Start-OmniBoxPanel {
         $listener.TimeoutManager.HeaderWait = [TimeSpan]::FromSeconds(10)
         $listener.TimeoutManager.EntityBody = [TimeSpan]::FromSeconds(10)
     }
-    $sessions = @{}; $attempts = @{}; $operations = @{}; $catalog = @{}
+    $sessions = @{}; $attempts = @{}; $operations = @{}; $catalog = @{}; $releaseJobs = @{}
     $telemetryJob=$null;$telemetryCache=$null;$telemetryTime=[DateTime]::MinValue
     $assets = @{ '/inter-400.woff'=@('web/inter-400.woff.base64','font/woff'); '/inter-600.woff'=@('web/inter-600.woff.base64','font/woff'); '/favicon.svg'=@('web/favicon.svg','image/svg+xml'); '/brand-light.svg'=@('web/brand-light.svg','image/svg+xml'); '/brand-dark.svg'=@('web/brand-dark.svg','image/svg+xml'); '/'  = @('web/index.html','text/html; charset=utf-8'); '/app.js' = @('web/app.js','text/javascript; charset=utf-8'); '/style.css' = @('web/style.css','text/css; charset=utf-8') }
     try {
@@ -246,6 +247,24 @@ function Start-OmniBoxPanel {
                         if ($null -eq $line) { throw 'Содержимое этого запроса не сохранено.' }
                         Send-AiHttpResponse $context 200 ([Text.Encoding]::UTF8.GetBytes($line))
                     }
+                    'GET /api/engines' { Send-AiHttpResponse $context 200 @{ engines = @(Get-AiEngineOverview $configPath) } }
+                    'POST /api/engine-releases' {
+                        # GitHub is queried in a background job on the user's request only.
+                        foreach($id in @($releaseJobs.Keys)){if($releaseJobs[$id].created -lt [DateTime]::UtcNow.AddMinutes(-5) -and $releaseJobs[$id].job.State -in @('Completed','Failed','Stopped')){Remove-Job $releaseJobs[$id].job -Force;$releaseJobs.Remove($id)}}
+                        if(@($releaseJobs.Values|Where-Object{$_.job.State -notin @('Completed','Failed','Stopped')}).Count -or $releaseJobs.Count -ge 10){throw 'Список версий ещё загружается. Повтори позже.'}
+                        $body=Read-AiHttpJson $request
+                        if($body.Count -ne 1 -or $body.engine -notin @('prismml','ollama')){throw 'Нужен engine: prismml или ollama.'}
+                        $job=Start-ThreadJob -ArgumentList $EngineModulePath,([string]$body.engine) -ScriptBlock {param($Module,$Engine) try{Import-Module $Module -Force;@{ok=$true;data=@(Get-AiEngineReleases $(if($Engine -eq 'prismml'){'prism'}else{'ollama'}) | Select-Object -First 20 | ForEach-Object { @{tag=$_.tag;published=$_.published;prerelease=$_.prerelease;size=[long](($_.assets|Measure-Object -Property size -Sum).Sum)} })}}catch{@{ok=$false;error=$_.Exception.Message}}}
+                        $id=[Guid]::NewGuid().ToString('N');$releaseJobs[$id]=@{job=$job;created=[DateTime]::UtcNow};Send-AiHttpResponse $context 202 @{id=$id}
+                    }
+                    'GET /api/engine-releases' {
+                        $id=$request.QueryString['id'];if(-not $releaseJobs.Contains($id)){throw 'Неизвестный запрос версий.'}
+                        $entry=$releaseJobs[$id]
+                        if($entry.job.State -notin @('Completed','Failed','Stopped')){Send-AiHttpResponse $context 200 @{state='running'};break}
+                        $result=@(Receive-Job $entry.job -Keep -ErrorAction SilentlyContinue)|Where-Object{$_ -is [System.Collections.IDictionary] -and $_.Contains('ok')}|Select-Object -Last 1
+                        if($null -eq $result -or -not $result.ok){$errorText=if($null -ne $result){$result.error}else{'Запрос прерван.'};Send-AiHttpResponse $context 200 @{state='failed';error="GitHub недоступен: $errorText"};break}
+                        Send-AiHttpResponse $context 200 @{state='done';releases=@($result.data)}
+                    }
                     'GET /api/logs' {
                         $config = Get-Content $configPath -Raw | ConvertFrom-Json -AsHashtable
                         $name = $request.QueryString['backend']
@@ -264,7 +283,7 @@ function Start-OmniBoxPanel {
                     'POST /api/actions' {
                         $null = Update-AiPanelOperations $operations
                         $body = Read-AiHttpJson $request
-                        if ($body.action -notin @('start','stop','restart','stopall','save','apply','restore','load','unload','pull','download')) { throw 'Неизвестная операция.' }
+                        if ($body.action -notin @('start','stop','restart','stopall','save','apply','restore','load','unload','pull','download','engine-install','engine-update','engine-remove','model-delete')) { throw 'Неизвестная операция.' }
                         if((Get-AiWebUpdateStatus $updates).phase -eq 'installing'){throw 'Дождитесь завершения обновления приложения.'}
                         $result = Start-AiPanelOperation $operations $EngineModulePath $configPath $body
                         Send-AiHttpResponse $context 202 $result

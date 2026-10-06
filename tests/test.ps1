@@ -90,6 +90,61 @@ function New-WebModelFixture {
     return New-ContextFixture $args
 }
 
+# Engine management fixture: its own install root, fake GitHub releases and zip assets.
+function New-EngineFixture {
+    $f = New-WebModelFixture
+    $root = Join-Path $testRoot ('engine-root-' + [Guid]::NewGuid().ToString('N'))
+    $null = New-Item -ItemType Directory -Path $root
+    $configPath = Join-Path $root 'config.json'
+    Copy-Item -LiteralPath $f.path -Destination $configPath
+    $assets = Join-Path $root 'fake-assets'; $null = New-Item -ItemType Directory -Path $assets
+    $zip = {
+        param($Name, $Files)
+        $dir = Join-Path $assets ($Name + '.d'); $null = New-Item -ItemType Directory -Path $dir -Force
+        foreach ($file in $Files) { $path = Join-Path $dir $file; $null = New-Item -ItemType Directory -Path (Split-Path $path -Parent) -Force; Set-Content -LiteralPath $path -Value $file }
+        $out = Join-Path $assets $Name; [IO.Compression.ZipFile]::CreateFromDirectory($dir, $out); return $out
+    }
+    $map = @{}
+    $asset = {
+        param($Repo, $Tag, $Name, $Files, [bool]$Digest)
+        $file = & $zip "$Tag-$Name" $Files
+        $url = "https://github.com/$Repo/releases/download/$Tag/$Name"; $map[$url] = $file
+        $value = [pscustomobject]@{ name = $Name; browser_download_url = $url; size = (Get-Item $file).Length }
+        if ($Digest) { $value | Add-Member digest ('sha256:' + (Get-FileHash -LiteralPath $file -Algorithm SHA256).Hash.ToLowerInvariant()) }
+        return $value
+    }
+    $prism = 'PrismML-Eng/llama.cpp'; $ollama = 'ollama/ollama'
+    $releases = @{
+        $prism = @(
+            [pscustomobject]@{ tag_name = 'b4-pre'; draft = $false; prerelease = $true; published_at = '2026-10-05T00:00:00Z'; assets = @((& $asset $prism 'b4-pre' 'llama-b4-bin-win-cuda-13.3-x64.zip' @('llama-server.exe') $true), (& $asset $prism 'b4-pre' 'cudart-llama-bin-win-cuda-13.3-x64.zip' @('cudart64_13.dll') $true)) }
+            [pscustomobject]@{ tag_name = 'b3'; draft = $true; prerelease = $false; published_at = '2026-10-04T00:00:00Z'; assets = @() }
+            [pscustomobject]@{ tag_name = 'b2'; draft = $false; prerelease = $false; published_at = '2026-10-02T00:00:00Z'; assets = @((& $asset $prism 'b2' 'llama-b2-bin-win-cuda-13.3-x64.zip' @('llama-server.exe', 'ggml-cuda.dll') $true), (& $asset $prism 'b2' 'cudart-llama-bin-win-cuda-13.3-x64.zip' @('cudart64_13.dll') $true), (& $asset $prism 'b2' 'llama-b2-bin-win-cuda-12.4-x64.zip' @('llama-server.exe') $true)) }
+            [pscustomobject]@{ tag_name = 'b1'; draft = $false; prerelease = $false; published_at = '2026-09-20T00:00:00Z'; assets = @((& $asset $prism 'b1' 'llama-b1-bin-win-cuda-12.4-x64.zip' @('build/bin/llama-server.exe') $false), (& $asset $prism 'b1' 'cudart-llama-bin-win-cuda-12.4-x64.zip' @('build/bin/cudart64_12.dll') $false)) }
+            [pscustomobject]@{ tag_name = 'b0'; draft = $false; prerelease = $false; published_at = '2026-09-01T00:00:00Z'; assets = @([pscustomobject]@{ name = 'llama-b0-bin-ubuntu-x64.zip'; browser_download_url = 'https://github.com/x'; size = 1 }) }
+        )
+        $ollama = @(
+            [pscustomobject]@{ tag_name = 'v0.2.0'; draft = $false; prerelease = $false; published_at = '2026-10-03T00:00:00Z'; assets = @((& $asset $ollama 'v0.2.0' 'ollama-windows-amd64.zip' @('ollama.exe', 'lib/ollama/ggml.dll') $true)) }
+            [pscustomobject]@{ tag_name = 'v0.1.0'; draft = $false; prerelease = $false; published_at = '2026-09-03T00:00:00Z'; assets = @((& $asset $ollama 'v0.1.0' 'ollama-windows-amd64.zip' @('ollama.exe') $true)) }
+        )
+    }
+    $m = New-TestModule
+    & $m {
+        param($Releases, $Map)
+        $script:fakeReleases = $Releases; $script:fakeAssets = $Map; $script:failVerify = $false; $script:commands = @{}
+        function script:Invoke-AiGitHubReleases { param($Repository) $script:calls.Add("releases:$Repository"); return $script:fakeReleases[$Repository] }
+        function script:Invoke-AiEngineDownload { param($Uri, $OutFile) $script:calls.Add("download:$($Uri.Split('/')[-1])"); Copy-Item -LiteralPath $script:fakeAssets[$Uri] -Destination $OutFile }
+        function script:Test-AiEngineBinary { param($Executable) $script:calls.Add('verify'); if ($script:failVerify) { throw 'Движок не запустился: cudart missing' } }
+        function script:New-AiEngineService { param($Name, $Command, $DisplayName) $script:calls.Add("create:$Name"); $script:services[$Name] = [pscustomobject]@{ Status = 'Stopped'; StartType = 'Manual' }; $script:commands[$Name] = $Command }
+        function script:Remove-AiEngineService { param($Name) $script:calls.Add("remove:$Name"); $script:services.Remove($Name) }
+        function script:Get-AiServiceCommandLine { param($Name) return $script:commands[$Name] }
+    } $releases $map
+    $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
+    Import-Module (Join-Path $repo 'src/Service.Install.psm1') -Force
+    $native = @{}; foreach ($name in $config.backends.Keys) { $native[$config.backends[$name].service] = New-AiNativeServiceCommand '' $root $config.backends[$name].service_config }
+    & $m { param($Native) foreach ($key in $Native.Keys) { $script:commands[$key] = $Native[$key] } } $native
+    return @{ m = $m; root = $root; path = $configPath; config = $config; bonsai = $f.bonsai; ollama = $f.ollama }
+}
+
 try {
     Test 'all PowerShell files parse' {
         foreach ($file in Get-ChildItem -LiteralPath $repo -Recurse -File | Where-Object Extension -in @('.ps1', '.psm1')) {
@@ -1241,6 +1296,150 @@ try {
         $cases=[ordered]@{'Ornith-1.5-35B-A3B-Q4_K_M.gguf'='Q4_K_M';'model-IQ3_XXS.gguf'='IQ3_XXS';'bonsai-2-27b-pq2_0.gguf'='PQ2_0';'x-UD-Q4_K_XL-00001-of-00003.gguf'='UD-Q4_K_XL';'plain-model.gguf'='';'m.Q8_0.gguf'='Q8_0';'m-BF16.gguf'='BF16'}
         foreach($name in $cases.Keys){Assert-Equal (& $m {param($n)Get-AiGgufQuant $n} $name) $cases[$name] $name}
         Assert-True (@(& $m {param($b)Get-AiPrismModels $b} $b|Where-Object{$_.Contains('quant')}).Count -eq 2)
+    }
+    Test 'engine releases pick the CUDA 13 build, fall back to CUDA 12 and skip drafts and other platforms' {
+        $e = New-EngineFixture
+        $releases = @(& $e.m { Get-AiEngineReleases 'prism' })
+        Assert-Equal (@($releases | ForEach-Object tag) -join ',') 'b4-pre,b2,b1'
+        $b2 = $releases | Where-Object tag -eq 'b2'
+        Assert-Equal (@($b2.assets | ForEach-Object name) -join ',') 'llama-b2-bin-win-cuda-13.3-x64.zip,cudart-llama-bin-win-cuda-13.3-x64.zip'
+        Assert-True ($b2.assets[0].sha256 -match '^[a-f0-9]{64}$'); Assert-Equal ($releases | Where-Object tag -eq 'b1').assets[0].sha256 ''
+        Assert-Equal (& $e.m { (Find-AiEngineRelease 'prism' '').tag }) 'b2'
+        Assert-Throws { & $e.m { Find-AiEngineRelease 'prism' 'b9' } } '*не найдена*'
+        Assert-Throws { & $e.m { Find-AiEngineRelease 'prism' '../x' } } '*Версия движка*'
+    }
+    Test 'engine runtime install verifies size and checksum, unpacks once and leaves no staging' {
+        $e = New-EngineFixture
+        $runtime = & $e.m { param($p) Install-AiEngineRuntime $p 'prism' 'b1' } $e.path
+        Assert-Equal $runtime.tag 'b1'; Assert-True ($runtime.executable -match 'b1[\\/]build[\\/]bin[\\/]llama-server\.exe$')
+        Assert-True (Test-Path -LiteralPath (Join-Path (Split-Path $runtime.executable -Parent) 'cudart64_12.dll'))
+        $before = @(Get-Calls $e.m | Where-Object { $_ -like 'download:*' }).Count
+        $null = & $e.m { param($p) Install-AiEngineRuntime $p 'prism' 'b1' } $e.path
+        Assert-Equal @(Get-Calls $e.m | Where-Object { $_ -like 'download:*' }).Count $before
+        & $e.m { $url = @($script:fakeAssets.Keys | Where-Object { $_ -like '*/b2/llama-b2-bin-win-cuda-13.3-x64.zip' })[0]; Add-Content -LiteralPath $script:fakeAssets[$url] -Value 'tampered' }
+        Assert-Throws { & $e.m { param($p) Install-AiEngineRuntime $p 'prism' 'b2' } $e.path } '*не полностью*'
+        & $e.m { $script:failVerify = $true }
+        Assert-Throws { & $e.m { param($p) Install-AiEngineRuntime $p 'ollama' 'v0.2.0' } $e.path } '*cudart*'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $e.root 'engines/prism/b2'))); Assert-True (-not (Test-Path -LiteralPath (Join-Path $e.root 'engines/ollama/v0.2.0')))
+        Assert-Equal @(Get-ChildItem -LiteralPath (Join-Path $e.root 'engines') -Force -Directory | Where-Object Name -like '.staging-*').Count 0
+    }
+    Test 'switching a stopped engine version keeps it stopped, keeps rollback and prunes unused versions' {
+        $e = New-EngineFixture
+        $first = & $e.m { param($p) Set-AiEngineVersion $p 'bonsai' 'b1' } $e.path
+        Assert-True ($first -like '*b1*остановлен*')
+        $second = & $e.m { param($p) Set-AiEngineVersion $p 'bonsai' '' } $e.path
+        Assert-True ($second -like '*b2*')
+        Assert-True (-not ((Get-Calls $e.m) -like 'start:*'))
+        $xml = [xml](Get-Content -LiteralPath $e.bonsai -Raw)
+        Assert-True ($xml.service.executable -match 'engines[\\/]prism[\\/]b2[\\/]llama-server\.exe$'); Assert-True ($xml.service.arguments.Contains('--jinja'))
+        # Unapplied changes keep the last working profile as the rollback point; versions only it needed go away.
+        Assert-Equal ([xml](Get-Content -LiteralPath ($e.bonsai + '.ai-previous') -Raw)).SelectSingleNode('/service/executable') $null
+        Assert-True (& $e.m { param($c) (Read-AiRecoveryState $c.backends.bonsai).pending } $e.config)
+        $null = & $e.m { param($p) Set-AiEngineVersion $p 'bonsai' 'b4-pre' } $e.path
+        Assert-Equal (@(& $e.m { param($p) Get-AiInstalledEngineVersions $p 'prism' } $e.path | ForEach-Object tag) -join ',') 'b4-pre'
+        $overview = @(& $e.m { param($p) Get-AiEngineOverview $p } $e.path)
+        Assert-Equal $overview[0].version 'b4-pre'; Assert-True $overview[0].managed
+        Assert-True ((& $e.m { param($p) Set-AiEngineVersion $p 'bonsai' 'b4-pre' } $e.path) -like '*уже использует*')
+    }
+    Test 'switching a running engine restarts it and restores the previous runtime when start fails' {
+        $e = New-EngineFixture
+        & $e.m { $script:services.bonsai.Status = 'Running' }
+        $null = & $e.m { param($p) Set-AiEngineVersion $p 'bonsai' 'b1' } $e.path
+        Assert-True ((Get-Calls $e.m) -contains 'start:bonsai')
+        $working = Get-Content -LiteralPath $e.bonsai -Raw
+        & $e.m { $script:failReady = $true; function script:Wait-AiReady { param($Config, $Name) if ($script:failReady) { $script:failReady = $false; throw 'mock CUDA error' } } }
+        Assert-Throws { & $e.m { param($p) Set-AiEngineVersion $p 'bonsai' 'b2' } $e.path } '*Предыдущий XML восстановлен*'
+        Assert-Equal (Get-Content -LiteralPath $e.bonsai -Raw) $working
+        # The committed b1 is the rollback point, so it stays on disk next to the failed b2.
+        Assert-Equal (@(& $e.m { param($p) Get-AiInstalledEngineVersions $p 'prism' } $e.path | ForEach-Object tag | Sort-Object) -join ',') 'b1,b2'
+    }
+    Test 'installing a new engine creates profile, config entry and a manual service without starting it' {
+        $e = New-EngineFixture
+        $config = Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable; $config.backends.Remove('ollama'); $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $e.path; & $e.m { $script:services.Remove('ollama') }
+        $text = & $e.m { param($p) Install-AiEngine $p 'ollama' 'v0.1.0' } $e.path
+        Assert-True ($text -like '*v0.1.0*не запущен*')
+        $config = Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable
+        $b = $config.backends.ollama
+        Assert-Equal $b.service 'ollama'; Assert-Equal $b.base_url 'http://127.0.0.1:11434'; Assert-True ($b.executable -match 'v0\.1\.0[\\/]ollama\.exe$')
+        $xml = [xml](Get-Content -LiteralPath $b.service_config -Raw)
+        Assert-Equal $xml.service.id 'ollama'; Assert-Equal $xml.service.arguments 'serve'
+        Assert-Equal (@($xml.service.env | Where-Object name -eq 'OLLAMA_MODELS')[0].value) (Join-Path $e.root 'models\ollama')
+        Assert-True ((Get-Calls $e.m) -contains 'create:ollama'); Assert-True (-not ((Get-Calls $e.m) -like 'start:*'))
+        # The installer and update worker accept only their own native command for a configured profile.
+        Assert-Equal (& $e.m { $script:commands['ollama'] }) (New-AiNativeServiceCommand '' $e.root $b.service_config)
+        Assert-True (& $e.m { param($p) (Get-AiEngineOverview $p)[1].managed } $e.path)
+        Assert-Throws { & $e.m { param($p) Install-AiEngine $p 'ollama' '' } $e.path } '*уже установлен*'
+    }
+    Test 'failed engine service creation leaves config unchanged' {
+        $e = New-EngineFixture
+        $config = Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable; $config.backends.Remove('ollama'); $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $e.path; & $e.m { $script:services.Remove('ollama') }
+        $before = Get-Content -LiteralPath $e.path -Raw
+        & $e.m { function script:New-AiEngineService { param($Name, $Command, $DisplayName) throw 'access denied' } }
+        Assert-Throws { & $e.m { param($p) Install-AiEngine $p 'ollama' '' } $e.path } '*Конфигурация не изменена*'
+        Assert-Equal (Get-Content -LiteralPath $e.path -Raw) $before
+        & $e.m { $script:services['ollama'] = [pscustomobject]@{ Status = 'Stopped'; StartType = 'Manual' } }
+        Assert-Throws { & $e.m { param($p) Install-AiEngine $p 'ollama' '' } $e.path } '*уже существует*'
+    }
+    Test 'removing an engine deletes service, config entry and managed runtimes but keeps models' {
+        $e = New-EngineFixture
+        $null = & $e.m { param($p) Set-AiEngineVersion $p 'bonsai' 'b2' } $e.path
+        $gateway = Join-Path $e.root 'gateway.json'; @{ schema_version = 1; backend = 'bonsai'; enabled = $true } | ConvertTo-Json | Set-Content -LiteralPath $gateway
+        $models = @(& $e.m { param($c) Get-AiPrismModels $c.backends.bonsai } $e.config)
+        & $e.m { $script:services.bonsai.Status = 'Running' }
+        $text = & $e.m { param($p) Uninstall-AiEngine $p 'bonsai' } $e.path
+        Assert-True ($text -like '*Модели остались*'); Assert-True ((Get-Calls $e.m) -contains 'stop:bonsai'); Assert-True ((Get-Calls $e.m) -contains 'remove:bonsai')
+        $config = Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable
+        Assert-True (-not $config.backends.Contains('bonsai')); Assert-Equal $config.default_backend 'ollama'
+        Assert-Equal (Get-Content -LiteralPath $gateway -Raw | ConvertFrom-Json).backend 'ollama'
+        Assert-True (-not (Test-Path -LiteralPath (Join-Path $e.root 'engines/prism/b2')))
+        foreach ($model in $models) { Assert-True (Test-Path -LiteralPath $model.id) }
+        Assert-Throws { & $e.m { param($p) Uninstall-AiEngine $p 'ollama' } $e.path } '*единственный*'
+    }
+    Test 'removing an engine refuses a service that runs another program' {
+        $e = New-EngineFixture
+        & $e.m { $script:commands['ollama'] = '"C:\Program Files\Ollama\ollama.exe" serve' }
+        Assert-Throws { & $e.m { param($p) Uninstall-AiEngine $p 'ollama' } $e.path } '*другую программу*'
+        Assert-True ((Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable).backends.Contains('ollama'))
+    }
+    Test 'deleting models keeps the selected and rollback GGUF and uses the Ollama API' {
+        $e = New-EngineFixture
+        $b = $e.config.backends.bonsai
+        $models = @(& $e.m { param($c) Get-AiPrismModels $c.backends.bonsai } $e.config)
+        $selected = ($models | Where-Object name -eq 'bonsai-pq2.gguf').id; $other = ($models | Where-Object name -eq 'other-model.gguf').id
+        Assert-Throws { & $e.m { param($p, $id) Remove-AiEngineModel $p 'bonsai' $id } $e.path $selected } '*выбрана*'
+        Assert-Throws { & $e.m { param($p) Remove-AiEngineModel $p 'bonsai' '/etc/passwd' } $e.path } '*не найдена*'
+        Assert-True ((& $e.m { param($p, $id) Remove-AiEngineModel $p 'bonsai' $id } $e.path $other) -like '*other-model.gguf*')
+        Assert-True (-not (Test-Path -LiteralPath $other)); Assert-True (Test-Path -LiteralPath $selected)
+        & $e.m { $script:services.ollama.Status = 'Stopped' }
+        Assert-Throws { & $e.m { param($p) Remove-AiEngineModel $p 'ollama' 'qwen3:8b' } $e.path } '*Запустите Ollama*'
+        & $e.m { $script:services.ollama.Status = 'Running'; function script:Invoke-AiModelRequest { param($Backend, $Path, $Body, $Timeout, $Method) $script:calls.Add("model:${Method}:${Path}:$($Body.model)") } }
+        $config = Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable; $config.backends.ollama.active_model = 'qwen3:8b'; $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $e.path
+        $null = & $e.m { param($p) Remove-AiEngineModel $p 'ollama' 'qwen3:8b' } $e.path
+        Assert-True ((Get-Calls $e.m) -contains 'model:Delete:/api/delete:qwen3:8b')
+        Assert-True (-not (Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable).backends.ollama.Contains('active_model'))
+        Assert-Throws { & $e.m { param($p) Remove-AiEngineModel $p 'ollama' '../x' } $e.path } '*'
+    }
+    Test 'CLI engine lists engines and versions; changes need administrator' {
+        $e = New-EngineFixture
+        $null = Invoke-Ai @('engine') $e.path
+        $null = Invoke-Ai @('engine', 'versions', 'prismml') $e.path
+        Assert-True ((Get-Calls $e.m) -contains 'releases:PrismML-Eng/llama.cpp'); Assert-True (-not ((Get-Calls $e.m) -contains 'admin'))
+        $null = Invoke-Ai @('engine', 'update', 'prismml') $e.path
+        Assert-True ((Get-Calls $e.m) -contains 'admin')
+        Assert-True (([xml](Get-Content -LiteralPath $e.bonsai -Raw)).service.executable -match '[\\/]b2[\\/]')
+        Assert-Throws { Invoke-Ai @('engine', 'install', 'kobold') $e.path } '*prismml, ollama*'
+        Assert-Throws { Invoke-Ai @('engine', 'update', 'prismml', 'b1') $e.path } '*ai engine*'
+    }
+    Test 'PrismML without a selected model refuses to start and lists models from models_directory' {
+        $m = New-TestModule; $f = New-ContextFixture '--port 18080 -c 32768'
+        $config = Get-Content -LiteralPath $f.path -Raw | ConvertFrom-Json -AsHashtable
+        $models = Join-Path $testRoot ('fresh-models-' + [Guid]::NewGuid().ToString('N')); $null = New-Item -ItemType Directory -Path $models
+        Set-Content -LiteralPath (Join-Path $models 'a.gguf') -Value 'GGUF'
+        $config.backends.bonsai.models_directory = $models; $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $f.path
+        Assert-Throws { Invoke-Ai @('start', 'bonsai') $f.path } '*модель не выбрана*'
+        Assert-Equal @(& $m { param($p) Get-AiPrismModels (Read-AiConfig $p).backends.bonsai } $f.path).Count 1
+        $config.backends.bonsai.models_directory = 'relative\models'; $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $f.path
+        Assert-Throws { Invoke-Ai @('status') $f.path } '*models_directory*'
     }
     Test 'Ollama CPU placement disables GPU discovery and automatic placement restores prior masks' {
         $f=New-ContextFixture;$m=New-TestModule;$b=$f.config.backends.ollama
