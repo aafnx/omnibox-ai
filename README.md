@@ -93,19 +93,25 @@ CLI доступен в PATH после установки. Все команд�
 
 ## Разработка и проверки
 
+Изменения идут через отдельные ветки и pull request в `main`. CI (`.github/workflows/ci.yml`) запускает все наборы на `windows-latest` и `ubuntu-latest`; PR сливается только при зелёном CI.
+
 ```powershell
 pwsh -NoProfile -File .\tests\test.ps1
 pwsh -NoProfile -File .\tests\update_test.ps1
 pwsh -NoProfile -File .\tests\install_flow_test.ps1
+pwsh -NoProfile -File .\tests\native_host_test.ps1
+pwsh -NoProfile -File .\tests\scm_test.ps1
 ```
 
 ```powershell
 python -m unittest discover -s tests -p http_test.py -v
 ```
 
-Python нужен только для второго набора тестов. Поведение JS-интерфейса дополнительно проверяется `node tests/web_test.cjs` с адаптером DOM; это не визуальный браузерный тест. Набор HTTP-тестов проверяет настоящий HTTP-сервер PowerShell, вход, CSRF/Origin, ограничения запросов, журналы и фоновые операции с тестовым адаптером движков. Тесты управления проверяют XML, откат, эксклюзивность и модели без GPU. Реальные Windows-службы, ACL и Firewall нужно проверить на серверном ПК после установки.
+`native_host_test.ps1` и `scm_test.ps1` на Windows регистрируют временные службы и требуют повышенного PowerShell; на других ОС реальные SCM-проверки пропускаются. `scm_test.ps1` проверяет запуск/остановку через SCM, `Win32_Service.Change`, аварийное завершение дочернего процесса и очистку всего дерева процессов.
 
-Сборка единого установочного файла:
+Python нужен только для HTTP-тестов. Поведение JS-интерфейса дополнительно проверяется `node tests/web_test.cjs` с адаптером DOM; это не визуальный браузерный тест. Набор HTTP-тестов проверяет настоящий HTTP-сервер PowerShell, вход, CSRF/Origin, ограничения запросов, журналы и фоновые операции с тестовым адаптером движков. Тесты управления проверяют XML, откат, эксклюзивность и модели без GPU. ACL и Firewall на серверном ПК проверяются после установки.
+
+Версия задаётся только в файле `VERSION`; список файлов пакета — в `package.psd1`. После изменения исходников пересобери единый установочный файл, иначе `tests/test.ps1` и CI сообщат о расхождении `dist/`:
 
 ```powershell
 pwsh -NoProfile -File .\scripts\build-setup.ps1

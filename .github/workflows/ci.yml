@@ -1,0 +1,67 @@
+name: CI
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Windows (tests + real SCM)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: PowerShell version
+        run: $PSVersionTable.PSVersion.ToString(); if ($PSVersionTable.PSVersion -lt [version]'7.4') { throw 'PowerShell 7.4+ required' }
+      - name: Core tests
+        run: ./tests/test.ps1
+      - name: Update tests
+        run: ./tests/update_test.ps1
+      - name: Installer flow tests
+        run: ./tests/install_flow_test.ps1
+      - name: Native host tests (real SCM probe)
+        run: ./tests/native_host_test.ps1
+      - name: Real SCM tests
+        run: ./tests/scm_test.ps1
+      - name: HTTP integration tests
+        run: python tests/http_test.py
+      - name: Web UI tests
+        run: node tests/web_test.cjs
+      - name: dist/ is built from current sources
+        run: |
+          ./scripts/build-setup.ps1 -OutputPath "$env:RUNNER_TEMP/install-omnibox-ai.ps1"
+          & "$env:RUNNER_TEMP/install-omnibox-ai.ps1" -CheckOnly
+
+  linux:
+    name: Linux (cross-platform tests)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - name: Core tests
+        run: ./tests/test.ps1
+      - name: Update tests
+        run: ./tests/update_test.ps1
+      - name: Installer flow tests
+        run: ./tests/install_flow_test.ps1
+      - name: Native host tests
+        run: ./tests/native_host_test.ps1
+      - name: HTTP integration tests
+        run: python3 tests/http_test.py
+      - name: Web UI tests
+        run: node tests/web_test.cjs
