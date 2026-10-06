@@ -1011,7 +1011,7 @@ try {
     Test 'native service command quotes executable, script and compatible profile paths' {
         Import-Module (Join-Path $repo 'src/Service.Install.psm1') -Force
         $cmd=New-AiNativeServiceCommand '/program files/pwsh' '/tools/ai' '/models/service.xml'
-        Assert-True ($cmd.StartsWith('"/tools/ai/src/Service.Host.exe"'))
+        Assert-True ($cmd.StartsWith('"' + (Join-Path '/tools/ai' 'src/Service.Host.exe') + '"')) 'Host path is not the first quoted token'
         Assert-True ($cmd.Contains('-Profile "/models/service.xml"'))
         Assert-True (-not $cmd.Contains('winsw'))
         Assert-Throws {New-AiNativeServiceCommand '/bad"path' '/tools/ai' '/model.xml'} '*Invalid service path*'
