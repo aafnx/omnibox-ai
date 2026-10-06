@@ -15,7 +15,7 @@ themes.forEach(t=>$(`theme-${t}`).addEventListener('click',()=>{theme=t;applyThe
 // One switch: top right of the login screen, inside the top bar of the dashboard.
 function placeThemeSwitch(inDashboard){const target=inDashboard?$('topbar-actions'):document.body;if(target)target.append($('theme-switch'));}
 themeMedia.addEventListener('change',()=>{if(theme==='system')applyTheme(theme);});
-const fields = {placement:'placement',context:'context',idle_minutes:'idle',alias:'alias',gpu_layers:'gpu-layers',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch'};
+const fields = {placement:'placement',context:'context',idle_minutes:'idle',alias:'alias',gpu_layers:'gpu-layers',n_cpu_moe:'n-cpu-moe',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch'};
 const labels = {start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
 async function api(path, body) {
   const response = await fetch(path, {method:body === undefined?'GET':'POST',credentials:'same-origin',headers:body === undefined?{}:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:body === undefined?undefined:JSON.stringify(body)});
@@ -151,7 +151,7 @@ function renderSettings() {
   models.disabled=b.type==='ollama'&&!(b.models||[]).length;
   $('model-hint').textContent=b.type==='prism'?'GGUF из каталога модели на ПК.':'Для списка моделей Ollama должна быть запущена.';
   $('placement').querySelectorAll('option').forEach(o=>o.hidden=b.type==='ollama'&&['gpu','hybrid'].includes(o.value));
-  $('placement-hint').textContent=b.type==='ollama'?'Ollama: RAM/CPU или автоматическое распределение. Полностью VRAM гарантировать нельзя.':'VRAM: попытка загрузить все слои на GPU; RAM + VRAM: число слоёв задаётся ниже. При нехватке памяти запуск откатится.';
+  $('placement-hint').textContent=b.type==='ollama'?'Ollama: RAM/CPU или автоматическое распределение. Полностью VRAM гарантировать нельзя.':'VRAM: попытка загрузить все слои на GPU; RAM + VRAM: число слоёв задаётся ниже. Для MoE-моделей больше VRAM выберите VRAM и задайте «Слои MoE в RAM». При нехватке памяти запуск откатится.';
   Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');
   document.querySelectorAll('.prism-field').forEach(el=>el.hidden=b.type!=='prism');$('advanced').hidden=b.type!=='prism';
   $('settings-status').textContent=b.pending?'Есть сохранённые настройки. Они ещё не применены к работающему серверу.':b.type==='ollama'?'Серверные значения по умолчанию. Параметры внешнего клиента могут их переопределить.':'При ошибке запуска с новыми настройками выполняется откат.';
@@ -253,7 +253,7 @@ function idleText(b){
 }
 function residencyText(r){
  const label=({ram:'RAM · CPU',vram:'VRAM · GPU',hybrid:'RAM + VRAM'})[r?.mode]||'Нет данных';
- if(r?.gpu_layers!==null&&r?.gpu_layers!==undefined)return `${label} · GPU ${r.gpu_layers}/${r.total_layers} слоёв`;
+ if(r?.gpu_layers!==null&&r?.gpu_layers!==undefined)return `${label} · GPU ${r.gpu_layers}/${r.total_layers} слоёв${r.cpu_moe_layers?` · эксперты ${Math.min(r.cpu_moe_layers,r.total_layers)} слоёв в RAM`:''}`;
  if(r?.vram_bytes!==null&&r?.vram_bytes!==undefined)return `${label} · VRAM ${(r.vram_bytes/1024**3).toFixed(1)} ГБ · RAM ${((r.ram_bytes||0)/1024**3).toFixed(1)} ГБ`;
  return label;
 }

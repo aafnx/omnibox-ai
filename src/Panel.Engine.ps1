@@ -26,6 +26,21 @@ function Set-AiArgumentValue {
     $Xml.SelectSingleNode('/service/arguments').InnerText = $next -join ' '
 }
 
+# Drops valued arguments (with their value or as name=value) and bare flags.
+function Remove-AiArgument {
+    param([Xml.XmlDocument]$Xml, [string[]]$Names, [string[]]$Flags = @())
+    $tokens = @(Get-AiPrismArguments $Xml)
+    $next = [Collections.Generic.List[string]]::new()
+    for ($i = 0; $i -lt $tokens.Count; $i++) {
+        if ($tokens[$i] -in $Names) { $i++; continue }
+        if ($tokens[$i] -in $Flags) { continue }
+        $matched = $false
+        foreach ($name in $Names) { if ($tokens[$i].StartsWith("$name=")) { $matched = $true } }
+        if (-not $matched) { $next.Add($tokens[$i]) }
+    }
+    $Xml.SelectSingleNode('/service/arguments').InnerText = $next -join ' '
+}
+
 function Get-AiXmlEnv {
     param([Xml.XmlDocument]$Xml, [string]$Name, [string]$Default)
     $nodes = @($Xml.SelectNodes('/service/env') | Where-Object { $_.GetAttribute('name') -eq $Name })
@@ -57,6 +72,8 @@ function Get-AiLaunchSettings {
         $settings.flash_attention = Get-AiArgumentValue $tokens @('-fa','--flash-attn') 'auto'
         $settings.batch = Get-AiArgumentValue $tokens @('-b','--batch-size') '512'
         $settings.ubatch = Get-AiArgumentValue $tokens @('-ub','--ubatch-size') '128'
+        # --cpu-moe keeps every expert in RAM; 999 layers means the same for any model.
+        $settings.n_cpu_moe = if ($tokens | Where-Object { $_ -in @('--cpu-moe','-cmoe') }) { '999' } else { Get-AiArgumentValue $tokens @('--n-cpu-moe','-ncmoe') '0' }
         $settings.idle_minutes = [math]::Round([double](Get-AiArgumentValue $tokens @('--sleep-idle-seconds') '-1') / 60, 2)
     } else {
         $settings.placement=Get-AiXmlEnv $xml 'OMNIBOX_PLACEMENT' 'auto'
@@ -82,7 +99,7 @@ function Get-AiPrismModels {
 function New-AiLaunchXml {
     param($Backend, [System.Collections.IDictionary]$Settings)
     $allowed = @('context','idle_minutes','placement')
-    if ($Backend.type -eq 'prism') { $allowed += @('model','alias','gpu_layers','cache_key','cache_value','flash_attention','batch','ubatch') }
+    if ($Backend.type -eq 'prism') { $allowed += @('model','alias','gpu_layers','n_cpu_moe','cache_key','cache_value','flash_attention','batch','ubatch') }
     foreach ($key in $Settings.Keys) { if ($key -notin $allowed) { throw "Неизвестная настройка: $key" } }
     $xml = if ($Settings.Contains('context')) { New-AiContextXml $Backend (ConvertTo-AiContext ([string]$Settings.context)) } else { Read-AiServiceXml $Backend }
     if ($Settings.Contains('placement')) {
@@ -129,6 +146,12 @@ function New-AiLaunchXml {
                 Set-AiArgumentValue $xml $names $value
             }
         }
+        if ($Settings.Contains('n_cpu_moe')) {
+            $value = [string]$Settings.n_cpu_moe
+            if ($value -notmatch '^\d+$' -or [long]$value -gt 999) { throw 'Слои MoE в RAM: от 0 до 999.' }
+            Remove-AiArgument $xml @('--n-cpu-moe','-ncmoe') @('--cpu-moe','-cmoe')
+            if ([int]$value -gt 0) { Set-AiArgumentValue $xml @('--n-cpu-moe','-ncmoe') ([string][int]$value) }
+        }
         foreach ($key in @('cache_key','cache_value')) {
             if ($Settings.Contains($key)) {
                 if ($Settings[$key] -notin @('f16','q8_0','q4_0')) { throw 'Кеш: f16, q8_0 или q4_0.' }
@@ -141,7 +164,7 @@ function New-AiLaunchXml {
             Set-AiArgumentValue $xml @('-fa','--flash-attn') ([string]$Settings.flash_attention)
         }
         if($Settings.Contains('placement')){
-            if($Settings.placement -eq 'cpu'){Set-AiArgumentValue $xml @('-ngl','--gpu-layers','--n-gpu-layers') '0';$xml.service.arguments=(@(Get-AiPrismArguments $xml)|Where-Object{$_ -ne '--no-kv-offload'}) -join ' ';$xml.service.arguments+=' --no-kv-offload'}
+            if($Settings.placement -eq 'cpu'){Set-AiArgumentValue $xml @('-ngl','--gpu-layers','--n-gpu-layers') '0';Remove-AiArgument $xml @('--n-cpu-moe','-ncmoe') @('--cpu-moe','-cmoe');$xml.service.arguments=(@(Get-AiPrismArguments $xml)|Where-Object{$_ -ne '--no-kv-offload'}) -join ' ';$xml.service.arguments+=' --no-kv-offload'}
             elseif($Settings.placement -in @('gpu','auto')){Set-AiArgumentValue $xml @('-ngl','--gpu-layers','--n-gpu-layers') '999'}
             if($Settings.placement -ne 'cpu'){$xml.service.arguments=(@(Get-AiPrismArguments $xml)|Where-Object{$_ -ne '--no-kv-offload'}) -join ' '}
             if($Settings.placement -eq 'hybrid' -and (-not $Settings.Contains('gpu_layers') -or [int]$Settings.gpu_layers -lt 1 -or [int]$Settings.gpu_layers -ge 99)){throw 'Для RAM + VRAM укажи от 1 до 98 слоёв GPU.'}
@@ -199,7 +222,7 @@ function Get-AiDashboard {
         if($b.type -eq 'prism' -and $pending -and $status.Service -eq 'Running'){
             try{$previous=[xml](Get-Content -LiteralPath ($b.service_config+'.ai-previous') -Raw);$selectedModel=Get-AiArgumentValue @(Get-AiPrismArguments $previous) @('--alias') ([IO.Path]::GetFileNameWithoutExtension($status.Model))}catch{}
         }
-        $residency=@{mode='unknown';ram_bytes=$null;vram_bytes=$null;gpu_layers=$null;total_layers=$null}
+        $residency=@{mode='unknown';ram_bytes=$null;vram_bytes=$null;gpu_layers=$null;total_layers=$null;cpu_moe_layers=$null}
         $idle=@{expires_at=$null;estimated=$false;busy=$false;state='stopped'}
         if($status.Service -eq 'Running'){
             $idle.state=if($status.Sleeping){'unloaded'}else{'unknown'}
@@ -219,6 +242,8 @@ function Get-AiDashboard {
                     if($runtime.running){
                         if($settings.placement -eq 'cpu' -and -not $pending){$residency.mode='ram'}
                         if($null -ne $runtime.gpu_layers -and $null -ne $runtime.total_layers){$residency.gpu_layers=$runtime.gpu_layers;$residency.total_layers=$runtime.total_layers;$residency.mode=if($runtime.gpu_layers -eq 0){'ram'}elseif($runtime.gpu_layers -ge $runtime.total_layers){'vram'}else{'hybrid'}}
+                        # Offload logs count expert layers as GPU layers even when --n-cpu-moe keeps their weights in RAM.
+                        if(-not $pending -and $null -ne $settings -and [string]$settings.n_cpu_moe -match '^\d+$' -and [int]$settings.n_cpu_moe -gt 0 -and $residency.mode -ne 'ram'){$residency.cpu_moe_layers=[int]$settings.n_cpu_moe;$residency.mode='hybrid'}
                         $anchor=[DateTimeOffset]::Parse($runtime.started)
                         if('OmniBox.InferenceStats' -as [type]){$last=[OmniBox.InferenceStats]::LastActivity($name);if($last -and [DateTimeOffset]::Parse($last) -gt $anchor){$anchor=[DateTimeOffset]::Parse($last)}}
                         if($null -ne $settings -and $settings.idle_minutes -gt 0){$idle.expires_at=$anchor.AddMinutes($settings.idle_minutes).ToString('o');$idle.estimated=$true;$idle.state='loaded'}
