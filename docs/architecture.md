@@ -4,7 +4,7 @@
 
 `ai.cmd` запускает PowerShell 7 без профиля, затем `ai.ps1` импортирует `src/OmniBox.Ai.psm1`. Модуль читает локальный JSON, выполняет одну команду и завершается. CLI не оставляет фонового процесса. Веб-панель работает отдельной службой `omnibox-ai`, через `panel.ps1` и HttpListener.
 
-Рабочие движки остаются отдельными Windows-службами WinSW. Они живут независимо от SSH-сеанса, а `ai` лишь отправляет start/stop и проверяет локальные API.
+Рабочие движки остаются отдельными Windows-службами со встроенным C# service runtime. Они живут независимо от SSH-сеанса, а `ai` лишь отправляет start/stop и проверяет локальные API.
 
 | Компонент | Ответственность |
 |---|---|
@@ -12,7 +12,7 @@
 | `Panel.Server.psm1` | HTTP, сессии, CSRF, очередь операций через ThreadJob |
 | `Panel.Engine.ps1` | Настройки движков, каталог моделей, загрузка/выгрузка и скачивание |
 | `Panel.Security.psm1` | PBKDF2, случайные session/CSRF tokens, валидация сетевой конфигурации |
-| `Panel.Install.psm1` | Мастер сети/пароля, WinSW-служба панели, ACL, Firewall |
+| `Panel.Install.psm1` | Мастер сети/пароля, Нативная служба панели, ACL, Firewall |
 | `Panel.Cli.ps1` | Просмотр адресов и сброс пароля без утечки hash/ключей |
 | `Telemetry.ps1` | Опрос локальных ресурсов по запросу, без фонового таймера |
 | `Inference.Stats.cs` | Допуск одной генерации, live usage, ограниченный журнал и итоги сеансов |
@@ -25,7 +25,7 @@
 | `ai.ps1` | Аргументы без advanced parameter binding, stderr, exit code |
 | `OmniBox.Ai.psm1` | Валидация конфигурации, маршрутизация CLI, управление службами, диагностика |
 | `config.json` | Имена служб, пути, порты, режим эксклюзивности |
-| XML WinSW | Реальные параметры моделей, память, контекст, простой, журналы, тип запуска |
+| Совместимые XML-профили | Реальные параметры моделей, память, контекст, простой, журналы, тип запуска |
 | `llama-server` PrismML | Bonsai PQ2, OpenAI API, авто-сон |
 | Ollama | Обычные модели Ollama, собственный API и CLI, keep-alive |
 
@@ -68,7 +68,7 @@ $env:OMNIBOX_AI_CONFIG = 'C:\tools\ai\config.json'
 - [Bonsai: поддерживаемые форматы](https://github.com/PrismML-Eng/Bonsai-demo/blob/main/MODEL-FORMATS.md)
 - [PrismML llama-server API и idle sleep](https://github.com/PrismML-Eng/llama.cpp/blob/prism/tools/server/README.md)
 - [Ollama FAQ](https://docs.ollama.com/faq)
-- [WinSW](https://github.com/winsw/winsw)
+- [Windows service entry point](https://learn.microsoft.com/en-us/windows/win32/services/service-entry-point)
 - [Windows Start-Service](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.management/start-service)
 
 ## HTTP и нагрузка
@@ -84,3 +84,7 @@ HttpListener ожидает запрос без собственного пер�
 API чата остаётся отдельным от интерфейса панели. HTTP-вход `/v1/*` на порту панели (18090), а при отдельной настройке также на дополнительном порту, через OpenAi.Proxy.cs передаёт OpenAI-маршруты выбранному loopback backend, без перевода модели/протокола. HttpClient/async Tasks выполняют запросы вне PowerShell-потока панели. Ответы SSE пересылаются порциями с Flush; одна генерация одновременно, до 8 служебных HTTP-пересылок, 8 МиБ тела, 30 минут. Цикл не запускает Windows-службы; ключ клиента хешируется и не передаётся backend. Для собственного ключа движка есть отдельный upstream_api_key. URL назначения обязан быть loopback HTTP, redirects отключены. Административные/native Ollama маршруты не публикуются. Ключ API не совпадает с паролем панели. Изменение ключа относится к новым запросам. Поиск каталога выполняется в отдельном ThreadJob; нет периодического обновления моделей/источников. [Сетевой API](model-api.md), [каталог](models.md). TLS завершает NAS; HTTPS reverse proxy поддерживается через явно заданные `public_origin` и `trusted_proxy_addresses`. Headers доверяются только конкретным IP NAS. Внешний origin проверяется по схеме/authority, Cookie имеет Secure; HTTPS-сессия не принимается по прямому HTTP. Заголовок X-Forwarded-For используется только если содержит один IP. Размещение панели под URL-префиксом не поддерживается; ей нужен отдельный домен в корне `/`. [Конфигурация NAS](reverse-proxy.md).
 
 Числовой usage/progress извлекается из JSON/SSE в Inference.Stats.cs, журнал сериализуется строго через RequestStat DTO без тела запроса/ответа. Ротация: 3 × 4 МиБ, память: 500 запросов/100 сеансов, UI: 200 запросов. Управление и генерация защищены общим внутрипроцессным guard; stop/unload отменяют активный proxy-request. Системный mutex сериализует операции служб/CLI. [Мониторинг и семантика сеансов](monitoring.md).
+
+## Собственный runtime служб
+
+`service.ps1` загружает скомпилированную установщиком `Service.Host.dll`. C# напрямую регистрирует ServiceMain/HandlerEx через SCM, передаёт переменные и параметры профиля движку, пишет ограниченные журналы и runtime-метаданные. Windows Job Object удерживает дерево процессов: прекращение host завершает также runners. При остановке службы дерево завершается принудительно, поэтому текущая генерация прерывается. Это код omnibox-ai, внешнего service wrapper нет. XML сохранён для совместимости и существующего отката настроек.

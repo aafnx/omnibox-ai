@@ -2,6 +2,7 @@ Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'Panel.Security.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Setup.Helpers.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Gateway.Helpers.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Service.Install.psm1') -Force
 
 function Get-AiGatewayInstallOptions {
     param([string]$Directory, [string]$HostName, [string]$Backend = 'bonsai', [switch]$NonInteractive, [int]$Port = 18090, [string]$BaseUrl = '', [switch]$NoApi, [int]$PanelPort = 18090, [string]$PublicUrl = '')
@@ -110,16 +111,6 @@ function Protect-AiPanelDirectory {
 
 function Install-AiPanelService {
     param([string]$Directory, [string]$PwshPath, $Config, $Options, $GatewayOptions)
-    $wrapper = Join-Path $Directory 'panel-service.exe'
-    if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf)) {
-        $source = $null
-        foreach ($b in $Config.backends.Values) {
-            $candidate = [IO.Path]::ChangeExtension($b.service_config, '.exe')
-            if (Test-Path -LiteralPath $candidate -PathType Leaf) { $source = $candidate; break }
-        }
-        if (-not $source) { throw 'Не найден существующий WinSW wrapper рядом с XML Bonsai/Ollama.' }
-        Copy-Item -LiteralPath $source -Destination $wrapper
-    }
     $service = Get-Service -Name 'omnibox-ai' -ErrorAction SilentlyContinue
     if ($null -ne $service -and [string]$service.Status -ne 'Stopped') {
         Stop-Service -Name 'omnibox-ai' -ErrorAction Stop
@@ -136,7 +127,9 @@ function Install-AiPanelService {
     $xml.Save((Join-Path $Directory 'panel-service.xml'))
     $null = New-Item -ItemType Directory -Path (Join-Path $Directory 'logs') -Force
     Protect-AiPanelDirectory $Directory
-    if ($null -eq $service) { & $wrapper install; if ($LASTEXITCODE -ne 0) { throw 'Не удалось зарегистрировать службу веб-панели.' } }
+    $command=New-AiNativeServiceCommand $PwshPath $Directory (Join-Path $Directory 'panel-service.xml')
+    if ($null -eq $service) { $null=New-Service -Name 'omnibox-ai' -BinaryPathName $command -StartupType Automatic -DisplayName 'OmniBox AI' }
+    else { Set-Service -Name 'omnibox-ai' -BinaryPathName $command -ErrorAction Stop }
     Set-Service -Name 'omnibox-ai' -StartupType Automatic
     $rule = Get-NetFirewallRule -Name 'omnibox-ai-panel' -ErrorAction SilentlyContinue
     if ($null -ne $rule) { Remove-NetFirewallRule -Name 'omnibox-ai-panel' }
@@ -149,7 +142,7 @@ function Install-AiPanelService {
     for ($i = 0; $i -lt 30; $i++) {
         try { $null = Invoke-WebRequest -Uri "http://127.0.0.1:$($Options.port)/" -TimeoutSec 2; $ready = $true; break } catch { Start-Sleep -Milliseconds 500 }
     }
-    if (-not $ready) { throw "Панель не ответила. Журналы: $Directory\logs\panel-service.err.log и wrapper.log" }
+    if (-not $ready) { throw "Панель не ответила. Журналы: $Directory\logs\panel-service.err.log и panel-service.host.log" }
     Write-Host "Веб-панель: http://${hostName}:$($Options.port)"
     if ($Options.public_origin) { Write-Host "Через NAS после настройки proxy: $($Options.public_origin)" }
     if($GatewayOptions.enabled){Write-Host "OpenAI Base URL: $($GatewayOptions.base_url)";if($GatewayOptions.generated_key){Write-Host "API key (сохрани в Bitwarden): $($GatewayOptions.generated_key)"}}

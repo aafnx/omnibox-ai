@@ -16,6 +16,7 @@ try {
 } finally { $identity.Dispose() }
 
 Import-Module (Join-Path $PSScriptRoot 'src/Setup.Helpers.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'src/Service.Install.psm1', 'scripts/build-service.ps1') -Force
 $aiModule = Import-Module (Join-Path $PSScriptRoot 'src/OmniBox.Ai.psm1') -Force -PassThru
 $sourceRoot = $PSScriptRoot
 $configLoader = {
@@ -25,7 +26,7 @@ $configLoader = {
     & $aiModule { param($Path) Read-AiConfig $Path } $path
 }.GetNewClosure()
 $contextReader = { param($Backend) & $aiModule { param($Backend) Get-AiConfiguredContext $Backend } $Backend }.GetNewClosure()
-Write-Host 'OmniBox AI 0.7.0 — установка на этом ПК'
+Write-Host 'OmniBox AI 0.8.0 — установка на этом ПК'
 Write-Host 'Используются уже установленные службы Bonsai и Ollama. Enter сохраняет предложенное значение.'
 $setup = Get-AiSetupOptions -InstallDirectory $InstallDirectory -ConfigLoader $configLoader -ContextReader $contextReader -NonInteractive:$NonInteractive -DefaultBackend $DefaultBackend -Context $Context -StartServer:$StartServer
 $InstallDirectory = $setup.directory
@@ -56,7 +57,7 @@ if ($null -ne $existing) {
         throw "Команда ai уже существует: $($existing.Source). Устрани конфликт имени перед установкой."
     }
 }
-$files = @('ai.ps1', 'ai.cmd', 'panel.ps1', 'src/OmniBox.Ai.psm1', 'src/Panel.Engine.ps1', 'src/Panel.Cli.ps1', 'src/Telemetry.ps1', 'src/Inference.Stats.cs', 'src/Gateway.Helpers.psm1', 'src/OpenAi.Proxy.cs', 'src/Model.Catalog.psm1', 'src/Panel.Server.psm1', 'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Setup.Helpers.psm1', 'web/index.html', 'web/style.css', 'web/app.js', 'config.example.json', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md', 'docs/web-panel.md', 'docs/reverse-proxy.md', 'docs/model-api.md', 'docs/models.md', 'docs/monitoring.md')
+$files = @('ai.ps1', 'ai.cmd', 'panel.ps1', 'service.ps1', 'src/Service.Host.cs', 'src/Service.Install.psm1', 'scripts/build-service.ps1', 'src/OmniBox.Ai.psm1', 'src/Panel.Engine.ps1', 'src/Panel.Cli.ps1', 'src/Telemetry.ps1', 'src/Inference.Stats.cs', 'src/Gateway.Helpers.psm1', 'src/OpenAi.Proxy.cs', 'src/Model.Catalog.psm1', 'src/Panel.Server.psm1', 'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Setup.Helpers.psm1', 'web/index.html', 'web/style.css', 'web/app.js', 'web/favicon.svg', 'web/brand-light.svg', 'web/brand-dark.svg', 'web/inter-400.woff.base64', 'web/inter-600.woff.base64', 'web/inter-license.txt', 'config.example.json', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md', 'docs/web-panel.md', 'docs/reverse-proxy.md', 'docs/model-api.md', 'docs/models.md', 'docs/monitoring.md')
 foreach ($file in $files) {
     if (-not (Test-Path -LiteralPath (Join-Path $source $file) -PathType Leaf)) { throw "Нет файла исходников: $file" }
 }
@@ -76,9 +77,9 @@ if (-not $NoPanelSetup) {
     # Ensure an existing service with our ID belongs to this installation before stopping it.
     $panelService = Get-CimInstance Win32_Service -Filter "Name='omnibox-ai'" -ErrorAction Stop
     $expectedWrapper = Join-Path $destination 'panel-service.exe'
-    if ($null -ne $panelService -and $panelService.PathName.Trim().Trim('"') -ine $expectedWrapper) { throw 'Имя omnibox-ai занято другой Windows-службой.' }
-    if (-not (Test-Path -LiteralPath $expectedWrapper -PathType Leaf) -and -not @($setup.config.backends.Values | Where-Object { Test-Path -LiteralPath ([IO.Path]::ChangeExtension($_.service_config, '.exe')) -PathType Leaf }).Count) { throw 'Не найден существующий WinSW wrapper рядом с XML движков.' }
-    if ($null -ne $panelService -and $panelService.State -ne 'Stopped') { Stop-Service 'omnibox-ai' -ErrorAction Stop; (Get-Service 'omnibox-ai').WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30)) }
+    $nativeCommand=New-AiNativeServiceCommand $pwsh $destination (Join-Path $destination 'panel-service.xml')
+    if ($null -ne $panelService -and $panelService.PathName.Trim().Trim('"') -ine $expectedWrapper -and $panelService.PathName -ine $nativeCommand) { throw 'Имя omnibox-ai занято другой Windows-службой.' }
+    if ($null -ne $panelService -and $panelService.State -ne 'Stopped') { $panelProcess=Get-Process -Id $panelService.ProcessId -ErrorAction SilentlyContinue;Stop-Service 'omnibox-ai' -ErrorAction Stop; (Get-Service 'omnibox-ai').WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30));if($null -ne $panelProcess -and -not $panelProcess.WaitForExit(15000)){throw 'Panel host did not exit.'} }
 }
 if (Test-Path -LiteralPath $markerPath) {
     $backup = Join-Path $destination ('backups/' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
@@ -104,12 +105,16 @@ $configPath = Join-Path $destination 'config.json'
 if (-not (Test-Path -LiteralPath $configPath)) {
     Copy-Item -LiteralPath (Join-Path $destination 'config.example.json') -Destination $configPath
 } else { Write-Host 'Существующие параметры config.json сохранены; сервер по умолчанию — по выбору мастера.' }
+Import-Module (Join-Path $destination 'src/Service.Install.psm1', 'scripts/build-service.ps1') -Force
+$serviceBackup=Install-AiNativeServices -Directory $destination -PwshPath $pwsh -Config $setup.config
+$oldPanelWrapper=Join-Path $destination 'panel-service.exe'
+if($null -ne $panelService -and $panelService.PathName.Trim().Trim('"') -ieq $oldPanelWrapper -and (Test-Path -LiteralPath $oldPanelWrapper)){Copy-Item -LiteralPath $oldPanelWrapper -Destination (Join-Path $serviceBackup 'panel-winsw.exe')}
 $setup.config.default_backend = $setup.backend
 Set-Content -LiteralPath $configPath -Value ($setup.config | ConvertTo-Json -Depth 10) -Encoding utf8
 # Exact PowerShell location; %* preserves the user's command-line quoting in cmd.
 $launcher = "@echo off`r`n`"$pwsh`" -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"%~dp0ai.ps1`" %*`r`nexit /b %errorlevel%`r`n"
 Set-Content -LiteralPath (Join-Path $destination 'ai.cmd') -Value $launcher -Encoding ascii -NoNewline
-Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.7.0' -Encoding utf8
+Set-Content -LiteralPath $markerPath -Value 'omnibox-ai 0.8.0' -Encoding utf8
 
 $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
 $entries = @($userPath -split ';' | Where-Object { $_ })
@@ -134,6 +139,11 @@ if ($setup.start) {
     Invoke-Ai -Arguments @($action, $setup.backend) -ConfigPath $configPath
 } else { Write-Host 'Запуск не выбран. Новый контекст, если задан, применится при следующем запуске.' }
 if (-not $NoPanelSetup) { Install-AiPanelService -Directory $destination -PwshPath $pwsh -Config $setup.config -Options $panelOptions -GatewayOptions $gatewayOptions }
-Write-Host 'Параметры запуска движков и таймер простоя сохранены.'
+if(-not $NoPanelSetup){
+    $legacyPaths=@(Get-Content -LiteralPath (Join-Path $serviceBackup 'legacy-wrappers.json') -Raw|ConvertFrom-Json)
+    foreach($legacy in $legacyPaths){if(Test-Path -LiteralPath $legacy){Remove-Item -LiteralPath $legacy -Force}}
+    if(Test-Path -LiteralPath (Join-Path $serviceBackup 'panel-winsw.exe')){Remove-Item -LiteralPath $oldPanelWrapper -Force}
+}
+Write-Host 'WinSW заменён встроенным Windows service runtime. Параметры запуска и таймер простоя сохранены.'
 Write-Host 'В этом процессе PATH обновлён. Если установщик запущен через дочерний pwsh, переподключись по SSH или добавь путь в прежнюю сессию вручную.'
 Write-Host 'Проверка: ai help; ai context bonsai; ai status'

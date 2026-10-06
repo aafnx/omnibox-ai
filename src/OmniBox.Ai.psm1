@@ -386,6 +386,7 @@ function Start-AiBackend {
     if ($null -eq $service) { throw "Служба '$($backend.service)' не установлена. ai не устанавливает движки." }
     if ([string]$service.StartType -eq 'Disabled') { throw "Служба '$($backend.service)' отключена. Другие серверы не остановлены." }
     Set-AiSingleModelLimits $Config $Name $service
+    $service=Get-AiService $backend.service
     foreach ($other in $Config.backends.Keys) {
         if ($other -ne $Name) { Stop-AiBackend $Config $other }
     }
@@ -445,8 +446,8 @@ function Show-AiLogs {
     param($Config, [string]$Name, [int]$Tail = 60, [string]$Stream = 'all')
     $backend = Get-AiBackend $Config $Name
     if ($Tail -lt 1 -or $Tail -gt 10000) { throw 'Число строк должно быть от 1 до 10000.' }
-    $streams = if ($Stream -eq 'all') { @('err', 'out', 'wrapper') } else { @($Stream) }
-    if ($Stream -notin @('all', 'err', 'out', 'wrapper')) { throw 'Журнал: all, err, out или wrapper.' }
+    $streams = if ($Stream -eq 'all') { @('err', 'out', 'host') } else { @($Stream) }
+    if ($Stream -notin @('all', 'err', 'out', 'host', 'wrapper')) { throw 'Журнал: all, err, out или host.' }
     foreach ($item in $streams) {
         $path = Join-Path $backend.log_directory "$($backend.log_prefix).$item.log"
         Write-Host "`n--- $path ---"
@@ -510,7 +511,7 @@ function Show-AiPower {
 
 function Show-AiHelp {
     @'
-OmniBox AI 0.7.0 — управление локальными серверами
+OmniBox AI 0.8.0 — управление локальными серверами
 
 ai start [backend] [--context 128k]  Запуск; по умолчанию bonsai. Другой остановится.
 ai stop [bonsai|ollama]        Остановка; без имени — все настроенные серверы.
@@ -519,7 +520,7 @@ ai context [backend] [128k]   Просмотр/сохранение контек
 ai restore [backend]         Возврат предыдущего XML; сохраняет состояние запуска.
 ai status                    Службы, API, модель, контекст, сон и видеопамять.
 ai power                     Причины пробуждения, таймеры и блокировки сна Windows.
-ai logs [backend] [N] [stream] Последние N строк; stream: all, err, out, wrapper.
+ai logs [backend] [N] [stream] Последние N строк; stream: all, err, out, host.
 ai endpoint [backend]         OpenAI-совместимый адрес (с localhost самого ПК).
 ai config                    Путь и содержимое конфигурации.
 ai access                    Адреса панели/API, режим ключа, доверенный NAS.
@@ -547,7 +548,7 @@ function Invoke-Ai {
     $command = if ($Arguments.Count) { $Arguments[0].ToLowerInvariant() } else { 'help' }
     [string[]]$rest = @(if ($Arguments.Count -gt 1) { $Arguments[1..($Arguments.Count - 1)] })
     if ($command -in @('help', '--help', '-h')) { Show-AiHelp; return }
-    if ($command -in @('version', '--version')) { '0.7.0'; return }
+    if ($command -in @('version', '--version')) { '0.8.0'; return }
     if ($command -in @('access','panel','password')) {
         $root=Split-Path ([IO.Path]::GetFullPath($ConfigPath)) -Parent
         if($command -eq 'access'){if($rest.Count){throw 'Использование: ai access'};$rest=@('info')}
@@ -645,7 +646,7 @@ function Invoke-Ai {
             Show-AiPower
         }
         'logs' {
-            if ($rest.Count -gt 3) { throw 'Использование: ai logs [backend] [N] [all|err|out|wrapper]' }
+            if ($rest.Count -gt 3) { throw 'Использование: ai logs [backend] [N] [all|err|out|host]' }
             $name = if ($rest.Count -ge 1) { $rest[0] } else { $config.default_backend }
             $tail = if ($rest.Count -ge 2) { [int]$rest[1] } else { 60 }
             $stream = if ($rest.Count -ge 3) { $rest[2] } else { 'all' }

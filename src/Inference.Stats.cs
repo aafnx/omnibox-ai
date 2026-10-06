@@ -145,6 +145,7 @@ namespace OmniBox {
                 if(Current.input_tokens.HasValue){Current.context_used=Current.input_tokens+Current.output_tokens;Current.context_remaining=Math.Max(0,Current.context_limit-Current.context_used.Value);Current.total_tokens=Current.context_used;}
             } }
         }
+        public static string LastActivity(string backend) {lock(Sync){return Recent.Where(r=>r.backend==backend&&r.ended!=null).OrderByDescending(r=>r.ended).FirstOrDefault()?.ended;}}
         public static bool IsActive(string backend) { lock(Sync){return Current != null && Current.backend==backend;} }
         public static string ActiveId(string backend) { lock(Sync){return Current != null && Current.backend==backend?Current.id:null;} }
         private static void Add(RequestStat record) {

@@ -11,7 +11,7 @@ function Send-AiHttpResponse {
     $response.Headers['Referrer-Policy'] = 'no-referrer'
     $response.Headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
     $text = if ($ContentType.StartsWith('application/json')) { ConvertTo-Json -InputObject $Value -Depth 20 -Compress } else { [string]$Value }
-    $bytes = [Text.Encoding]::UTF8.GetBytes($text)
+    $bytes = if($Value -is [byte[]]){$Value}else{[Text.Encoding]::UTF8.GetBytes($text)}
     $response.ContentLength64 = $bytes.Length
     try { $response.OutputStream.Write($bytes, 0, $bytes.Length) } finally { $response.Close() }
 }
@@ -99,7 +99,7 @@ function Start-OmniBoxPanel {
     }
     $sessions = @{}; $attempts = @{}; $operations = @{}; $catalog = @{}
     $telemetryJob=$null;$telemetryCache=$null;$telemetryTime=[DateTime]::MinValue
-    $assets = @{ '/' = @('web/index.html','text/html; charset=utf-8'); '/app.js' = @('web/app.js','text/javascript; charset=utf-8'); '/style.css' = @('web/style.css','text/css; charset=utf-8') }
+    $assets = @{ '/inter-400.woff'=@('web/inter-400.woff.base64','font/woff'); '/inter-600.woff'=@('web/inter-600.woff.base64','font/woff'); '/favicon.svg'=@('web/favicon.svg','image/svg+xml'); '/brand-light.svg'=@('web/brand-light.svg','image/svg+xml'); '/brand-dark.svg'=@('web/brand-dark.svg','image/svg+xml'); '/'  = @('web/index.html','text/html; charset=utf-8'); '/app.js' = @('web/app.js','text/javascript; charset=utf-8'); '/style.css' = @('web/style.css','text/css; charset=utf-8') }
     try {
         $listener.Start()
         Write-Host "OmniBox AI 0.7.0 panel: port $($panel.port)"
@@ -122,13 +122,15 @@ function Start-OmniBoxPanel {
                     $upstreamKey = if ($b.Contains('upstream_api_key')) { [string]$b.upstream_api_key } else { '' }
                     $runtime=Get-AiGatewayRuntime $configPath $apiConfig.backend
                     if(-not $runtime.available){Send-AiHttpResponse $context ([int]$runtime.status) @{error=@{message=$runtime.reason;type='omnibox_error'}};continue}
-                    $null = [OmniBox.OpenAiProxy]::Handle($context, [string]$b.base_url, [bool]$apiConfig.require_key, [string]$apiConfig.key_hash, $upstreamKey, [string]$apiConfig.backend, [string]$runtime.model, [int]$runtime.context, [string]$runtime.type)
+                    $null = [OmniBox.OpenAiProxy]::Handle($context, [string]$b.base_url, [bool]$apiConfig.require_key, [string]$apiConfig.key_hash, $upstreamKey, [string]$apiConfig.backend, [string]$runtime.model, [int]$runtime.context, [string]$runtime.type, $(if($runtime.Contains('placement')){[string]$runtime.placement}else{'auto'}))
                     continue
                 }
                 if ($method -notin @('GET','POST')) { Send-AiHttpResponse $context 405 @{ error = 'Метод запрещён.' }; continue }
                 if ($method -eq 'GET' -and $assets.Contains($path)) {
                     $asset = $assets[$path]
-                    Send-AiHttpResponse $context 200 (Get-Content -LiteralPath (Join-Path $Root $asset[0]) -Raw) $asset[1]; continue
+                    $value=Get-Content -LiteralPath (Join-Path $Root $asset[0]) -Raw
+                    if($asset[1] -eq 'font/woff'){$value=[Convert]::FromBase64String($value)}
+                    Send-AiHttpResponse $context 200 $value $asset[1]; continue
                 }
                 $transport = Get-AiPanelRequestContext $request $panel
                 if ($method -eq 'POST' -and -not (Test-AiPanelOrigin $request.Headers['Origin'] $transport.authority $transport.scheme)) { Send-AiHttpResponse $context 403 @{ error = 'Origin запрещён.' }; continue }
@@ -210,12 +212,16 @@ function Start-OmniBoxPanel {
                     'GET /api/logs' {
                         $config = Get-Content $configPath -Raw | ConvertFrom-Json -AsHashtable
                         $name = $request.QueryString['backend']
-                        if (-not $config.backends.Contains($name)) { throw 'Неизвестный сервер.' }
-                        $b = $config.backends[$name]; $logs = @()
-                        foreach ($stream in @('err','out','wrapper')) {
-                            $file = Join-Path $b.log_directory "$($b.log_prefix).$stream.log"
-                            $logs += @{ stream = $stream; text = $(if (Test-Path -LiteralPath $file -PathType Leaf) { (Get-Content -LiteralPath $file -Tail 80) -join "`n" } else { 'Журнал пока отсутствует.' }) }
+                        if ($name -and -not $config.backends.Contains($name)) { throw 'Неизвестный сервер.' }
+                        $logs=@();$lines=@()
+                        $names=if($name){@($name)}else{@($config.backends.Keys|Sort-Object)}
+                        foreach($engine in $names){$b=$config.backends[$engine]
+                            foreach($stream in @('err','out','host','wrapper')){
+                                $file=Join-Path $b.log_directory "$($b.log_prefix).$stream.log"
+                                if(Test-Path -LiteralPath $file -PathType Leaf){$lines+=@(Get-Content -LiteralPath $file -Tail 80|ForEach-Object{ if($_ -match '^(\d{4}-\d{2}-\d{2}T\S+) (.*)$'){"$($Matches[1]) [$engine/$stream] $($Matches[2])"}else{"[legacy $engine/$stream] $_"} })}
+                            }
                         }
+                        $logs=@(@{stream='События сервера';text=if($lines.Count){($lines|Sort-Object)-join "`n"}else{'Журнал пока отсутствует.'}})
                         Send-AiHttpResponse $context 200 @{ logs = $logs }
                     }
                     'POST /api/actions' {

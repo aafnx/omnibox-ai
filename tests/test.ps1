@@ -99,7 +99,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.7.0'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.8.0'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -1003,6 +1003,59 @@ try {
         Assert-True ($null -eq $r.input_tokens);Assert-True ($null -eq $r.output_tokens);Assert-True ($null -eq $r.total_tokens)
         Assert-Equal $r.state 'failed'
     }
+    Test 'native service command quotes executable, script and compatible profile paths' {
+        Import-Module (Join-Path $repo 'src/Service.Install.psm1') -Force
+        $cmd=New-AiNativeServiceCommand '/program files/pwsh' '/tools/ai' '/models/service.xml'
+        Assert-True ($cmd.StartsWith('"/program files/pwsh"'))
+        Assert-True ($cmd.Contains('-Profile "/models/service.xml"'))
+        Assert-True (-not $cmd.Contains('winsw'))
+        Assert-Throws {New-AiNativeServiceCommand '/bad"path' '/tools/ai' '/model.xml'} '*Invalid service path*'
+        Add-Type -Path (Join-Path $repo 'src/Service.Host.cs')
+        Assert-Throws {[OmniBox.ServiceHost]::Run('test','pwsh','','','','','',[Collections.Generic.Dictionary[string,string]]::new())} '*Windows service runtime*'
+    }
+    Test 'Prism placement sets CPU, full GPU or explicit hybrid layers without losing context' {
+        $f=New-ContextFixture;$m=New-TestModule;$b=$f.config.backends.bonsai
+        $x=& $m {param($b)New-AiLaunchXml $b @{placement='cpu'}} $b
+        Assert-Equal (& $m {param($x)Get-AiArgumentValue @(Get-AiPrismArguments $x) @('-ngl') ''} $x) '0'
+        Assert-True ($x.service.arguments.Contains('--no-kv-offload'))
+        $x=& $m {param($b)New-AiLaunchXml $b @{placement='gpu'}} $b
+        Assert-Equal (& $m {param($x)Get-AiArgumentValue @(Get-AiPrismArguments $x) @('-ngl') ''} $x) '999'
+        $x=& $m {param($b)New-AiLaunchXml $b @{placement='hybrid';gpu_layers='12'}} $b
+        Assert-Equal (& $m {param($x)Get-AiArgumentValue @(Get-AiPrismArguments $x) @('-ngl') ''} $x) '12'
+        Assert-Throws {& $m {param($b)New-AiLaunchXml $b @{placement='hybrid'}} $b} '*1 до 98*'
+    }
+    Test 'Ollama CPU placement disables GPU discovery and automatic placement restores prior masks' {
+        $f=New-ContextFixture;$m=New-TestModule;$b=$f.config.backends.ollama
+        $x=& $m {param($b)New-AiLaunchXml $b @{placement='cpu'}} $b
+        Assert-Equal (& $m {param($x)Get-AiXmlEnv $x 'CUDA_VISIBLE_DEVICES' ''} $x) '-1'
+        $x.Save($b.service_config)
+        $x=& $m {param($b)New-AiLaunchXml $b @{placement='auto'}} $b
+        Assert-True ($null -eq $x.SelectSingleNode("/service/env[@name='CUDA_VISIBLE_DEVICES']"))
+        Assert-Equal (& $m {param($x)Get-AiXmlEnv $x 'OLLAMA_CONTEXT_LENGTH' ''} $x) '32768'
+        Assert-Throws {& $m {param($b)New-AiLaunchXml $b @{placement='gpu'}} $b} '*Недопустимое*'
+    }
+    Test 'Ollama load applies pending CPU placement with a restart before loading' {
+        $f=New-WebModelFixture;$m=New-TestModule
+        $null=Invoke-AiPanelAction $f.path @{action='save';backend='ollama';settings=@{placement='cpu'}}
+        & $m {
+            function script:Invoke-AiProbe {param($Backend,$Path)switch($Path){
+                '/api/tags'{[pscustomobject]@{models=@([pscustomobject]@{name='new:latest'})}}
+                '/api/ps'{[pscustomobject]@{models=@()}}
+                default{[pscustomobject]@{version='0.35.1'}}}}
+            function script:Invoke-AiModelRequest {param($Backend,$Path,$Body,$Timeout)$script:cpuBody=$Body}
+        }
+        $null=Invoke-AiPanelAction $f.path @{action='load';backend='ollama';model='new:latest'}
+        Assert-True ((& $m {$script:calls -join ','}).Contains('stop:ollama'))
+        Assert-True ((& $m {$script:calls -join ','}).Contains('start:ollama'))
+        Assert-Equal (& $m {$script:cpuBody.options.num_gpu}) 0
+    }
+    Test 'all brand vectors are valid original SVG assets in the package' {
+        foreach($name in @('favicon.svg','brand-light.svg','brand-dark.svg')){
+            $x=[xml](Get-Content (Join-Path $repo "web/$name") -Raw)
+            Assert-Equal $x.DocumentElement.LocalName 'svg'
+            Assert-True ($x.OuterXml.Contains('#7C6CFF') -or $x.OuterXml.Contains('#7c6cff'))
+        }
+    }
     Test 'self-contained package matches every current source file' {
         $setup = Join-Path $repo 'dist/install-omnibox-ai.ps1'
         $text = Get-Content $setup -Raw
@@ -1011,7 +1064,7 @@ try {
         $memory = [IO.MemoryStream]::new([Convert]::FromBase64String($encoded))
         $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Read)
         try {
-            Assert-Equal $archive.Entries.Count 30
+            Assert-Equal $archive.Entries.Count 40
             foreach ($entry in $archive.Entries) {
                 Assert-True ($entry.FullName -notmatch '(^/|\.\.)')
                 $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)

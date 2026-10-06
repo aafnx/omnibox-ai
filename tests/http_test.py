@@ -89,7 +89,7 @@ class PanelFixture:
             try:
                 urllib.request.urlopen(self.url, timeout=.5).close()
                 break
-            except (urllib.error.URLError, TimeoutError):
+            except (urllib.error.URLError, TimeoutError, ConnectionResetError):
                 time.sleep(.05)
         else:
             self.close()
@@ -227,6 +227,19 @@ class HttpTests(unittest.TestCase):
         for _ in range(6):
             self.assertEqual(self.call('/api/login', {'password': 'incorrect'}, auth=False)[0], 401)
         self.assertEqual(self.call('/api/login', {'password': PASSWORD}, auth=False)[0], 429)
+
+    def test_09a_brand_assets_and_unified_events_are_available(self):
+        for path in ('/favicon.svg','/brand-light.svg','/brand-dark.svg'):
+            with urllib.request.urlopen(self.fixture.url+path) as response:
+                self.assertIn('<svg',response.read().decode())
+                self.assertIn('image/svg+xml',response.headers['Content-Type'])
+        with urllib.request.urlopen(self.fixture.url+'/inter-400.woff') as response:
+            self.assertEqual(response.read(4),b'wOFF')
+            self.assertEqual(response.headers['Content-Type'],'font/woff')
+        code,data,_=self.call('/api/logs');self.assertEqual(code,200)
+        self.assertEqual(len(data['logs']),1)
+        self.assertIn('fixture error log',data['logs'][0]['text'])
+
 
 class GatewayTests(unittest.TestCase):
     call=classmethod(HttpTests.call.__func__)
@@ -411,6 +424,17 @@ class GatewayTests(unittest.TestCase):
             time.sleep(.05)
         self.assertEqual(data['sample']['ram_total_gb'],32);self.assertEqual(data['sample']['cpu_percent'],22)
         self.assertIsNone(data['sample']['cpu_temperature']);self.assertEqual(self.call('/api/session')[0],200)
+
+    def test_21_ollama_cpu_placement_is_injected_and_client_override_is_rejected(self):
+        path=self.fixture.root/'config.json';original=path.read_text();config=json.loads(original)
+        config['gateway_type']='ollama';config['gateway_placement']='cpu';path.write_text(json.dumps(config))
+        try:
+            code,data,_=self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b','messages':[]})
+            self.assertEqual(code,200)
+            self.assertEqual(data['forwarded']['options'],{'num_ctx':196608,'num_gpu':0})
+            self.assertEqual(self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b','options':{'num_gpu':99}})[0],400)
+        finally:path.write_text(original)
+
 
 class ProxyTests(unittest.TestCase):
     @classmethod

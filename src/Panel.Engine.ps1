@@ -45,12 +45,13 @@ function Set-AiXmlEnv {
 function Get-AiLaunchSettings {
     param($Backend)
     $xml = Read-AiServiceXml $Backend
-    $settings = @{ context = [string](Get-AiConfiguredContext $Backend); idle_minutes = 30 }
+    $settings = @{ context = [string](Get-AiConfiguredContext $Backend); idle_minutes = 30;placement='auto' }
     if ($Backend.type -eq 'prism') {
         $tokens = @(Get-AiPrismArguments $xml)
         $settings.model = Get-AiArgumentValue $tokens @('-m','--model') ''
         $settings.alias = Get-AiArgumentValue $tokens @('--alias') ([IO.Path]::GetFileNameWithoutExtension($settings.model))
         $settings.gpu_layers = Get-AiArgumentValue $tokens @('-ngl','--gpu-layers','--n-gpu-layers') '99'
+        $settings.placement=if([int]$settings.gpu_layers -eq 0){'cpu'}elseif([int]$settings.gpu_layers -ge 99){'gpu'}else{'hybrid'}
         $settings.cache_key = Get-AiArgumentValue $tokens @('-ctk','--cache-type-k') 'f16'
         $settings.cache_value = Get-AiArgumentValue $tokens @('-ctv','--cache-type-v') 'f16'
         $settings.flash_attention = Get-AiArgumentValue $tokens @('-fa','--flash-attn') 'auto'
@@ -58,6 +59,7 @@ function Get-AiLaunchSettings {
         $settings.ubatch = Get-AiArgumentValue $tokens @('-ub','--ubatch-size') '128'
         $settings.idle_minutes = [math]::Round([double](Get-AiArgumentValue $tokens @('--sleep-idle-seconds') '-1') / 60, 2)
     } else {
+        $settings.placement=Get-AiXmlEnv $xml 'OMNIBOX_PLACEMENT' 'auto'
         $settings.keep_alive = Get-AiXmlEnv $xml 'OLLAMA_KEEP_ALIVE' '5m'
         if ($settings.keep_alive -match '^(\d+)m$') { $settings.idle_minutes = [int]$Matches[1] }
         elseif ($settings.keep_alive -match '^(\d+)s?$') { $settings.idle_minutes = [math]::Round([double]$Matches[1] / 60, 2) }
@@ -79,10 +81,29 @@ function Get-AiPrismModels {
 
 function New-AiLaunchXml {
     param($Backend, [System.Collections.IDictionary]$Settings)
-    $allowed = @('context','idle_minutes')
+    $allowed = @('context','idle_minutes','placement')
     if ($Backend.type -eq 'prism') { $allowed += @('model','alias','gpu_layers','cache_key','cache_value','flash_attention','batch','ubatch') }
     foreach ($key in $Settings.Keys) { if ($key -notin $allowed) { throw "Неизвестная настройка: $key" } }
     $xml = if ($Settings.Contains('context')) { New-AiContextXml $Backend (ConvertTo-AiContext ([string]$Settings.context)) } else { Read-AiServiceXml $Backend }
+    if ($Settings.Contains('placement')) {
+        $placement=[string]$Settings.placement
+        $values=if($Backend.type -eq 'prism'){@('cpu','gpu','hybrid','auto')}else{@('cpu','auto')}
+        if($placement -notin $values){throw 'Недопустимое размещение модели.'}
+        if($Backend.type -eq 'ollama'){
+            $oldPlacement=Get-AiXmlEnv $xml 'OMNIBOX_PLACEMENT' 'auto'
+            $masks=@('CUDA_VISIBLE_DEVICES','ROCR_VISIBLE_DEVICES','HIP_VISIBLE_DEVICES','GGML_VK_VISIBLE_DEVICES')
+            if($placement -eq 'cpu' -and $oldPlacement -ne 'cpu'){
+                $previous=@{};foreach($key in $masks){$node=$xml.SelectSingleNode("/service/env[@name='$key']");$previous[$key]=if($null -ne $node){$node.GetAttribute('value')}else{$null}}
+                Set-AiXmlEnv $xml 'OMNIBOX_PREVIOUS_GPU_ENV' ($previous|ConvertTo-Json -Compress)
+            }
+            if($placement -eq 'cpu'){foreach($key in $masks){Set-AiXmlEnv $xml $key '-1'}}
+            elseif($oldPlacement -eq 'cpu'){
+                $previous=Get-AiXmlEnv $xml 'OMNIBOX_PREVIOUS_GPU_ENV' '{}';$previous=$previous|ConvertFrom-Json -AsHashtable
+                foreach($key in $masks){if($previous.Contains($key) -and $null -ne $previous[$key]){Set-AiXmlEnv $xml $key ([string]$previous[$key])}else{$node=$xml.SelectSingleNode("/service/env[@name='$key']");if($null -ne $node){$null=$xml.DocumentElement.RemoveChild($node)}}}
+            }
+            Set-AiXmlEnv $xml 'OMNIBOX_PLACEMENT' $placement
+        }
+    }
     if ($Settings.Contains('idle_minutes')) {
         $idle = [string]$Settings.idle_minutes
         if ($idle -notmatch '^\d+$' -or [long]$idle -lt 1 -or [long]$idle -gt 1440) { throw 'Простой должен быть от 1 до 1440 минут.' }
@@ -119,6 +140,12 @@ function New-AiLaunchXml {
             if ($Settings.flash_attention -notin @('on','off','auto')) { throw 'Flash Attention: on, off или auto.' }
             Set-AiArgumentValue $xml @('-fa','--flash-attn') ([string]$Settings.flash_attention)
         }
+        if($Settings.Contains('placement')){
+            if($Settings.placement -eq 'cpu'){Set-AiArgumentValue $xml @('-ngl','--gpu-layers','--n-gpu-layers') '0';$xml.service.arguments=(@(Get-AiPrismArguments $xml)|Where-Object{$_ -ne '--no-kv-offload'}) -join ' ';$xml.service.arguments+=' --no-kv-offload'}
+            elseif($Settings.placement -in @('gpu','auto')){Set-AiArgumentValue $xml @('-ngl','--gpu-layers','--n-gpu-layers') '999'}
+            if($Settings.placement -ne 'cpu'){$xml.service.arguments=(@(Get-AiPrismArguments $xml)|Where-Object{$_ -ne '--no-kv-offload'}) -join ' '}
+            if($Settings.placement -eq 'hybrid' -and (-not $Settings.Contains('gpu_layers') -or [int]$Settings.gpu_layers -lt 1 -or [int]$Settings.gpu_layers -ge 99)){throw 'Для RAM + VRAM укажи от 1 до 98 слоёв GPU.'}
+        }
         $tokens = @(Get-AiPrismArguments $xml)
         if ([int](Get-AiArgumentValue $tokens @('-ub','--ubatch-size') '128') -gt [int](Get-AiArgumentValue $tokens @('-b','--batch-size') '512')) { throw 'ubatch не может быть больше batch.' }
     }
@@ -136,13 +163,13 @@ function Get-AiGpuData {
     try {
         $exe = Get-Command nvidia-smi -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $exe) { return @() }
-        $lines = @(& $exe.Source --query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw --format=csv,noheader,nounits 2>$null)
+        $lines = @(& $exe.Source --query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw,fan.speed --format=csv,noheader,nounits 2>$null)
         if ($LASTEXITCODE -ne 0) { return @() }
         return @($lines | ForEach-Object {
             $parts = $_ -split ',\s*'
             if ($parts.Count -ge 4) {
-                $row=@{ name = $parts[0]; total = [int]$parts[1]; used = [int]$parts[2]; free = [int]$parts[3];utilization=$null;temperature=$null;power_watts=$null }
-                foreach($pair in @(@('utilization',4),@('temperature',5),@('power_watts',6))){$n=0.0;if($parts.Count -gt $pair[1] -and [double]::TryParse($parts[$pair[1]],[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$n)){$row[$pair[0]]=$n}}
+                $row=@{ name = $parts[0]; total = [int]$parts[1]; used = [int]$parts[2]; free = [int]$parts[3];utilization=$null;temperature=$null;power_watts=$null;fan_percent=$null }
+                foreach($pair in @(@('utilization',4),@('temperature',5),@('power_watts',6),@('fan_percent',7))){$n=0.0;if($parts.Count -gt $pair[1] -and [double]::TryParse($parts[$pair[1]],[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$n)){$row[$pair[0]]=$n}}
                 $row
             }
         })
@@ -172,10 +199,37 @@ function Get-AiDashboard {
         if($b.type -eq 'prism' -and $pending -and $status.Service -eq 'Running'){
             try{$previous=[xml](Get-Content -LiteralPath ($b.service_config+'.ai-previous') -Raw);$selectedModel=Get-AiArgumentValue @(Get-AiPrismArguments $previous) @('--alias') ([IO.Path]::GetFileNameWithoutExtension($status.Model))}catch{}
         }
-        $rows += @{ name = $name; type = $b.type; service = $status.Service; startup = $status.Startup; api = $status.API; active_context = $status.Context; sleeping = $status.Sleeping; loaded_model = $status.Model; selected_model=$selectedModel; settings = $settings; models = $models; pending = $pending; can_restore = $restore; errors = $errors; endpoint = $b.base_url.TrimEnd('/') + '/v1' }
+        $residency=@{mode='unknown';ram_bytes=$null;vram_bytes=$null;gpu_layers=$null;total_layers=$null}
+        $idle=@{expires_at=$null;estimated=$false;busy=$false;state='stopped'}
+        if($status.Service -eq 'Running'){
+            $idle.state=if($status.Sleeping){'unloaded'}else{'unknown'}
+            if('OmniBox.InferenceStats' -as [type]){$idle.busy=[OmniBox.InferenceStats]::IsActive($name)}
+            if($b.type -eq 'ollama'){
+                try{$loaded=@((Invoke-AiProbe $b '/api/ps').models);if($loaded.Count -eq 1){
+                    $m=$loaded[0];$idle.state='loaded';$idle.expires_at=$m.expires_at
+                    if($m.PSObject.Properties['size_vram'] -and $m.PSObject.Properties['size']){
+                        $residency.vram_bytes=[long]$m.size_vram;$residency.ram_bytes=[math]::Max(0,[long]$m.size-[long]$m.size_vram)
+                        $residency.mode=if($residency.vram_bytes -eq 0){'ram'}elseif($residency.ram_bytes -eq 0){'vram'}else{'hybrid'}
+                    }
+                }else{$idle.state='unloaded'}}catch{}
+            }elseif(-not $status.Sleeping){
+                $runtimePath=$b.service_config+'.runtime.json'
+                try{
+                    $runtime=Get-Content -LiteralPath $runtimePath -Raw|ConvertFrom-Json -AsHashtable
+                    if($runtime.running){
+                        if($settings.placement -eq 'cpu' -and -not $pending){$residency.mode='ram'}
+                        if($null -ne $runtime.gpu_layers -and $null -ne $runtime.total_layers){$residency.gpu_layers=$runtime.gpu_layers;$residency.total_layers=$runtime.total_layers;$residency.mode=if($runtime.gpu_layers -eq 0){'ram'}elseif($runtime.gpu_layers -ge $runtime.total_layers){'vram'}else{'hybrid'}}
+                        $anchor=[DateTimeOffset]::Parse($runtime.started)
+                        if('OmniBox.InferenceStats' -as [type]){$last=[OmniBox.InferenceStats]::LastActivity($name);if($last -and [DateTimeOffset]::Parse($last) -gt $anchor){$anchor=[DateTimeOffset]::Parse($last)}}
+                        if($null -ne $settings -and $settings.idle_minutes -gt 0){$idle.expires_at=$anchor.AddMinutes($settings.idle_minutes).ToString('o');$idle.estimated=$true;$idle.state='loaded'}
+                    }
+                }catch{}
+            }
+        }
+        $rows += @{ name = $name; type = $b.type; service = $status.Service; startup = $status.Startup; api = $status.API; active_context = $status.Context; sleeping = $status.Sleeping; loaded_model = $status.Model; selected_model=$selectedModel; settings = $settings; models = $models; pending = $pending; can_restore = $restore; errors = $errors; residency=$residency;idle=$idle;endpoint = $b.base_url.TrimEnd('/') + '/v1' }
     }
     $gpu = @(); if ($IncludeGpu) { $gpu = @(Get-AiGpuData) }
-    return @{ version = '0.7.0'; default_backend = $config.default_backend; exclusive = $true; backends = $rows; gpu = $gpu; computer = [Environment]::MachineName }
+    return @{ version = '0.8.0'; default_backend = $config.default_backend; exclusive = $true; backends = $rows; gpu = $gpu; computer = [Environment]::MachineName }
 }
 
 function Get-AiGatewayRuntime {
@@ -203,7 +257,7 @@ function Get-AiGatewayRuntime {
             if($loaded[0].PSObject.Properties['context_length'] -and [int]$loaded[0].context_length -gt 0){$context=[int]$loaded[0].context_length}
         }
     }
-    return @{available=$true;model=[string]$model;context=$context;type=$b.type}
+    return @{available=$true;model=[string]$model;context=$context;type=$b.type;placement=$settings.placement}
 }
 
 function New-AiSingleModelXml {
@@ -282,7 +336,14 @@ function Invoke-AiPanelAction {
             return 'Все модели Ollama выгружены; сервер продолжает слушать API.'
         }
         Assert-AiModelName ([string]$Request.model)
-        if ($operationName -eq 'load') { Start-AiBackend $config $name }
+        if ($operationName -eq 'load') {
+            $prepared=if($Request.Contains('settings')){New-AiLaunchXml $b $Request.settings}else{$null}
+            $history=Read-AiRecoveryState $b;$service=Get-AiService $b.service
+            if($null -ne $prepared -or ($null -ne $history -and $history.pending)){
+                $verb=if($null -ne $service -and $service.Status -ne 'Stopped'){'restart'}else{'start'}
+                Invoke-AiBackendStart $config $name $verb $prepared
+            }else{Start-AiBackend $config $name}
+        }
         $service = Get-AiService $b.service
         if ($null -eq $service -or [string]$service.Status -ne 'Running') { throw 'Ollama остановлена.' }
         $tags = Invoke-AiProbe $b '/api/tags'
@@ -290,7 +351,7 @@ function Invoke-AiPanelAction {
         Clear-AiOtherOllamaModels $b ([string]$Request.model) $config.startup_timeout_seconds
         $settings = Get-AiLaunchSettings $b
         $body = @{ model = [string]$Request.model; stream = $false; prompt = ''; keep_alive = $(if ($operationName -eq 'unload') { 0 } else { $settings.keep_alive }) }
-        if ($operationName -eq 'load' -and $settings.context -match '^\d+$') { $body.options = @{ num_ctx = [int]$settings.context } }
+        if ($operationName -eq 'load' -and $settings.context -match '^\d+$') { $body.options = @{ num_ctx = [int]$settings.context };if($settings.placement -eq 'cpu'){$body.options.num_gpu=0} }
         $null = Invoke-AiModelRequest $b '/api/generate' $body $config.startup_timeout_seconds
         Set-AiSelectedModel $ConfigPath $name ([string]$Request.model)
         return 'Модель загружена в память.'

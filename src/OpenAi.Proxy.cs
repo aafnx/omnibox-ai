@@ -55,7 +55,7 @@ namespace OmniBox {
             public void Finish() { if(!SSE && !Overflow)InferenceStats.Observe(Record,Text.ToString()); }
         }
         public static Task Handle(HttpListenerContext ctx, string baseUrl, bool requireKey, string hash, string upstreamKey,
-            string backend, string selectedModel, int contextLimit, string engineType) {
+            string backend, string selectedModel, int contextLimit, string engineType, string placement = "auto") {
             return Task.Run(async () => {
                 using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(30));
                 bool acquired=false, started=false, completed=false;
@@ -95,6 +95,15 @@ namespace OmniBox {
                             foreach(string field in new[]{"n","best_of"})if(json[field]!=null && (!(json[field] is JsonValue v)||!v.TryGetValue<int>(out int one)||one!=1)){await Error(ctx,400,"Only one output sequence is allowed.");return;}
                             if(json["options"] is JsonObject overrides && overrides["num_ctx"]!=null){
                                 if(!(overrides["num_ctx"] is JsonValue cv)||!cv.TryGetValue<int>(out int requestedContext)||requestedContext!=contextLimit){await Error(ctx,400,"Change model context in OmniBox AI before sending requests.");return;}
+                            }
+                            if(engineType=="ollama") {
+                                if(json["options"]!=null && !(json["options"] is JsonObject)){await Error(ctx,400,"options must be an object.");return;}
+                                var loadOptions=json["options"] as JsonObject ?? new JsonObject();
+                                if(loadOptions["num_gpu"]!=null){await Error(ctx,400,"Change model placement in OmniBox AI.");return;}
+                                loadOptions["num_ctx"]=contextLimit;
+                                if(placement=="cpu")loadOptions["num_gpu"]=0;
+                                json["options"]=loadOptions;
+                                body=Encoding.UTF8.GetBytes(json.ToJsonString());
                             }
                             record=InferenceStats.Begin(backend,selectedModel,path,contextLimit,req.Headers["X-Omnibox-Session"],timeout);
                             if(record==null){await Error(ctx,409,"The model is busy or a control operation is running. Retry after completion.");return;}
