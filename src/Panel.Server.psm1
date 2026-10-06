@@ -45,7 +45,7 @@ function Update-AiPanelOperations {
     }
     $finished = @($Operations.Values | Where-Object state -in @('done','failed') | Sort-Object created -Descending)
     foreach ($old in @($finished | Select-Object -Skip 20)) { $Operations.Remove($old.id) }
-    return @($Operations.Values | Sort-Object created -Descending | ForEach-Object { @{ id = $_.id; action = $_.action; backend = $_.backend; state = $_.state; message = $_.message } })
+    return @($Operations.Values | Sort-Object created -Descending | ForEach-Object { @{ id = $_.id; action = $_.action; backend = $_.backend; state = $_.state; message = $_.message;started=$_.created.ToString('o');elapsed_seconds=[math]::Round(([DateTime]::UtcNow-$_.created).TotalSeconds,1) } })
 }
 
 function Start-AiPanelOperation {
@@ -53,8 +53,14 @@ function Start-AiPanelOperation {
     $category = if ($Body.action -in @('pull','download')) { 'download' } else { 'control' }
     if (@($Operations.Values | Where-Object { $_.category -eq $category -and $null -ne $_.job -and $_.job.State -notin @('Completed','Failed','Stopped') }).Count) { throw 'Операция этого типа ещё выполняется. Дождись результата.' }
     # Body travels as structured data. There is no shell, command text, or eval endpoint.
-    $job = Start-ThreadJob -ArgumentList $EngineModulePath, $ConfigPath, $Body -ScriptBlock {
-        param($EnginePath, $Config, $Request)
+    $guarded=$Body.action -in @('start','stop','restart','stopall','apply','restore','load','unload') -and ('OmniBox.InferenceStats' -as [type])
+    if($guarded){
+        $cancel=$Body.action -in @('stop','stopall','unload')
+        if(-not [OmniBox.InferenceStats]::BeginControl($cancel)){throw 'Модель занята генерацией или другой операцией. Дождись завершения либо останови сервер.'}
+        if($Body.Contains('backend')){[OmniBox.InferenceStats]::EndModelSession([string]$Body.backend)}
+    }
+    try{$job = Start-ThreadJob -ArgumentList $EngineModulePath, $ConfigPath, $Body, $guarded -ScriptBlock {
+        param($EnginePath, $Config, $Request, $Guarded)
         $ErrorActionPreference = 'Stop'
         $global:LASTEXITCODE = 0
         try {
@@ -62,7 +68,8 @@ function Start-AiPanelOperation {
             $messages = @(Invoke-AiPanelAction -ConfigPath $Config -Request $Request)
             @{ ok = $true; message = ($messages | ForEach-Object { [string]$_ }) -join "`n" }
         } catch { @{ ok = $false; message = $_.Exception.Message } }
-    }
+        finally{if($Guarded){[OmniBox.InferenceStats]::EndControl()}}
+    }}catch{if($guarded){[OmniBox.InferenceStats]::EndControl()};throw}
     $id = [Guid]::NewGuid().ToString('N')
     $backend = if ($Body.Contains('backend')) { [string]$Body.backend } else { '' }
     $Operations[$id] = @{ id = $id; action = [string]$Body.action; backend = $backend; category = $category; state = 'running'; message = 'Выполняется…'; job = $job; created = [DateTime]::UtcNow }
@@ -81,7 +88,8 @@ function Start-OmniBoxPanel {
     $gatewayPort = $gateway.port
     $apiHosts = @($panel.allowed_hosts)
     if ($gateway.enabled) { $apiHosts = @(@($apiHosts + ([Uri]$gateway.base_url).Host) | Select-Object -Unique) }
-    if ($gateway.enabled -and -not ('OmniBox.OpenAiProxy' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'OpenAi.Proxy.cs') }
+    if (-not ('OmniBox.OpenAiProxy' -as [type])) { Add-Type -Path @((Join-Path $PSScriptRoot 'Inference.Stats.cs'),(Join-Path $PSScriptRoot 'OpenAi.Proxy.cs')) }
+    [OmniBox.InferenceStats]::Configure((Join-Path $Root 'logs/requests'))
     $listener = [Net.HttpListener]::new()
     foreach ($hostName in $panel.allowed_hosts) { $listener.Prefixes.Add("http://${hostName}:$($panel.port)/") }
     if ($gateway.enabled -and $gatewayPort -ne $panel.port) { foreach ($hostName in $apiHosts) { $listener.Prefixes.Add("http://${hostName}:$gatewayPort/") } }
@@ -90,10 +98,11 @@ function Start-OmniBoxPanel {
         $listener.TimeoutManager.EntityBody = [TimeSpan]::FromSeconds(10)
     }
     $sessions = @{}; $attempts = @{}; $operations = @{}; $catalog = @{}
+    $telemetryJob=$null;$telemetryCache=$null;$telemetryTime=[DateTime]::MinValue
     $assets = @{ '/' = @('web/index.html','text/html; charset=utf-8'); '/app.js' = @('web/app.js','text/javascript; charset=utf-8'); '/style.css' = @('web/style.css','text/css; charset=utf-8') }
     try {
         $listener.Start()
-        Write-Host "OmniBox AI 0.6.0 panel: port $($panel.port)"
+        Write-Host "OmniBox AI 0.7.0 panel: port $($panel.port)"
         while ($listener.IsListening) {
             # Blocking wait: no background polling, model probes, GPU queries, or wake timers.
             $context = $listener.GetContext()
@@ -111,7 +120,9 @@ function Start-OmniBoxPanel {
                     if (-not $apiConfig.enabled -or -not $backends.backends.Contains($apiConfig.backend)) { Send-AiHttpResponse $context 503 @{error=@{message='Selected backend is unavailable.';type='omnibox_error'}}; continue }
                     $b = $backends.backends[$apiConfig.backend]
                     $upstreamKey = if ($b.Contains('upstream_api_key')) { [string]$b.upstream_api_key } else { '' }
-                    $null = [OmniBox.OpenAiProxy]::Handle($context, [string]$b.base_url, [bool]$apiConfig.require_key, [string]$apiConfig.key_hash, $upstreamKey)
+                    $runtime=Get-AiGatewayRuntime $configPath $apiConfig.backend
+                    if(-not $runtime.available){Send-AiHttpResponse $context ([int]$runtime.status) @{error=@{message=$runtime.reason;type='omnibox_error'}};continue}
+                    $null = [OmniBox.OpenAiProxy]::Handle($context, [string]$b.base_url, [bool]$apiConfig.require_key, [string]$apiConfig.key_hash, $upstreamKey, [string]$apiConfig.backend, [string]$runtime.model, [int]$runtime.context, [string]$runtime.type)
                     continue
                 }
                 if ($method -notin @('GET','POST')) { Send-AiHttpResponse $context 405 @{ error = 'Метод запрещён.' }; continue }
@@ -150,6 +161,20 @@ function Start-OmniBoxPanel {
                 switch ("$method $path") {
                     'GET /api/session' { Send-AiHttpResponse $context 200 @{ csrf = $session.csrf; ssh_target = $panel.ssh_target; port = $panel.port } }
                     'GET /api/gateway' { Send-AiHttpResponse $context 200 (Get-AiGatewayView (Read-AiGatewayConfig $gatewayPath)) }
+                    'GET /api/activity' { Send-AiHttpResponse $context 200 ([OmniBox.InferenceStats]::Snapshot() | ConvertFrom-Json -AsHashtable) }
+                    'GET /api/telemetry' {
+                        if($null -ne $telemetryJob -and $telemetryJob.State -in @('Completed','Failed','Stopped')){
+                            $result=@(Receive-Job $telemetryJob -ErrorAction SilentlyContinue)|Where-Object{$_ -is [System.Collections.IDictionary]}|Select-Object -Last 1
+                            $telemetryCache=if($null -ne $result){$result}else{@{enabled=$true;error='Датчики временно недоступны.'}}
+                            Remove-Job $telemetryJob -Force;$telemetryJob=$null
+                        }
+                        if($null -eq $telemetryJob -and ([DateTime]::UtcNow-$telemetryTime).TotalSeconds -ge 3){
+                            $telemetryJob=Start-ThreadJob -ArgumentList $EngineModulePath,$configPath -ScriptBlock {param($Module,$Config)Import-Module $Module -Force;Get-AiTelemetry $Config}
+                            $telemetryTime=[DateTime]::UtcNow
+                        }
+                        $data=if($null -ne $telemetryCache){$telemetryCache.Clone()}else{@{enabled=$true;sample=$null}}
+                        $data.collecting=$null -ne $telemetryJob;Send-AiHttpResponse $context 200 $data
+                    }
                     'POST /api/catalog' {
                         foreach($id in @($catalog.Keys)){if($catalog[$id].created -lt [DateTime]::UtcNow.AddMinutes(-5) -and $catalog[$id].job.State -in @('Completed','Failed','Stopped')){Remove-Job $catalog[$id].job -Force;$catalog.Remove($id)}}
                         if(@($catalog.Values|Where-Object{$_.job.State -notin @('Completed','Failed','Stopped')}).Count -or $catalog.Count -ge 20){throw 'Предыдущий поиск ещё выполняется. Повтори позже.'}
@@ -179,6 +204,7 @@ function Start-OmniBoxPanel {
                     'GET /api/status' {
                         $data = Get-AiDashboard -ConfigPath $configPath -IncludeGpu:($request.QueryString['gpu'] -eq '1')
                         $data.operations = @(Update-AiPanelOperations $operations)
+                        foreach($b in $data.backends){if(($b.service -eq 'Stopped' -or $b.sleeping) -and -not [OmniBox.InferenceStats]::IsActive([string]$b.name)){[OmniBox.InferenceStats]::EndModelSession([string]$b.name)}}
                         Send-AiHttpResponse $context 200 $data
                     }
                     'GET /api/logs' {
@@ -209,6 +235,7 @@ function Start-OmniBoxPanel {
         $listener.Close()
         foreach ($operation in $operations.Values) { if ($null -ne $operation.job) { Stop-Job $operation.job; Remove-Job $operation.job -Force } }
         foreach($entry in $catalog.Values){Stop-Job $entry.job;Remove-Job $entry.job -Force}
+        if($null -ne $telemetryJob){Stop-Job $telemetryJob;Remove-Job $telemetryJob -Force}
     }
 }
 

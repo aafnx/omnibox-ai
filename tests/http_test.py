@@ -37,11 +37,13 @@ class Upstream(http.server.BaseHTTPRequestHandler):
         data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
         if data.get('stream'):
             self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
-            self.wfile.write(b'data: {"choices":[{"delta":{"content":"first"}}]}\n\n'); self.wfile.flush()
+            self.wfile.write(b'data: {"choices":[{"delta":{"content":"first"}}],"usage":null,"prompt_progress":{"total":11,"processed":11},"timings":{"predicted_n":3}}\n\n'); self.wfile.flush()
             time.sleep(1.2)
-            self.wfile.write(b'data: [DONE]\n\n'); self.wfile.flush()
+            self.wfile.write(b'data: {"choices":[],"usage":{"prompt_tokens":11,"completion_tokens":7,"total_tokens":18}}\n\ndata: [DONE]\n\n'); self.wfile.flush()
         else:
-            body=json.dumps({'choices':[{'message':{'content':'fixture'}}],'forwarded':data}).encode()
+            reply={'choices':[{'message':{'content':'fixture'}}],'forwarded':data}
+            if data.get('fixture_usage',True):reply['usage']={'prompt_tokens':11,'completion_tokens':7,'total_tokens':18}
+            body=json.dumps(reply).encode()
             self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
 
 class PanelFixture:
@@ -329,7 +331,7 @@ class GatewayTests(unittest.TestCase):
     def test_12_shared_port_streaming_is_incremental(self):
         connection=http.client.HTTPConnection('127.0.0.1',self.fixture.port,timeout=5)
         try:
-            started=time.monotonic();connection.request('POST','/v1/chat/completions',json.dumps({'stream':True}),{'Content-Type':'application/json','Authorization':'Bearer '+API_KEY})
+            started=time.monotonic();connection.request('POST','/v1/chat/completions',json.dumps({'model':'bonsai-2-27b','stream':True}),{'Content-Type':'application/json','Authorization':'Bearer '+API_KEY})
             response=connection.getresponse();self.assertEqual(response.status,200);self.assertIn('first',response.readline().decode());self.assertLess(time.monotonic()-started,.8)
             self.assertEqual(self.call('/api/session')[0],200);self.assertIn('[DONE]',response.read().decode())
         finally:connection.close()
@@ -342,6 +344,73 @@ class GatewayTests(unittest.TestCase):
                 self.assertEqual(json.loads(response.read())['data'][0]['id'],'bonsai-2-27b')
             with urllib.request.urlopen(fixture.url,timeout=5) as response:self.assertEqual(response.status,200)
         finally:fixture.close()
+
+    def test_14_model_pin_and_single_output_sequence(self):
+        self.assertEqual(self.model_request('/v1/chat/completions',{'model':'another-model'})[0],409)
+        self.assertEqual(self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b','n':2})[0],400)
+        self.assertEqual(self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b','n':[]})[0],400)
+        self.assertEqual(self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b','options':{'num_ctx':999999}})[0],400)
+
+    def test_15_request_journal_stores_usage_without_content_or_keys(self):
+        secret='private fixture text must never enter metadata log'
+        self.assertEqual(self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b','messages':[{'role':'user','content':secret}]})[0],200)
+        data=self.call('/api/activity')[1];r=data['requests'][0]
+        self.assertEqual((r['input_tokens'],r['output_tokens'],r['total_tokens']),(11,7,18))
+        self.assertEqual(r['context_used'],18);self.assertEqual(r['context_remaining'],196590)
+        log=(self.fixture.root/'logs/requests/requests.jsonl').read_text()
+        self.assertNotIn(secret,log);self.assertNotIn(API_KEY,log);self.assertNotIn('messages',log);self.assertNotIn('choices',log)
+        self.assertEqual(self.call('/api/activity',auth=False)[0],401)
+
+    def test_16_live_usage_and_parallel_generation_rejection(self):
+        connection=http.client.HTTPConnection('127.0.0.1',self.fixture.port,timeout=5)
+        try:
+            connection.request('POST','/v1/chat/completions',json.dumps({'model':'bonsai-2-27b','stream':True}),{'Content-Type':'application/json','Authorization':'Bearer '+API_KEY})
+            response=connection.getresponse();self.assertEqual(response.status,200);self.assertIn('first',response.readline().decode())
+            active=self.call('/api/activity')[1]['active'];self.assertEqual(active['input_tokens'],11);self.assertEqual(active['output_tokens'],3)
+            self.assertEqual(self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b'})[0],409)
+            self.assertEqual(self.call('/api/actions',{'action':'start','backend':'bonsai'},csrf=self.csrf)[0],400)
+            self.assertIn('[DONE]',response.read().decode())
+            completed=self.call('/api/activity')[1];self.assertIsNone(completed['active']);self.assertEqual(completed['requests'][0]['total_tokens'],18)
+        finally:connection.close()
+
+    def test_17_missing_usage_stays_unknown(self):
+        self.assertEqual(self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b','fixture_usage':False})[0],200)
+        r=self.call('/api/activity')[1]['requests'][0]
+        self.assertIsNone(r['input_tokens']);self.assertIsNone(r['output_tokens']);self.assertIsNone(r['total_tokens']);self.assertIsNone(r['context_remaining'])
+
+    def test_18_explicit_session_identifier_is_hashed_and_aggregated(self):
+        header={'X-Omnibox-Session':'fixture-session-A'}
+        for _ in range(2):self.assertEqual(self.model_request('/v1/chat/completions',{'model':'bonsai-2-27b'},extra=header)[0],200)
+        data=self.call('/api/activity')[1];a,b=data['requests'][:2];self.assertEqual(a['session_id'],b['session_id'])
+        s=next(s for s in data['sessions'] if s['id']==a['session_id']);self.assertEqual(s['requests'],2);self.assertEqual(s['total_tokens'],36)
+        self.assertNotIn('fixture-session-A',json.dumps(data))
+
+    def test_19_stop_cancels_generation_and_leaves_panel_available(self):
+        connection=http.client.HTTPConnection('127.0.0.1',self.fixture.port,timeout=5)
+        try:
+            connection.request('POST','/v1/chat/completions',json.dumps({'model':'bonsai-2-27b','stream':True}),{'Content-Type':'application/json','Authorization':'Bearer '+API_KEY})
+            response=connection.getresponse();self.assertEqual(response.status,200);response.readline()
+            self.assertEqual(self.call('/api/actions',{'action':'stop','backend':'bonsai'},csrf=self.csrf)[0],202)
+            try:response.read()
+            except http.client.IncompleteRead:pass
+            for _ in range(40):
+                state=self.call('/api/status')[1]
+                if not any(o['state']=='running' for o in state['operations']):break
+                time.sleep(.05)
+            self.assertEqual(self.call('/api/session')[0],200)
+            self.assertEqual(self.call('/api/activity')[1]['requests'][0]['state'],'failed')
+        finally:
+            connection.close()
+            p=self.fixture.root/'config.json';c=json.loads(p.read_text());c['service']='Running';p.write_text(json.dumps(c))
+
+    def test_20_telemetry_is_authenticated_and_runs_in_a_background_job(self):
+        self.assertEqual(self.call('/api/telemetry',auth=False)[0],401)
+        for _ in range(30):
+            code,data,_=self.call('/api/telemetry');self.assertEqual(code,200)
+            if data.get('sample'):break
+            time.sleep(.05)
+        self.assertEqual(data['sample']['ram_total_gb'],32);self.assertEqual(data['sample']['cpu_percent'],22)
+        self.assertIsNone(data['sample']['cpu_temperature']);self.assertEqual(self.call('/api/session')[0],200)
 
 class ProxyTests(unittest.TestCase):
     @classmethod

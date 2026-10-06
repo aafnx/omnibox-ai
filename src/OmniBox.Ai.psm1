@@ -37,6 +37,7 @@ function Read-AiConfig {
         if ($backend.type -eq 'ollama' -and [string]::IsNullOrWhiteSpace($backend.executable)) {
             throw "Не задан executable для $name."
         }
+        if($backend.Contains('active_model') -and ($backend.active_model -isnot [string] -or $backend.active_model.Length -gt 200 -or $backend.active_model -notmatch '^[a-zA-Z0-9][a-zA-Z0-9_./:-]*$' -or $backend.active_model.Contains('..'))){throw "Некорректное имя выбранной модели: $name"}
     }
     return $config
 }
@@ -312,7 +313,8 @@ function Stop-AiService {
 
 function Invoke-AiProbe {
     param($Backend, [string]$Path)
-    Invoke-RestMethod -Uri ($Backend.base_url.TrimEnd('/') + $Path) -TimeoutSec 2 -ErrorAction Stop
+    $headers=@{};if($Backend.Contains('upstream_api_key') -and $Backend.upstream_api_key){$headers.Authorization='Bearer '+$Backend.upstream_api_key}
+    Invoke-RestMethod -Uri ($Backend.base_url.TrimEnd('/') + $Path) -Headers $headers -TimeoutSec 2 -ErrorAction Stop
 }
 
 function Invoke-AiDelay { Start-Sleep -Milliseconds 500 }
@@ -365,6 +367,16 @@ function Wait-AiReady {
     throw "$Name`: API не готов за $($Config.startup_timeout_seconds) с. Служба не остановлена автоматически; проверь ai status и ai logs $Name."
 }
 
+function Set-AiSingleModelLimits {
+    param($Config,[string]$Name,$Service)
+    $backend=Get-AiBackend $Config $Name
+    $xml=Read-AiServiceXml $backend;$original=$xml.OuterXml;$xml=New-AiSingleModelXml $backend $xml
+    if($xml.OuterXml -cne $original){
+        if([string]$Service.Status -ne 'Stopped'){Stop-AiBackend $Config $Name}
+        Save-AiServiceXml $backend $xml
+    }
+}
+
 function Start-AiBackend {
     param($Config, [string]$Name)
     if (-not $Name) { $Name = $Config.default_backend }
@@ -373,14 +385,15 @@ function Start-AiBackend {
     $service = Get-AiService $backend.service
     if ($null -eq $service) { throw "Служба '$($backend.service)' не установлена. ai не устанавливает движки." }
     if ([string]$service.StartType -eq 'Disabled') { throw "Служба '$($backend.service)' отключена. Другие серверы не остановлены." }
-    if ($Config.exclusive) {
-        foreach ($other in $Config.backends.Keys) {
-            if ($other -ne $Name) { Stop-AiBackend $Config $other }
-        }
+    Set-AiSingleModelLimits $Config $Name $service
+    foreach ($other in $Config.backends.Keys) {
+        if ($other -ne $Name) { Stop-AiBackend $Config $other }
     }
     if ([string]$service.Status -notin @('Running', 'StartPending')) { Start-AiService $backend.service }
     Write-Host "$Name`: ожидание API..."
     Wait-AiReady $Config $Name
+    $state=Read-AiRecoveryState $backend
+    if($null -ne $state -and $state.pending){$state.pending=$false;Write-AiRecoveryState $backend $state}
     Write-Host "$Name`: API готов — $($backend.base_url)/v1"
 }
 
@@ -410,6 +423,7 @@ function Get-AiStatus {
                     $row.API = 'Ready'
                     $models = @($ps.models | ForEach-Object { $_.name })
                     $row.Model = if ($models.Count) { $models -join ', ' } else { '(none)' }
+                    if(@($ps.models).Count -eq 1 -and $ps.models[0].PSObject.Properties['context_length']){$row.Context=$ps.models[0].context_length}
                 }
             } catch { $row.API = 'Unavailable' }
         }
@@ -442,9 +456,23 @@ function Show-AiLogs {
 }
 
 function Invoke-AiOllama {
-    param($Config, [string[]]$NativeArguments)
+    param($Config, [string[]]$NativeArguments, [string]$ConfigPath = '')
     $matches = @($Config.backends.Values | Where-Object type -eq 'ollama')
     if ($matches.Count -ne 1) { throw 'Для передачи команд нужен ровно один backend с type=ollama.' }
+    if($NativeArguments.Count -and $NativeArguments[0] -eq 'serve'){throw 'Используй ai start ollama: отдельный serve не поддерживается.'}
+    if($NativeArguments.Count -gt 1 -and $NativeArguments[0] -eq 'run' -and -not $NativeArguments[1].StartsWith('-')){
+        Assert-AiModelName $NativeArguments[1]
+        if(-not $ConfigPath){throw 'Для run нужен путь конфигурации.'}
+        $name=@($Config.backends.Keys|Where-Object{$Config.backends[$_].type -eq 'ollama'})[0]
+        Assert-AiAdministrator
+        Invoke-AiLocked {
+            $service=Get-AiService $matches[0].service
+            if($null -eq $service -or [string]$service.Status -ne 'Running'){throw 'Сначала запусти ai start ollama.'}
+            Start-AiBackend $Config $name
+            Clear-AiOtherOllamaModels $matches[0] $NativeArguments[1] $Config.stop_timeout_seconds
+            Set-AiSelectedModel $ConfigPath $name $NativeArguments[1]
+        }
+    }
     $exe = $matches[0].executable
     if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "Ollama не найден: $exe" }
     $oldHost = [Environment]::GetEnvironmentVariable('OLLAMA_HOST', 'Process')
@@ -482,7 +510,7 @@ function Show-AiPower {
 
 function Show-AiHelp {
     @'
-OmniBox AI 0.6.0 — управление локальными серверами
+OmniBox AI 0.7.0 — управление локальными серверами
 
 ai start [backend] [--context 128k]  Запуск; по умолчанию bonsai. Другой остановится.
 ai stop [bonsai|ollama]        Остановка; без имени — все настроенные серверы.
@@ -494,7 +522,10 @@ ai power                     Причины пробуждения, таймер
 ai logs [backend] [N] [stream] Последние N строк; stream: all, err, out, wrapper.
 ai endpoint [backend]         OpenAI-совместимый адрес (с localhost самого ПК).
 ai config                    Путь и содержимое конфигурации.
-ai ollama [любые аргументы]   Передача в Ollama; без запуска/переключения служб.
+ai access                    Адреса панели/API, режим ключа, доверенный NAS.
+ai password reset [--generate] Сброс пароля панели; Enter — генерация.
+ai panel info/reset-password  Те же команды восстановления панели.
+ai ollama [аргументы]         Передача в Ollama; serve запрещён, run меняет выбранную модель.
 ai run/pull/list/ps/show/...  Сокращения команд Ollama, не команды Bonsai.
 ai version                   Версия ai.
 ai help                      Эта справка.
@@ -516,7 +547,14 @@ function Invoke-Ai {
     $command = if ($Arguments.Count) { $Arguments[0].ToLowerInvariant() } else { 'help' }
     [string[]]$rest = @(if ($Arguments.Count -gt 1) { $Arguments[1..($Arguments.Count - 1)] })
     if ($command -in @('help', '--help', '-h')) { Show-AiHelp; return }
-    if ($command -in @('version', '--version')) { '0.6.0'; return }
+    if ($command -in @('version', '--version')) { '0.7.0'; return }
+    if ($command -in @('access','panel','password')) {
+        $root=Split-Path ([IO.Path]::GetFullPath($ConfigPath)) -Parent
+        if($command -eq 'access'){if($rest.Count){throw 'Использование: ai access'};$rest=@('info')}
+        if($command -eq 'password'){if(-not $rest.Count -or $rest[0] -ne 'reset'){throw 'ai password reset [--generate]'};$rest=@('reset-password')+@($rest|Select-Object -Skip 1)}
+        Invoke-AiPanelCli -Arguments $rest -Root $root
+        return
+    }
     $config = Read-AiConfig $ConfigPath
     switch ($command) {
         { $_ -in @('start', 'stop', 'restart') } {
@@ -623,13 +661,15 @@ function Invoke-Ai {
             Write-Host $ConfigPath
             Get-Content -LiteralPath $ConfigPath -Raw
         }
-        'ollama' { Invoke-AiOllama $config $rest }
+        'ollama' { Invoke-AiOllama $config $rest $ConfigPath }
         { $_ -in @('run', 'pull', 'push', 'list', 'ps', 'show', 'cp', 'rm', 'create') } {
-            Invoke-AiOllama $config $Arguments
+            Invoke-AiOllama $config $Arguments $ConfigPath
         }
         default { throw "Неизвестная команда '$command'. Справка: ai help" }
     }
 }
 
 . (Join-Path $PSScriptRoot 'Panel.Engine.ps1')
-Export-ModuleMember -Function Invoke-Ai, Get-AiDashboard, Invoke-AiPanelAction
+. (Join-Path $PSScriptRoot 'Panel.Cli.ps1')
+. (Join-Path $PSScriptRoot 'Telemetry.ps1')
+Export-ModuleMember -Function Invoke-Ai, Get-AiDashboard, Invoke-AiPanelAction, Get-AiTelemetry, Get-AiGatewayRuntime

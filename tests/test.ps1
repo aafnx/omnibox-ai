@@ -34,6 +34,10 @@ function New-TestModule {
         }
         $script:failStop = ''
         $script:sleeping = $false
+        $script:realSingleModelLimits=(Get-Command Set-AiSingleModelLimits).ScriptBlock
+        # The sample Windows paths are fictional on the test host. Real temporary
+        # XML fixtures still execute the production policy, including validation.
+        function script:Set-AiSingleModelLimits {param($Config,$Name,$Service)if(Test-Path -LiteralPath $Config.backends[$Name].service_config){& $script:realSingleModelLimits $Config $Name $Service}}
         function script:Assert-AiAdministrator { $script:calls.Add('admin') }
         function script:Invoke-AiLocked { param([scriptblock]$Action); $script:calls.Add('lock'); & $Action }
         function script:Get-AiService { param($Name); return $script:services[$Name] }
@@ -95,7 +99,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.6.0'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.7.0'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -200,13 +204,13 @@ try {
         Assert-Throws { Invoke-Ai -Arguments @('start', 'bonsai', '--bad') -ConfigPath $example } '*Использование*'
         Assert-Equal @(Get-Calls $m).Count 0
     }
-    Test 'exclusive false leaves other backend running' {
+    Test 'single-engine policy also stops another backend in legacy exclusive false config' {
         $m = New-TestModule
         $cfg = Get-Content $example -Raw | ConvertFrom-Json -AsHashtable
         $cfg.exclusive = $false
         $path = Save-TestConfig $cfg
         Invoke-Ai -Arguments @('start') -ConfigPath $path
-        Assert-True (-not ((Get-Calls $m) -like 'stop:*'))
+        Assert-True ((Get-Calls $m) -contains 'stop:ollama')
     }
     Test 'non-local endpoint rejected' {
         $null = New-TestModule
@@ -495,7 +499,8 @@ try {
             }
         }
         Assert-Throws { Invoke-Ai @('restart','--context','128k') $f.path } '*снова запущен*'
-        Assert-Equal (Get-Content $f.bonsai -Raw) $original
+        Assert-Equal (& $m {param($b)Get-AiConfiguredContext $b} $f.config.backends.bonsai) '196608'
+        Assert-Equal (& $m {param($b)Get-AiArgumentValue @(Get-AiPrismArguments (Read-AiServiceXml $b)) @('-np','--parallel')} $f.config.backends.bonsai) '1'
         Assert-Equal (& $m { [string]$script:services.bonsai.Status }) 'Running'
         Assert-Equal @((Get-Calls $m) | Where-Object { $_ -eq 'start:bonsai' }).Count 2
         Assert-True ((Get-Calls $m) -contains 'ready:196608')
@@ -708,7 +713,7 @@ try {
     Test 'Ollama model preload uses empty prompt and configured keep-alive' {
         $m = New-TestModule; $f = New-WebModelFixture
         & $m {
-            function script:Invoke-AiProbe { param($Backend,$Path) if($Path -eq '/api/tags') { [pscustomobject]@{models=@([pscustomobject]@{name='test:latest'})} } else { [pscustomobject]@{version='0.35.1'} } }
+            function script:Invoke-AiProbe { param($Backend,$Path) if($Path -eq '/api/tags') { [pscustomobject]@{models=@([pscustomobject]@{name='test:latest'})} } elseif($Path -eq '/api/ps'){[pscustomobject]@{models=@()}} else { [pscustomobject]@{version='0.35.1'} } }
             function script:Invoke-AiModelRequest { param($Backend,$Path,$Body,$Timeout) $script:modelBody=$Body; $script:modelPath=$Path }
         }
         $null = Invoke-AiPanelAction $f.path @{action='load';backend='ollama';model='test:latest'}
@@ -871,8 +876,132 @@ try {
         Assert-Throws {Get-AiCatalogFiles '../secret'} '*author/model*'
     }
     Test 'OpenAI proxy source compiles under the installed PowerShell runtime' {
-        if(-not ('OmniBox.OpenAiProxy' -as [type])){Add-Type -Path (Join-Path $repo 'src/OpenAi.Proxy.cs')}
+        if(-not ('OmniBox.OpenAiProxy' -as [type])){Add-Type -Path @((Join-Path $repo 'src/Inference.Stats.cs'),(Join-Path $repo 'src/OpenAi.Proxy.cs'))}
         Assert-Equal ([OmniBox.OpenAiProxy].FullName) 'OmniBox.OpenAiProxy'
+    }
+    Test 'access info exposes addresses but no hashes or keys' {
+        $m=New-TestModule;$dir=Join-Path $testRoot 'panel-recovery';$null=New-Item -ItemType Directory $dir
+        Import-Module (Join-Path $repo 'src/Panel.Security.psm1') -Force
+        Import-Module (Join-Path $repo 'src/Gateway.Helpers.psm1') -Force
+        $credential=New-AiPanelPassword 'old recovery password'
+        $panel=@{schema_version=1;port=18090;allowed_hosts=@('192.168.1.77','localhost');credential=$credential;ssh_target='avoq@omnibox';public_origin='https://llm.fnx.red';trusted_proxy_addresses=@('192.168.1.9')}
+        $panel|ConvertTo-Json -Depth 10|Set-Content (Join-Path $dir 'panel.json')
+        $key=New-AiApiKey
+        Write-AiGatewayConfig (Join-Path $dir 'gateway.json') @{schema_version=1;enabled=$true;port=18090;base_url='https://llm.fnx.red/v1';backend='bonsai';require_key=$true;key_hash=$key.hash}
+        $info=& $m {param($Root)Get-AiAccessInfo $Root} $dir
+        Assert-Equal $info.PanelLAN 'http://192.168.1.77:18090';Assert-Equal $info.OpenAIBaseURL 'https://llm.fnx.red/v1'
+        $json=$info|ConvertTo-Json;Assert-True (-not $json.Contains($credential.hash));Assert-True (-not $json.Contains($key.hash));Assert-True (-not $json.Contains($key.key))
+    }
+    Test 'password reset invalidates old password and restarts only panel service' {
+        $m=New-TestModule;$dir=Join-Path $testRoot 'panel-recovery'
+        & $m {$script:services['omnibox-ai']=[pscustomobject]@{Status='Running';StartType='Automatic'}}
+        & $m {param($Root)Set-AiPanelPassword $Root 'new recovery password'} $dir
+        $c=& $m {param($Root)Read-AiPanelConfig (Join-Path $Root 'panel.json')} $dir
+        Assert-True (& $m {param($c)Test-AiPanelPassword 'new recovery password' $c.credential} $c)
+        Assert-True (-not(& $m {param($c)Test-AiPanelPassword 'old recovery password' $c.credential} $c))
+        Assert-Equal ($c.trusted_proxy_addresses -join ',') '192.168.1.9';Assert-Equal $c.public_origin 'https://llm.fnx.red'
+        Assert-Equal ((Get-Calls $m)-join ',') 'stop:omnibox-ai,start:omnibox-ai'
+        $bytes=Get-Content (Join-Path $dir 'panel.json') -Raw;Assert-True (-not $bytes.Contains('new recovery password'))
+    }
+    Test 'invalid password leaves panel credential file unchanged' {
+        $m=New-TestModule;$dir=Join-Path $testRoot 'panel-recovery';$old=Get-Content (Join-Path $dir 'panel.json') -Raw
+        Assert-Throws {& $m {param($Root)Set-AiPanelPassword $Root 'short'} $dir} '*от 12*'
+        Assert-Equal (Get-Content (Join-Path $dir 'panel.json') -Raw) $old;Assert-Equal @(Get-Calls $m).Count 0
+        Assert-Throws {Invoke-Ai @('password','unexpected') (Join-Path $dir 'missing-config.json')} '*ai password reset*'
+    }
+    Test 'single model XML enforces one Prism slot and one Ollama runner' {
+        $m=New-TestModule;$f=New-ContextFixture '-m model.gguf -np 4 --parallel=2 -c 196608'
+        $x=& $m {param($b)New-AiSingleModelXml $b (Read-AiServiceXml $b)} $f.config.backends.bonsai
+        Assert-Equal (& $m {param($x)Get-AiArgumentValue @(Get-AiPrismArguments $x) @('-np','--parallel')} $x) '1'
+        $x=& $m {param($b)New-AiSingleModelXml $b (Read-AiServiceXml $b)} $f.config.backends.ollama
+        Assert-Equal (& $m {param($x)Get-AiXmlEnv $x 'OLLAMA_MAX_LOADED_MODELS' ''} $x) '1'
+        Assert-Equal (& $m {param($x)Get-AiXmlEnv $x 'OLLAMA_NUM_PARALLEL' ''} $x) '1'
+        Assert-Equal (& $m {param($x)Get-AiXmlEnv $x 'OLLAMA_KEEP_ALIVE' ''} $x) '30m'
+    }
+    Test 'router configuration is rejected before stopping another engine' {
+        $m=New-TestModule;$f=New-ContextFixture '-m model.gguf --models-dir C:\models -c 196608'
+        Assert-Throws {Invoke-Ai @('start') $f.path} '*Router mode*'
+        Assert-True (-not ((Get-Calls $m)-like 'stop:*'))
+        Assert-Throws {Invoke-Ai @('ollama','serve') $f.path} '*ai start ollama*'
+    }
+    Test 'Ollama switching unloads previous model before loading and persists selected name' {
+        $m=New-TestModule;$f=New-WebModelFixture
+        & $m {
+            $script:modelCalls=[Collections.Generic.List[string]]::new()
+            function script:Invoke-AiProbe {param($Backend,$Path)switch($Path){
+                '/api/tags'{[pscustomobject]@{models=@([pscustomobject]@{name='new:latest'})}}
+                '/api/ps'{[pscustomobject]@{models=@([pscustomobject]@{name='old:latest'})}}
+                default{[pscustomobject]@{version='0.35.1'}}}}
+            function script:Invoke-AiModelRequest {param($Backend,$Path,$Body,$Timeout)$script:modelCalls.Add("$($Body.model):$($Body.keep_alive)")}
+        }
+        $null=Invoke-AiPanelAction $f.path @{action='load';backend='ollama';model='new:latest'}
+        Assert-Equal (& $m {$script:modelCalls -join ','}) 'old:latest:0,new:latest:30m'
+        $c=Get-Content $f.path -Raw|ConvertFrom-Json -AsHashtable;Assert-Equal $c.backends.ollama.active_model 'new:latest'
+    }
+    Test 'gateway rejects an unexpected loaded Ollama model and uses actual context' {
+        $m=New-TestModule;$f=New-WebModelFixture
+        $f.config.backends.ollama.active_model='selected';$path=Save-TestConfig $f.config
+        & $m {
+            $script:loadedName='other:latest'
+            function script:Invoke-AiProbe {param($Backend,$Path)[pscustomobject]@{models=@([pscustomobject]@{name=$script:loadedName;context_length=65536})}}
+        }
+        $r=Get-AiGatewayRuntime $path 'ollama';Assert-True (-not $r.available);Assert-Equal $r.status 409
+        & $m {$script:loadedName='selected:latest'}
+        $r=Get-AiGatewayRuntime $path 'ollama';Assert-True $r.available;Assert-Equal $r.model 'selected:latest';Assert-Equal $r.context 65536
+    }
+    Test 'gateway and client card retain the active alias while new settings are pending' {
+        $m=New-TestModule;$f=New-WebModelFixture
+        & $m {$script:services.bonsai.Status='Running';$script:services.ollama.Status='Stopped'}
+        $null=Invoke-AiPanelAction $f.path @{action='save';backend='bonsai';settings=@{alias='future-model';context='128k'}}
+        $r=Get-AiGatewayRuntime $f.path 'bonsai';Assert-Equal $r.model 'bonsai-2-27b';Assert-Equal $r.context 196608
+        $d=Get-AiDashboard $f.path;$b=$d.backends|Where-Object name -eq 'bonsai'
+        Assert-Equal $b.selected_model 'bonsai-2-27b';Assert-Equal $b.settings.alias 'future-model';Assert-True $b.pending
+    }
+    Test 'telemetry of stopped engines performs no system or GPU sampling' {
+        $m=New-TestModule;& $m {$script:services.ollama.Status='Stopped';function script:Get-AiSystemSample {throw 'must not sample'}}
+        $t=Get-AiTelemetry $example;Assert-True (-not $t.enabled)
+    }
+    Test 'telemetry caches samples for concurrent visible clients' {
+        $m=New-TestModule;& $m {$script:samples=0;function script:Get-AiSystemSample {$script:samples++;@{cpu_percent=25;ram_total_gb=32;ram_used_gb=16;cpu_temperature=$null;gpu=@()}}}
+        $a=Get-AiTelemetry $example;$b=Get-AiTelemetry $example
+        Assert-True $a.enabled;Assert-Equal $a.sample.cpu_percent 25;Assert-Equal $b.sample.ram_used_gb 16
+        Assert-Equal (& $m {$script:samples}) 1
+    }
+    Test 'usage journal writes whitelisted metadata and reloads session totals' {
+        $dir=Join-Path $testRoot 'usage-journal';[OmniBox.InferenceStats]::Configure($dir)
+        $cancel=[Threading.CancellationTokenSource]::new()
+        $r=[OmniBox.InferenceStats]::Begin('bonsai','bonsai-2-27b','/v1/chat/completions',196608,'private session identifier',$cancel)
+        [OmniBox.InferenceStats]::Observe($r,'{"choices":[{"message":{"content":"private answer"}}],"usage":{"prompt_tokens":20,"completion_tokens":8,"total_tokens":28}}')
+        [OmniBox.InferenceStats]::Finish($r,200,$true);$cancel.Dispose()
+        $text=Get-Content (Join-Path $dir 'requests.jsonl') -Raw
+        Assert-True (-not $text.Contains('private'));Assert-True (-not $text.Contains('choices'));Assert-True (-not $text.Contains('message'))
+        [OmniBox.InferenceStats]::Configure($dir);$data=[OmniBox.InferenceStats]::Snapshot()|ConvertFrom-Json
+        Assert-Equal $data.requests.Count 1;Assert-Equal $data.sessions[0].total_tokens 28;Assert-Equal $data.requests[0].context_remaining 196580
+    }
+    Test 'live progress updates token counters without counting SSE fragments as tokens' {
+        [OmniBox.InferenceStats]::Configure((Join-Path $testRoot 'live-usage'))
+        $cancel=[Threading.CancellationTokenSource]::new();$r=[OmniBox.InferenceStats]::Begin('bonsai','bonsai-2-27b','/v1/chat/completions',32768,'',$cancel)
+        [OmniBox.InferenceStats]::Observe($r,'{"usage":null,"prompt_progress":{"total":40,"processed":30},"timings":{"predicted_n":3}}')
+        [OmniBox.InferenceStats]::ObserveSlot('bonsai',9,32768)
+        $s=[OmniBox.InferenceStats]::Snapshot()|ConvertFrom-Json;Assert-Equal $s.active.input_tokens 40;Assert-Equal $s.active.output_tokens 9;Assert-Equal $s.active.total_tokens 49
+        [OmniBox.InferenceStats]::Finish($r,200,$true);$cancel.Dispose()
+    }
+    Test 'generation and control guards reject overlapping work but stop can cancel' {
+        [OmniBox.InferenceStats]::Configure((Join-Path $testRoot 'busy-usage'))
+        $cancel=[Threading.CancellationTokenSource]::new();$r=[OmniBox.InferenceStats]::Begin('bonsai','model','/v1/chat/completions',32768,'',$cancel)
+        Assert-True ($null -eq [OmniBox.InferenceStats]::Begin('bonsai','model','/v1/chat/completions',32768,'',$cancel))
+        Assert-True (-not [OmniBox.InferenceStats]::BeginControl($false));Assert-True ([OmniBox.InferenceStats]::BeginControl($true));Assert-True $cancel.IsCancellationRequested
+        [OmniBox.InferenceStats]::Finish($r,504,$false);[OmniBox.InferenceStats]::EndControl();$cancel.Dispose()
+    }
+    Test 'request journal rotates bounded files and preserves unknown usage as null' {
+        $dir=Join-Path $testRoot 'rotation-usage';[OmniBox.InferenceStats]::Configure($dir)
+        [IO.File]::WriteAllText((Join-Path $dir 'requests.jsonl'),('x'*(4MB)))
+        $cancel=[Threading.CancellationTokenSource]::new();$r=[OmniBox.InferenceStats]::Begin('bonsai','model','/v1/chat/completions',32768,'',$cancel)
+        [OmniBox.InferenceStats]::Finish($r,502,$false);$cancel.Dispose()
+        Assert-True (Test-Path (Join-Path $dir 'requests.jsonl.1'))
+        $r=Get-Content (Join-Path $dir 'requests.jsonl') -Raw|ConvertFrom-Json
+        Assert-True ($null -eq $r.input_tokens);Assert-True ($null -eq $r.output_tokens);Assert-True ($null -eq $r.total_tokens)
+        Assert-Equal $r.state 'failed'
     }
     Test 'self-contained package matches every current source file' {
         $setup = Join-Path $repo 'dist/install-omnibox-ai.ps1'
@@ -882,7 +1011,7 @@ try {
         $memory = [IO.MemoryStream]::new([Convert]::FromBase64String($encoded))
         $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Read)
         try {
-            Assert-Equal $archive.Entries.Count 26
+            Assert-Equal $archive.Entries.Count 30
             foreach ($entry in $archive.Entries) {
                 Assert-True ($entry.FullName -notmatch '(^/|\.\.)')
                 $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)

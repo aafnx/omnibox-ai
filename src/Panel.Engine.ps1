@@ -127,7 +127,8 @@ function New-AiLaunchXml {
 
 function Invoke-AiModelRequest {
     param($Backend, [string]$Path, $Body, [int]$Timeout = 180)
-    Invoke-RestMethod -Uri ($Backend.base_url.TrimEnd('/') + $Path) -Method Post -ContentType 'application/json; charset=utf-8' -Body ($Body | ConvertTo-Json -Depth 10 -Compress) -TimeoutSec $Timeout -ErrorAction Stop
+    $headers=@{};if($Backend.Contains('upstream_api_key') -and $Backend.upstream_api_key){$headers.Authorization='Bearer '+$Backend.upstream_api_key}
+    Invoke-RestMethod -Uri ($Backend.base_url.TrimEnd('/') + $Path) -Headers $headers -Method Post -ContentType 'application/json; charset=utf-8' -Body ($Body | ConvertTo-Json -Depth 10 -Compress) -TimeoutSec $Timeout -ErrorAction Stop
 }
 
 function Get-AiGpuData {
@@ -135,11 +136,15 @@ function Get-AiGpuData {
     try {
         $exe = Get-Command nvidia-smi -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $exe) { return @() }
-        $lines = @(& $exe.Source --query-gpu=name,memory.total,memory.used,memory.free --format=csv,noheader,nounits 2>$null)
+        $lines = @(& $exe.Source --query-gpu=name,memory.total,memory.used,memory.free,utilization.gpu,temperature.gpu,power.draw --format=csv,noheader,nounits 2>$null)
         if ($LASTEXITCODE -ne 0) { return @() }
         return @($lines | ForEach-Object {
             $parts = $_ -split ',\s*'
-            if ($parts.Count -eq 4) { @{ name = $parts[0]; total = [int]$parts[1]; used = [int]$parts[2]; free = [int]$parts[3] } }
+            if ($parts.Count -ge 4) {
+                $row=@{ name = $parts[0]; total = [int]$parts[1]; used = [int]$parts[2]; free = [int]$parts[3];utilization=$null;temperature=$null;power_watts=$null }
+                foreach($pair in @(@('utilization',4),@('temperature',5),@('power_watts',6))){$n=0.0;if($parts.Count -gt $pair[1] -and [double]::TryParse($parts[$pair[1]],[Globalization.NumberStyles]::Float,[Globalization.CultureInfo]::InvariantCulture,[ref]$n)){$row[$pair[0]]=$n}}
+                $row
+            }
         })
     } finally { $global:LASTEXITCODE = $savedExit }
 }
@@ -163,10 +168,69 @@ function Get-AiDashboard {
             try { $tags = Invoke-AiProbe $b '/api/tags'; $models = @($tags.models | ForEach-Object { @{ id = $_.name; name = $_.name; bytes = $_.size } }) }
             catch { $errors += $_.Exception.Message }
         }
-        $rows += @{ name = $name; type = $b.type; service = $status.Service; startup = $status.Startup; api = $status.API; active_context = $status.Context; sleeping = $status.Sleeping; loaded_model = $status.Model; settings = $settings; models = $models; pending = $pending; can_restore = $restore; errors = $errors; endpoint = $b.base_url.TrimEnd('/') + '/v1' }
+        $selectedModel=if($b.type -eq 'prism' -and $null -ne $settings){$settings.alias}elseif($b.Contains('active_model')){$b.active_model}else{''}
+        if($b.type -eq 'prism' -and $pending -and $status.Service -eq 'Running'){
+            try{$previous=[xml](Get-Content -LiteralPath ($b.service_config+'.ai-previous') -Raw);$selectedModel=Get-AiArgumentValue @(Get-AiPrismArguments $previous) @('--alias') ([IO.Path]::GetFileNameWithoutExtension($status.Model))}catch{}
+        }
+        $rows += @{ name = $name; type = $b.type; service = $status.Service; startup = $status.Startup; api = $status.API; active_context = $status.Context; sleeping = $status.Sleeping; loaded_model = $status.Model; selected_model=$selectedModel; settings = $settings; models = $models; pending = $pending; can_restore = $restore; errors = $errors; endpoint = $b.base_url.TrimEnd('/') + '/v1' }
     }
     $gpu = @(); if ($IncludeGpu) { $gpu = @(Get-AiGpuData) }
-    return @{ version = '0.6.0'; default_backend = $config.default_backend; exclusive = $config.exclusive; backends = $rows; gpu = $gpu; computer = [Environment]::MachineName }
+    return @{ version = '0.7.0'; default_backend = $config.default_backend; exclusive = $true; backends = $rows; gpu = $gpu; computer = [Environment]::MachineName }
+}
+
+function Get-AiGatewayRuntime {
+    param([string]$ConfigPath,[string]$Name)
+    $config=Read-AiConfig $ConfigPath;$b=Get-AiBackend $config $Name
+    $s=Get-AiService $b.service
+    if($null -eq $s -or [string]$s.Status -ne 'Running'){return @{available=$false;reason='Selected engine is stopped.';status=503}}
+    foreach($other in $config.backends.Keys){if($other -ne $Name){$o=Get-AiService $config.backends[$other].service;if($null -ne $o -and [string]$o.Status -notin @('Stopped')){return @{available=$false;reason='More than one engine is active. Stop the other engine first.';status=409}}}}
+    $settings=Get-AiLaunchSettings $b
+    $model=if($b.type -eq 'prism'){$settings.alias}elseif($b.Contains('active_model')){$b.active_model}else{''}
+    $context=[int]$settings.context
+    if($b.type -eq 'prism'){
+        $props=Invoke-AiProbe $b '/props'
+        if($props.PSObject.Properties['default_generation_settings'] -and [int]$props.default_generation_settings.n_ctx -gt 0){$context=[int]$props.default_generation_settings.n_ctx}
+        $history=Read-AiRecoveryState $b
+        if($null -ne $history -and $history.pending){$previous=[xml](Get-Content -LiteralPath ($b.service_config+'.ai-previous') -Raw);$model=Get-AiArgumentValue @(Get-AiPrismArguments $previous) @('--alias') ([IO.Path]::GetFileNameWithoutExtension($props.model_path))}
+    }
+    if($b.type -eq 'ollama'){
+        $ps=Invoke-AiProbe $b '/api/ps';$loaded=@($ps.models)
+        if($loaded.Count -gt 1){return @{available=$false;reason='Multiple models are loaded. Unload them in the panel first.';status=409}}
+        if($loaded.Count -eq 1){
+            $actual=[string]$loaded[0].name
+            if($model -and $actual -ne $model -and $actual -ne "${model}:latest"){return @{available=$false;reason='A different model was loaded outside OmniBox AI. Select/load it in the panel.';status=409}}
+            $model=$actual
+            if($loaded[0].PSObject.Properties['context_length'] -and [int]$loaded[0].context_length -gt 0){$context=[int]$loaded[0].context_length}
+        }
+    }
+    return @{available=$true;model=[string]$model;context=$context;type=$b.type}
+}
+
+function New-AiSingleModelXml {
+    param($Backend,[Xml.XmlDocument]$Xml)
+    if($Backend.type -eq 'prism'){
+        $tokens=@(Get-AiPrismArguments $Xml)
+        if(@($tokens|Where-Object{$_ -match '^--models-(dir|preset)(=|$)'}).Count){throw 'Router mode не поддерживается: настрой один файл GGUF.'}
+        Set-AiArgumentValue $Xml @('-np','--parallel') '1'
+    }else{
+        Set-AiXmlEnv $Xml 'OLLAMA_MAX_LOADED_MODELS' '1'
+        Set-AiXmlEnv $Xml 'OLLAMA_NUM_PARALLEL' '1'
+    }
+    return ,$Xml
+}
+
+function Set-AiSelectedModel {
+    param([string]$ConfigPath,[string]$Name,[string]$Model)
+    $c=Read-AiConfig $ConfigPath;$c.backends[$Name].active_model=$Model;$c.exclusive=$true
+    Write-AiAtomicBytes $ConfigPath ([Text.UTF8Encoding]::new($false).GetBytes(($c|ConvertTo-Json -Depth 10)))
+}
+
+function Clear-AiOtherOllamaModels {
+    param($Backend,[string]$KeepModel,[int]$Timeout)
+    $ps=Invoke-AiProbe $Backend '/api/ps'
+    foreach($model in @($ps.models)){
+        if($model.name -ne $KeepModel){$null=Invoke-AiModelRequest $Backend '/api/generate' @{model=$model.name;prompt='';stream=$false;keep_alive=0} $Timeout}
+    }
 }
 
 function Assert-AiModelName {
@@ -223,10 +287,12 @@ function Invoke-AiPanelAction {
         if ($null -eq $service -or [string]$service.Status -ne 'Running') { throw 'Ollama остановлена.' }
         $tags = Invoke-AiProbe $b '/api/tags'
         if ([string]$Request.model -notin @($tags.models | ForEach-Object name)) { throw 'Модель не установлена. Сначала скачай её.' }
+        Clear-AiOtherOllamaModels $b ([string]$Request.model) $config.startup_timeout_seconds
         $settings = Get-AiLaunchSettings $b
         $body = @{ model = [string]$Request.model; stream = $false; prompt = ''; keep_alive = $(if ($operationName -eq 'unload') { 0 } else { $settings.keep_alive }) }
         if ($operationName -eq 'load' -and $settings.context -match '^\d+$') { $body.options = @{ num_ctx = [int]$settings.context } }
         $null = Invoke-AiModelRequest $b '/api/generate' $body $config.startup_timeout_seconds
+        Set-AiSelectedModel $ConfigPath $name ([string]$Request.model)
         return 'Модель загружена в память.'
     }
 }

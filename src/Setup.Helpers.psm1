@@ -43,7 +43,7 @@ function Get-AiSetupOptions {
     }
     $start = $StartServer.IsPresent
     if (-not $NonInteractive) {
-        $start = Read-AiYesNo -Prompt 'Запустить выбранный сервер сейчас? При exclusive=true другой сервер остановится' -ReadAnswer $ReadAnswer
+        $start = Read-AiYesNo -Prompt 'Запустить выбранный сервер сейчас? Другой управляемый сервер остановится' -ReadAnswer $ReadAnswer
     }
     return @{ directory = $InstallDirectory; config = $config; backend = $DefaultBackend; context = $tokens; start = $start }
 }
