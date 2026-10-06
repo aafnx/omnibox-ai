@@ -166,7 +166,7 @@ function Get-AiDashboard {
         $rows += @{ name = $name; type = $b.type; service = $status.Service; startup = $status.Startup; api = $status.API; active_context = $status.Context; sleeping = $status.Sleeping; loaded_model = $status.Model; settings = $settings; models = $models; pending = $pending; can_restore = $restore; errors = $errors; endpoint = $b.base_url.TrimEnd('/') + '/v1' }
     }
     $gpu = @(); if ($IncludeGpu) { $gpu = @(Get-AiGpuData) }
-    return @{ version = '0.4.0'; default_backend = $config.default_backend; exclusive = $config.exclusive; backends = $rows; gpu = $gpu; computer = [Environment]::MachineName }
+    return @{ version = '0.5.0'; default_backend = $config.default_backend; exclusive = $config.exclusive; backends = $rows; gpu = $gpu; computer = [Environment]::MachineName }
 }
 
 function Assert-AiModelName {

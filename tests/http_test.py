@@ -2,6 +2,7 @@
 import base64
 import hashlib
 import http.cookiejar
+import http.client
 import json
 import os
 from pathlib import Path
@@ -20,7 +21,7 @@ PWSH = os.environ.get('PWSH', 'pwsh')
 PASSWORD = 'temporary integration password'
 
 class PanelFixture:
-    def __init__(self):
+    def __init__(self, proxy=False):
         self.temp = tempfile.TemporaryDirectory(prefix='omnibox-ai-http-')
         self.root = Path(self.temp.name)
         shutil.copytree(ROOT / 'web', self.root / 'web')
@@ -29,7 +30,10 @@ class PanelFixture:
             self.port = sock.getsockname()[1]
         salt = secrets.token_bytes(32)
         credential = dict(salt=base64.b64encode(salt).decode(), hash=base64.b64encode(hashlib.pbkdf2_hmac('sha256', PASSWORD.encode(), salt, 210000)).decode(), iterations=210000)
-        (self.root / 'panel.json').write_text(json.dumps(dict(schema_version=1, port=self.port, allowed_hosts=['127.0.0.1', 'localhost'], credential=credential, ssh_target='avoq@192.168.1.77')))
+        panel = dict(schema_version=1, port=self.port, allowed_hosts=['127.0.0.1', 'localhost'], credential=credential, ssh_target='avoq@192.168.1.77')
+        if proxy:
+            panel.update(public_origin='https://ai.example.com', trusted_proxy_addresses=['127.0.0.1'])
+        (self.root / 'panel.json').write_text(json.dumps(panel))
         logs = self.root / 'logs'
         logs.mkdir()
         (logs / 'bonsai-service.err.log').write_text('fixture error log\n')
@@ -181,6 +185,78 @@ class HttpTests(unittest.TestCase):
         for _ in range(6):
             self.assertEqual(self.call('/api/login', {'password': 'incorrect'}, auth=False)[0], 401)
         self.assertEqual(self.call('/api/login', {'password': PASSWORD}, auth=False)[0], 429)
+
+class ProxyTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture = PanelFixture(proxy=True)
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.fixture.close()
+
+    def request(self, path, body=None, *, source='127.0.0.1', forwarded=True, origin=None, extra=None, cookie=None):
+        headers = {}
+        if forwarded:
+            headers.update({'X-Forwarded-Proto':'https','X-Forwarded-Host':'ai.example.com','X-Forwarded-For':'198.51.100.10'})
+        if body is not None:
+            headers['Content-Type'] = 'application/json'
+            headers['Origin'] = origin or 'https://ai.example.com'
+        if extra:
+            headers.update(extra)
+        if cookie:
+            headers['Cookie'] = cookie
+        connection = http.client.HTTPConnection('127.0.0.1', self.fixture.port, timeout=5, source_address=(source, 0))
+        try:
+            connection.request('GET' if body is None else 'POST', path, body=None if body is None else json.dumps(body).encode(), headers=headers)
+            response = connection.getresponse()
+            return response.status, json.loads(response.read()), response.headers
+        finally:
+            connection.close()
+
+    def setUp(self):
+        code, data, headers = self.request('/api/login', {'password':PASSWORD})
+        self.assertEqual(code, 200, data)
+        self.csrf = data['csrf']
+        self.cookie_header = headers['Set-Cookie']
+        self.cookie = self.cookie_header.split(';')[0]
+
+    def test_01_https_login_and_session(self):
+        self.assertIn('; Secure', self.cookie_header)
+        self.assertIn('HttpOnly', self.cookie_header)
+        self.assertEqual(self.request('/api/status', cookie=self.cookie)[0], 200)
+
+    def test_02_https_origin_and_csrf(self):
+        self.assertEqual(self.request('/api/logout', {}, cookie=self.cookie)[0], 403)
+        code, _, headers = self.request('/api/logout', {}, cookie=self.cookie, extra={'X-Omnibox-CSRF':self.csrf})
+        self.assertEqual(code, 200)
+        self.assertIn('Secure', headers['Set-Cookie'])
+
+    def test_03_wrong_origin_is_rejected(self):
+        self.assertEqual(self.request('/api/login', {'password':PASSWORD}, origin='https://other.example.com')[0], 403)
+        self.assertEqual(self.request('/api/login', {'password':PASSWORD}, origin=self.fixture.url)[0], 403)
+
+    def test_04_wrong_forwarded_host_is_rejected(self):
+        self.assertEqual(self.request('/api/login', {'password':PASSWORD}, extra={'X-Forwarded-Host':'other.example.com'})[0], 400)
+
+    def test_05_downgrade_or_missing_proto_is_rejected(self):
+        self.assertEqual(self.request('/api/session', cookie=self.cookie, extra={'X-Forwarded-Proto':'http'})[0], 400)
+        self.assertEqual(self.request('/api/session', cookie=self.cookie, forwarded=False)[0], 400)
+
+    def test_06_secure_session_cannot_be_reused_directly(self):
+        self.assertEqual(self.request('/api/session', source='127.0.0.2', forwarded=False, cookie=self.cookie)[0], 401)
+
+    def test_07_untrusted_forwarding_headers_do_not_enable_https(self):
+        self.assertEqual(self.request('/api/login', {'password':PASSWORD}, source='127.0.0.2')[0], 403)
+        code, _, headers = self.request('/api/login', {'password':PASSWORD}, source='127.0.0.2', origin=self.fixture.url)
+        self.assertEqual(code, 200)
+        self.assertNotIn('Secure', headers['Set-Cookie'])
+
+    def test_08_proxy_rate_limit_is_per_client(self):
+        for _ in range(6):
+            self.assertEqual(self.request('/api/login', {'password':'wrong'}, extra={'X-Forwarded-For':'198.51.100.41'})[0], 401)
+        self.assertEqual(self.request('/api/login', {'password':PASSWORD}, extra={'X-Forwarded-For':'198.51.100.41'})[0], 429)
+        self.assertEqual(self.request('/api/login', {'password':PASSWORD}, extra={'X-Forwarded-For':'198.51.100.42'})[0], 200)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

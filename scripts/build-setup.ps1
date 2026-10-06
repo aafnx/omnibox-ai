@@ -3,7 +3,7 @@
 param([string]$OutputPath = (Join-Path (Split-Path $PSScriptRoot -Parent) 'dist/install-omnibox-ai.ps1'))
 $ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
-$files = @('ai.ps1', 'ai.cmd', 'panel.ps1', 'src/OmniBox.Ai.psm1', 'src/Panel.Engine.ps1', 'src/Panel.Server.psm1', 'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Setup.Helpers.psm1', 'web/index.html', 'web/style.css', 'web/app.js', 'config.example.json', 'install.ps1', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md', 'docs/web-panel.md')
+$files = @('ai.ps1', 'ai.cmd', 'panel.ps1', 'src/OmniBox.Ai.psm1', 'src/Panel.Engine.ps1', 'src/Panel.Server.psm1', 'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Setup.Helpers.psm1', 'web/index.html', 'web/style.css', 'web/app.js', 'config.example.json', 'install.ps1', 'README.md', 'docs/commands.md', 'docs/architecture.md', 'docs/install.md', 'docs/web-panel.md', 'docs/reverse-proxy.md')
 $memory = [IO.MemoryStream]::new()
 try {
     $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Create, $true)

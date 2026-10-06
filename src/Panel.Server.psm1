@@ -85,7 +85,7 @@ function Start-OmniBoxPanel {
     $assets = @{ '/' = @('web/index.html','text/html; charset=utf-8'); '/app.js' = @('web/app.js','text/javascript; charset=utf-8'); '/style.css' = @('web/style.css','text/css; charset=utf-8') }
     try {
         $listener.Start()
-        Write-Host "OmniBox AI 0.4.0 panel: port $($panel.port)"
+        Write-Host "OmniBox AI 0.5.0 panel: port $($panel.port)"
         while ($listener.IsListening) {
             # Blocking wait: no background polling, model probes, GPU queries, or wake timers.
             $context = $listener.GetContext()
@@ -97,9 +97,10 @@ function Start-OmniBoxPanel {
                     $asset = $assets[$path]
                     Send-AiHttpResponse $context 200 (Get-Content -LiteralPath (Join-Path $Root $asset[0]) -Raw) $asset[1]; continue
                 }
-                if ($method -eq 'POST' -and -not (Test-AiPanelOrigin $request.Headers['Origin'] $request.Url.Authority)) { Send-AiHttpResponse $context 403 @{ error = 'Origin запрещён.' }; continue }
+                $transport = Get-AiPanelRequestContext $request $panel
+                if ($method -eq 'POST' -and -not (Test-AiPanelOrigin $request.Headers['Origin'] $transport.authority $transport.scheme)) { Send-AiHttpResponse $context 403 @{ error = 'Origin запрещён.' }; continue }
                 if ($method -eq 'POST' -and $path -eq '/api/login') {
-                    $ip = $request.RemoteEndPoint.Address.ToString(); $now = [DateTime]::UtcNow
+                    $ip = $transport.client_address; $now = [DateTime]::UtcNow
                     foreach ($key in @($attempts.Keys)) { if ($attempts[$key].until -lt $now) { $attempts.Remove($key) } }
                     if ($attempts.Contains($ip) -and $attempts[$ip].count -ge 6) { Send-AiHttpResponse $context 429 @{ error = 'Слишком много попыток. Повтори через 5 минут.' }; continue }
                     $body = Read-AiHttpJson $request
@@ -115,17 +116,18 @@ function Start-OmniBoxPanel {
                     foreach ($key in @($sessions.Keys)) { if ($sessions[$key].expires -lt $now) { $sessions.Remove($key) } }
                     if ($sessions.Count -ge 32) { $old = $sessions.Keys | Sort-Object { $sessions[$_].expires } | Select-Object -First 1; $sessions.Remove($old) }
                     $id = New-AiPanelNonce; $csrf = New-AiPanelNonce
-                    $sessions[$id] = @{ csrf = $csrf; expires = $now.AddHours(8) }
-                    $context.Response.Headers['Set-Cookie'] = "omnibox_session=$id; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800"
+                    $sessions[$id] = @{ csrf = $csrf; expires = $now.AddHours(8); secure = $transport.secure }
+                    $secureCookie = if ($transport.secure) { '; Secure' } else { '' }
+                    $context.Response.Headers['Set-Cookie'] = "omnibox_session=$id; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800$secureCookie"
                     Send-AiHttpResponse $context 200 @{ csrf = $csrf }; continue
                 }
                 $cookie = $request.Cookies['omnibox_session']
                 $session = if ($null -ne $cookie -and $sessions.Contains($cookie.Value)) { $sessions[$cookie.Value] } else { $null }
-                if ($null -eq $session -or $session.expires -lt [DateTime]::UtcNow) { Send-AiHttpResponse $context 401 @{ error = 'Войди в панель.' }; continue }
+                if ($null -eq $session -or $session.expires -lt [DateTime]::UtcNow -or ($session.secure -and -not $transport.secure)) { Send-AiHttpResponse $context 401 @{ error = 'Войди в панель.' }; continue }
                 if ($method -eq 'POST' -and $request.Headers['X-Omnibox-CSRF'] -cne $session.csrf) { Send-AiHttpResponse $context 403 @{ error = 'CSRF-проверка не пройдена.' }; continue }
                 switch ("$method $path") {
                     'GET /api/session' { Send-AiHttpResponse $context 200 @{ csrf = $session.csrf; ssh_target = $panel.ssh_target; port = $panel.port } }
-                    'POST /api/logout' { $sessions.Remove($cookie.Value); $context.Response.Headers['Set-Cookie'] = 'omnibox_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0'; Send-AiHttpResponse $context 200 @{ ok = $true } }
+                    'POST /api/logout' { $sessions.Remove($cookie.Value); $secureCookie = if ($transport.secure) { '; Secure' } else { '' }; $context.Response.Headers['Set-Cookie'] = "omnibox_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0$secureCookie"; Send-AiHttpResponse $context 200 @{ ok = $true } }
                     'GET /api/status' {
                         $data = Get-AiDashboard -ConfigPath $configPath -IncludeGpu:($request.QueryString['gpu'] -eq '1')
                         $data.operations = @(Update-AiPanelOperations $operations)

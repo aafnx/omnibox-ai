@@ -11,7 +11,8 @@ Self-contained interactive installer. Run on the Windows PC through SSH.
 param([string]$InstallDirectory = 'C:\tools\ai', [switch]$NonInteractive,
     [string]$DefaultBackend = '', [string]$Context = '', [switch]$StartServer,
     [switch]$NoProfileUpdate, [switch]$CheckOnly, [string]$PanelHost = '', [int]$PanelPort = 18090,
-    [string]$PanelRemoteAddresses = 'LocalSubnet', [switch]$NoPanelSetup)
+    [string]$PanelRemoteAddresses = 'LocalSubnet', [switch]$NoPanelSetup,
+    [string]$PanelPublicUrl = '', [string]$PanelTrustedProxyAddresses = '')
 
 $ErrorActionPreference = 'Stop'
 $global:LASTEXITCODE = 0
@@ -20,7 +21,7 @@ $payload = '__PAYLOAD_BASE64__'
 $payloadBytes = [Convert]::FromBase64String($payload)
 $actualSha = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($payloadBytes)).ToLowerInvariant()
 if ($actualSha -cne $expectedSha) { throw 'Встроенный пакет повреждён: SHA256 не совпадает.' }
-if ($CheckOnly) { Write-Output "OmniBox AI 0.4.0 payload OK ($($payloadBytes.Length) bytes)"; return }
+if ($CheckOnly) { Write-Output "OmniBox AI 0.5.0 payload OK ($($payloadBytes.Length) bytes)"; return }
 if (-not $IsWindows) { throw 'Установщик предназначен для Windows.' }
 
 $temporaryDirectory = Join-Path $env:TEMP ('omnibox-ai-package-' + [Guid]::NewGuid().ToString('N'))
@@ -33,6 +34,8 @@ try {
     $installArgs = @{ InstallDirectory = $InstallDirectory; NonInteractive = $NonInteractive; DefaultBackend = $DefaultBackend; Context = $Context; StartServer = $StartServer; NoProfileUpdate = $NoProfileUpdate; PanelHost = $PanelHost; NoPanelSetup = $NoPanelSetup }
     if ($PSBoundParameters.ContainsKey('PanelRemoteAddresses')) { $installArgs.PanelRemoteAddresses = $PanelRemoteAddresses }
     if ($PSBoundParameters.ContainsKey('PanelPort')) { $installArgs.PanelPort = $PanelPort }
+    if ($PSBoundParameters.ContainsKey('PanelPublicUrl')) { $installArgs.PanelPublicUrl = $PanelPublicUrl }
+    if ($PSBoundParameters.ContainsKey('PanelTrustedProxyAddresses')) { $installArgs.PanelTrustedProxyAddresses = $PanelTrustedProxyAddresses }
     & (Join-Path $sourcePath 'install.ps1') @installArgs
     Write-Host 'Установка завершена. Доступные команды: ai help'
 } finally {

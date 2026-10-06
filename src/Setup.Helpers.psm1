@@ -1,5 +1,17 @@
 Set-StrictMode -Version Latest
 
+function Read-AiYesNo {
+    param([string]$Prompt, [bool]$Default = $false, [scriptblock]$ReadAnswer = { param($Text) Read-Host $Text })
+    $hint = if ($Default) { 'Y/n' } else { 'y/N' }
+    $answer = & $ReadAnswer "$Prompt [$hint]"
+    if ([string]::IsNullOrWhiteSpace($answer)) { return $Default }
+    switch ($answer.Trim().ToLowerInvariant()) {
+        { $_ -in @('yes','y') } { return $true }
+        { $_ -in @('no','n') } { return $false }
+        default { throw 'Please answer yes/no or y/n.' }
+    }
+}
+
 function Get-AiSetupOptions {
     param([string]$InstallDirectory = 'C:\tools\ai', [scriptblock]$ConfigLoader, [scriptblock]$ContextReader,
         [switch]$NonInteractive, [string]$DefaultBackend = '', [string]$Context = '', [switch]$StartServer,
@@ -31,12 +43,9 @@ function Get-AiSetupOptions {
     }
     $start = $StartServer.IsPresent
     if (-not $NonInteractive) {
-        $answer = & $ReadAnswer 'Запустить выбранный сервер сейчас? При exclusive=true другой сервер остановится [нет]'
-        if ([string]::IsNullOrWhiteSpace($answer) -or $answer.Trim().ToLowerInvariant() -in @('нет', 'н', 'no', 'n')) { $start = $false }
-        elseif ($answer.Trim().ToLowerInvariant() -in @('да', 'д', 'yes', 'y')) { $start = $true }
-        else { throw 'Ответ на запуск: да или нет.' }
+        $start = Read-AiYesNo -Prompt 'Запустить выбранный сервер сейчас? При exclusive=true другой сервер остановится' -ReadAnswer $ReadAnswer
     }
     return @{ directory = $InstallDirectory; config = $config; backend = $DefaultBackend; context = $tokens; start = $start }
 }
 
-Export-ModuleMember -Function Get-AiSetupOptions
+Export-ModuleMember -Function Get-AiSetupOptions, Read-AiYesNo

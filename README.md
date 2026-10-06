@@ -1,6 +1,6 @@
 # OmniBox AI
 
-Универсальная панель управления локальными ИИ-серверами на Windows. Версия **0.4.0**. Открывай её с ноутбука или смартфона, запускай движки, меняй настройки и управляй загрузкой моделей. Для работы с нейросетью используется отдельный клиент через API.
+Светлая универсальная панель управления локальными ИИ-серверами на Windows. Версия **0.5.0**. Открывай её с ноутбука или смартфона, запускай движки, меняй настройки и управляй загрузкой моделей. Для работы с нейросетью используется отдельный клиент через API.
 
 ## Возможности
 
@@ -9,6 +9,7 @@
 - Контекст и время простоя; GPU layers, Flash Attention, KV cache и batch для PrismML.
 - Сохранение параметров для следующего запуска или применение сейчас, с откатом при ошибке запуска.
 - Состояние служб, моделей, памяти и журналы; команды подключения для внешних клиентов.
+- Явные поля OpenAI Base URL, Model и API key для Jan/Pi; поддержка HTTPS reverse proxy на NAS.
 - Отдельный пароль панели; CLI `ai` остаётся для диагностики и восстановления.
 
 ## Движки
@@ -30,7 +31,7 @@
 & { $ErrorActionPreference = 'Stop'; $token = Read-Host 'GitHub token (omnibox-ai: Contents Read)' -AsSecureString; $headers = @{}; $file = Join-Path $env:TEMP ('omnibox-ai-install-' + [Guid]::NewGuid().ToString('N') + '.ps1'); try {     $headers.Authorization = 'Bearer ' + ([pscredential]::new('github', $token)).GetNetworkCredential().Password; $headers.Accept = 'application/vnd.github+json'; $package = Invoke-RestMethod -Uri 'https://api.github.com/repos/aafnx/omnibox-ai/contents/dist/install-omnibox-ai.ps1?ref=main' -Headers $headers -MaximumRedirection 0 -TimeoutSec 60; if ($package.type -ne 'file' -or $package.encoding -ne 'base64') { throw 'GitHub не вернул установочный файл.' }; [IO.File]::WriteAllBytes($file, [Convert]::FromBase64String($package.content)); $headers.Clear(); & $file } finally {     $headers.Clear(); $token.Dispose(); if ([IO.File]::Exists($file)) { [IO.File]::Delete($file) } } }
 ```
 
-Мастер спросит папку (`C:\tools\ai`), сервер по умолчанию, контекст, запуск сейчас, адрес/порт панели, разрешённые сети и пароль. Enter сохраняет предложенное значение. По умолчанию ИИ-сервер не запускается. Панель устанавливается отдельной службой `omnibox-ai` с автоматическим запуском.
+Мастер спросит папку (`C:\tools\ai`), сервер по умолчанию, контекст, запуск сейчас, адрес/порт панели, разрешённые сети и пароль. Подтверждения: `yes/no` или `y/n`; Enter сохраняет предложенное значение. Proxy можно оставить выключенным до настройки NAS. По умолчанию ИИ-сервер не запускается. Панель устанавливается отдельной службой `omnibox-ai` с автоматическим запуском.
 
 После установки открой адрес, показанный мастером. Для текущего OmniBox при выборе `192.168.1.77` и стандартного порта: **`http://192.168.1.77:18090`**. Извне используй существующий VPN или SSH-туннель. Подробности: [установка и обновление](docs/install.md), [веб-панель и подключение](docs/web-panel.md).
 
@@ -76,4 +77,4 @@ Python нужен только для второго набора тестов. 
 pwsh -NoProfile -File .\scripts\build-setup.ps1
 ```
 
-[Архитектура](docs/architecture.md) · [Веб-панель](docs/web-panel.md) · [Установка](docs/install.md) · [Изменения](CHANGELOG.md)
+[Архитектура](docs/architecture.md) · [Веб-панель](docs/web-panel.md) · [Установка](docs/install.md) · [NAS reverse proxy](docs/reverse-proxy.md) · [Изменения](CHANGELOG.md)

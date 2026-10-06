@@ -3,6 +3,8 @@ const $ = id => document.getElementById(id);
 let csrf = '', snapshot = null, activeTab = 'overview', settingsDirty = false, selectedBackend = '', pollTimer = null, loggedIn = false;
 let formRevision = 0;
 const submittedForms = new Map();
+const clientEndpoints = new Map();
+const clientModels = new Map();
 const fields = {context:'context',idle_minutes:'idle',alias:'alias',gpu_layers:'gpu-layers',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch'};
 const labels = {start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
 async function api(path, body) {
@@ -28,7 +30,7 @@ async function refresh(gpu) {
   if(!selectedBackend)selectedBackend=data.default_backend;
   $('model-backend').value=selectedBackend;
   if(!settingsDirty)renderSettings();
-  renderConnections();
+  if(!$('connections').contains(document.activeElement))renderConnections();
 }
 function badgeText(b) { if(b.service==='Running') return b.sleeping?'Модель спит':b.api==='Ready'?'API готов':'API недоступен'; return ({Stopped:'Остановлен',Missing:'Не установлен',StartPending:'Запускается',StopPending:'Останавливается'})[b.service]||b.service; }
 function renderEngines() {
@@ -97,7 +99,23 @@ function renderConnections() {
     const card=document.createElement('article');card.className='connect-card';const heading=document.createElement('h2');heading.textContent=b.name;card.append(heading);
     const localPort=11435+index, serverPort=new URL(b.endpoint).port, remoteHost=new URL(b.endpoint).hostname;
     const tunnel=/^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+$/.test(target)?`ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L ${localPort}:${remoteHost}:${serverPort} ${target}`:'Введите SSH-адрес как user@host.';
-    card.append(copyRow('Команда на ноутбуке',tunnel),copyRow('Base URL в клиенте',`http://127.0.0.1:${localPort}/v1`),copyRow('Имя модели',b.type==='prism'?b.settings?.alias||'bonsai-2-27b':b.models?.[0]?.name||'Имя установленной модели Ollama'),copyRow('API на самом ПК',b.endpoint));
+    const base=clientEndpoints.get(b.name)||`http://127.0.0.1:${localPort}/v1`;
+    const endpointRow=copyRow('OpenAI Base URL — вставьте в Jan или Pi',base);endpointRow.classList.add('endpoint-primary');card.append(endpointRow);
+    const help=document.createElement('p');help.className='muted';help.textContent=clientEndpoints.has(b.name)?'Вы указали свой доступный адрес API. Он должен вести к API этого движка.':'Этот адрес работает НА НОУТБУКЕ после открытия SSH-туннеля ниже. На смартфоне также нужен туннель или отдельно доступный API.';card.append(help);
+    let model=b.type==='prism'?b.settings?.alias||'Имя API-модели':clientModels.get(b.name)||b.models?.[0]?.name||'';
+    if(b.type==='ollama'&&(b.models||[]).length){
+      if(!b.models.some(m=>m.name===model))model=b.models[0].name;
+      const label=document.createElement('label');label.className='connection-model';label.textContent='Модель для подключения';const select=document.createElement('select');b.models.forEach(m=>select.add(new Option(m.name,m.name)));select.value=model;
+      select.addEventListener('change',()=>{clientModels.set(b.name,select.value);renderConnections();});label.append(select);card.append(label);
+    }
+    card.append(copyRow('Model / имя модели',model||'Сначала запустите Ollama и скачайте модель'),copyRow('API key — для текущего API без авторизации','local'));
+    const keyHelp=document.createElement('p');keyHelp.className='muted';keyHelp.textContent='Если API движка или его proxy защищён ключом, укажите его ключ вместо local. Пароль панели сюда не подходит.';card.append(keyHelp);
+    if(!clientEndpoints.has(b.name))card.append(copyRow('1. Откройте SSH-туннель на ноутбуке',tunnel));
+    const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent='Другой адрес API и технические адреса';details.append(summary);
+    const label=document.createElement('label');label.textContent='Свой OpenAI Base URL (если API доступен через VPN или отдельный proxy)';const input=document.createElement('input');input.type='url';input.placeholder='https://models.example.com/v1';input.value=clientEndpoints.get(b.name)||'';
+    input.addEventListener('change',()=>{const value=input.value.trim();if(!value){clientEndpoints.delete(b.name);renderConnections();return;}try{const u=new URL(value);if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash||!/\/v1\/?$/.test(u.pathname))throw new Error('Нужен HTTP/HTTPS Base URL, заканчивающийся на /v1, без пароля и параметров.');clientEndpoints.set(b.name,value.replace(/\/$/,''));renderConnections();}catch(e){notice(e.message,true);}});
+    label.append(input);details.append(label,copyRow('POST endpoint для генерации',`${base}/chat/completions`),copyRow('OpenAI Base URL на самом серверном ПК',b.endpoint));
+    const proxyHelp=document.createElement('p');proxyHelp.className='muted';proxyHelp.textContent='Публикация панели через NAS не публикует API движков. Другой адрес действует в этой вкладке и не меняет настройки сервера.';details.append(proxyHelp);card.append(details);
     $('connections').append(card);
   });
 }

@@ -1,8 +1,10 @@
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'Panel.Security.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Setup.Helpers.psm1') -Force
 
 function Get-AiPanelInstallOptions {
-    param([string]$Directory, [string]$HostName = '', [int]$Port = 18090, [string]$RemoteAddresses = 'LocalSubnet', [switch]$NonInteractive)
+    param([string]$Directory, [string]$HostName = '', [int]$Port = 18090, [string]$RemoteAddresses = 'LocalSubnet', [switch]$NonInteractive,
+        [string]$PublicUrl = '', [string]$TrustedProxyAddresses = '')
     $path = Join-Path $Directory 'panel.json'
     $existing = if (Test-Path -LiteralPath $path -PathType Leaf) { Read-AiPanelConfig $path } else { $null }
     if (-not $HostName) {
@@ -14,14 +16,23 @@ function Get-AiPanelInstallOptions {
     }
     if ($null -ne $existing -and -not $PSBoundParameters.ContainsKey('Port')) { $Port = [int]$existing.port }
     if ($null -ne $existing -and -not $PSBoundParameters.ContainsKey('RemoteAddresses')) { $RemoteAddresses = $existing.remote_addresses -join ',' }
+    if ($null -ne $existing -and -not $PSBoundParameters.ContainsKey('PublicUrl')) { $PublicUrl = $existing.public_origin }
+    if ($null -ne $existing -and -not $PSBoundParameters.ContainsKey('TrustedProxyAddresses')) { $TrustedProxyAddresses = $existing.trusted_proxy_addresses -join ',' }
     if (-not $NonInteractive) {
         $value = Read-Host "IP или DNS-имя этого ПК для панели [$HostName]"; if ($value) { $HostName = $value.Trim() }
         $value = Read-Host "Порт веб-панели [$Port]"; if ($value) { $Port = [int]$value }
         $value = Read-Host "Разрешённые сети/адреса Windows Firewall [$RemoteAddresses]"; if ($value) { $RemoteAddresses = $value.Trim() }
+        $proxy = Read-AiYesNo -Prompt 'Настроить HTTPS-доступ к панели через reverse proxy на NAS?' -Default ([bool]$PublicUrl)
+        if ($proxy) {
+            $value = Read-Host "Внешний URL панели без пути [$PublicUrl]"; if ($value) { $PublicUrl = $value.Trim() }
+            $value = Read-Host "IP NAS, который подключается к этому ПК [$TrustedProxyAddresses]"; if ($value) { $TrustedProxyAddresses = $value.Trim() }
+        } else { $PublicUrl = ''; $TrustedProxyAddresses = '' }
     }
     if ($HostName -notmatch '^[a-zA-Z0-9][a-zA-Z0-9.-]*$' -or $HostName.Length -gt 253 -or $Port -lt 1024 -or $Port -gt 65535) { throw 'Для панели нужен IPv4/DNS-адрес без пути и порт 1024..65535.' }
     $addresses = @($RemoteAddresses -split ',' | ForEach-Object { $_.Trim() })
     foreach ($address in $addresses) { if ($address -ne 'LocalSubnet' -and $address -notmatch '^[0-9a-fA-F:.]+(?:/[0-9]{1,3})?$') { throw 'Firewall: LocalSubnet или IP/CIDR, разделённые запятыми.' } }
+    $proxyOptions = @{ public_origin = $PublicUrl; trusted_proxy_addresses = @($TrustedProxyAddresses -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ }) }
+    Set-AiPanelProxyDefaults $proxyOptions
     $credential = if ($null -ne $existing) { $existing.credential } else { $null }
     $generated = ''
     if ($null -eq $credential) {
@@ -32,7 +43,9 @@ function Get-AiPanelInstallOptions {
         } finally { $plain = $null; if ($null -ne $secret) { $secret.Dispose() } }
     }
     $ssh = if ($null -ne $existing) { $existing.ssh_target } else { "$($env:USERNAME)@$HostName" }
-    return @{ schema_version = 1; port = $Port; allowed_hosts = @(@($HostName, '127.0.0.1', 'localhost', [Environment]::MachineName.ToLowerInvariant()) | Select-Object -Unique); credential = $credential; ssh_target = $ssh; remote_addresses = $addresses; generated_password = $generated }
+    $hosts = @($HostName, '127.0.0.1', 'localhost', [Environment]::MachineName.ToLowerInvariant())
+    if ($proxyOptions.public_origin) { $hosts += ([Uri]$proxyOptions.public_origin).Host }
+    return @{ schema_version = 1; port = $Port; allowed_hosts = @($hosts | Select-Object -Unique); credential = $credential; ssh_target = $ssh; remote_addresses = $addresses; generated_password = $generated; public_origin = $proxyOptions.public_origin; trusted_proxy_addresses = $proxyOptions.trusted_proxy_addresses }
 }
 
 function New-AiPanelServiceXml {
@@ -105,6 +118,7 @@ function Install-AiPanelService {
     }
     if (-not $ready) { throw "Панель не ответила. Журналы: $Directory\logs\panel-service.err.log и wrapper.log" }
     Write-Host "Веб-панель: http://${hostName}:$($Options.port)"
+    if ($Options.public_origin) { Write-Host "Через NAS после настройки proxy: $($Options.public_origin)" }
     if ($password) { Write-Host "Сгенерированный пароль панели: $password"; Write-Host 'Сохрани пароль в Bitwarden: открытым текстом он нигде не сохраняется.' }
     else { Write-Host 'Пароль панели: выбранный при первой установке.' }
     Write-Host 'Панель запускается с Windows. ИИ-движки сами не запускаются.'

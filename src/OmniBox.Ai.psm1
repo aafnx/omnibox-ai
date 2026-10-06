@@ -482,7 +482,7 @@ function Show-AiPower {
 
 function Show-AiHelp {
     @'
-OmniBox AI 0.4.0 — управление локальными серверами
+OmniBox AI 0.5.0 — управление локальными серверами
 
 ai start [backend] [--context 128k]  Запуск; по умолчанию bonsai. Другой остановится.
 ai stop [bonsai|ollama]        Остановка; без имени — все настроенные серверы.
@@ -516,7 +516,7 @@ function Invoke-Ai {
     $command = if ($Arguments.Count) { $Arguments[0].ToLowerInvariant() } else { 'help' }
     [string[]]$rest = @(if ($Arguments.Count -gt 1) { $Arguments[1..($Arguments.Count - 1)] })
     if ($command -in @('help', '--help', '-h')) { Show-AiHelp; return }
-    if ($command -in @('version', '--version')) { '0.4.0'; return }
+    if ($command -in @('version', '--version')) { '0.5.0'; return }
     $config = Read-AiConfig $ConfigPath
     switch ($command) {
         { $_ -in @('start', 'stop', 'restart') } {

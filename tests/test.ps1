@@ -95,7 +95,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.4.0'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.5.0'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -584,7 +584,7 @@ try {
     }
     Test 'setup wizard accepts backend context and explicit start' {
         $c = Get-Content $example -Raw | ConvertFrom-Json -AsHashtable
-        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('C:\tools\ai','ollama','64k','да'))
+        $script:answers = [Collections.Generic.Queue[string]]::new([string[]]@('C:\tools\ai','ollama','64k','y'))
         $result = Get-AiSetupOptions -ConfigLoader { param($d) $c } -ContextReader { param($b) '32768' } -ReadAnswer { param($p) $script:answers.Dequeue() }
         Assert-Equal $result.backend 'ollama'
         Assert-Equal $result.context 65536
@@ -595,6 +595,15 @@ try {
         $result = Get-AiSetupOptions -NonInteractive -Context 192k -ConfigLoader { param($d) $c } -ContextReader { param($b) '196608' } -ReadAnswer { throw 'must not prompt' }
         Assert-True ($null -eq $result.context)
         Assert-True (-not $result.start)
+    }
+    Test 'wizard accepts only English yes no answers and their abbreviations' {
+        foreach ($a in @('y','yes','YES',' Y ')) { $answer=$a; Assert-True (Read-AiYesNo 'test' -ReadAnswer {param($p)$answer}) }
+        foreach ($a in @('n','no','NO',' N ')) { $answer=$a; Assert-True (-not (Read-AiYesNo 'test' -ReadAnswer {param($p)$answer})) }
+        Assert-Throws {Read-AiYesNo 'test' -ReadAnswer {param($p)'да'}} '*yes/no*'
+    }
+    Test 'wizard English prompt shows and respects the default' {
+        Assert-True (Read-AiYesNo 'test' -Default $true -ReadAnswer {param($p) Assert-True ($p -like '*[[]Y/n[]]');''})
+        Assert-True (-not (Read-AiYesNo 'test' -ReadAnswer {param($p) Assert-True ($p -like '*[[]y/N[]]');''}))
     }
     Test 'setup rejects invalid settings before installation' {
         $c = Get-Content $example -Raw | ConvertFrom-Json -AsHashtable
@@ -762,6 +771,28 @@ try {
         Assert-True (-not (Test-AiPanelOrigin 'http://evil.example' '127.0.0.1:18090'))
         Assert-True (-not (Test-AiPanelOrigin 'http://127.0.0.1:18090@evil.example' '127.0.0.1:18090'))
     }
+    Test 'proxy config rejects incomplete HTTP path wildcard and CIDR setup' {
+        foreach ($c in @(
+            @{public_origin='https://ai.example.com';trusted_proxy_addresses=@()},
+            @{public_origin='';trusted_proxy_addresses=@('192.168.1.2')},
+            @{public_origin='http://ai.example.com';trusted_proxy_addresses=@('192.168.1.2')},
+            @{public_origin='https://ai.example.com/control';trusted_proxy_addresses=@('192.168.1.2')},
+            @{public_origin='https://ai.example.com';trusted_proxy_addresses=@('192.168.1.0/24')},
+            @{public_origin='https://ai.example.com';trusted_proxy_addresses=@('*')}
+        )) { Assert-Throws {Set-AiPanelProxyDefaults $c} '*' }
+    }
+    Test 'proxy defaults keep legacy configurations and normalize HTTPS origin' {
+        $old=@{};Set-AiPanelProxyDefaults $old;Assert-Equal $old.public_origin '';Assert-Equal $old.trusted_proxy_addresses.Count 0
+        $c=@{public_origin='https://ai.example.com:8443/';trusted_proxy_addresses=@('192.168.1.2')};Set-AiPanelProxyDefaults $c
+        Assert-Equal $c.public_origin 'https://ai.example.com:8443'
+        Assert-True (Test-AiPanelOrigin 'https://ai.example.com:8443' 'ai.example.com:8443' 'https')
+    }
+    Test 'trusted proxy headers reject client address chains and accept mapped IPv4' {
+        $c=@{public_origin='https://ai.example.com';trusted_proxy_addresses=@('192.168.1.2')}
+        $r=[pscustomobject]@{RemoteEndPoint=[pscustomobject]@{Address=[Net.IPAddress]::Parse('::ffff:192.168.1.2')};Url=[Uri]'http://localhost:18090';Headers=@{'X-Forwarded-Proto'='https';'X-Forwarded-Host'='ai.example.com';'X-Forwarded-For'='198.51.100.1, 198.51.100.2'}}
+        $t=Get-AiPanelRequestContext $r $c;Assert-True $t.secure;Assert-Equal $t.client_address '192.168.1.2'
+        $r.Headers['X-Forwarded-For']='198.51.100.3';Assert-Equal (Get-AiPanelRequestContext $r $c).client_address '198.51.100.3'
+    }
     Test 'panel service runs UI independently with automatic startup' {
         Import-Module (Join-Path $repo 'src/Panel.Install.psm1') -Force
         $xml=New-AiPanelServiceXml 'C:\Program Files\PowerShell\7\pwsh.exe' $testRoot
@@ -771,6 +802,22 @@ try {
         Assert-True ($xml.service.arguments -like '*panel.ps1*')
         Assert-True ($xml.service.arguments -notlike '*Start-Service*')
     }
+    Test 'panel upgrade preserves proxy network port and password without prompting' {
+        $directory=Join-Path $testRoot 'panel-upgrade';$null=New-Item -ItemType Directory $directory
+        $credential=& (Get-Module Panel.Install) {New-AiPanelPassword 'upgrade test password'}
+        $c=@{schema_version=1;port=18091;allowed_hosts=@('192.168.1.77','localhost');credential=$credential;ssh_target='user@server';remote_addresses=@('192.168.1.2');public_origin='https://ai.example.com';trusted_proxy_addresses=@('192.168.1.2')}
+        $c|ConvertTo-Json -Depth 8|Set-Content (Join-Path $directory 'panel.json')
+        $o=Get-AiPanelInstallOptions -Directory $directory -NonInteractive
+        Assert-Equal $o.port 18091;Assert-Equal $o.public_origin 'https://ai.example.com';Assert-Equal $o.credential.hash $credential.hash
+        Assert-Equal ($o.remote_addresses -join ',') '192.168.1.2';Assert-Equal ($o.trusted_proxy_addresses -join ',') '192.168.1.2'
+        Assert-True ('ai.example.com' -in $o.allowed_hosts);Assert-Equal $o.generated_password ''
+    }
+    Test 'panel upgrade can disable proxy explicitly while preserving password' {
+        $directory=Join-Path $testRoot 'panel-upgrade'
+        $o=Get-AiPanelInstallOptions -Directory $directory -NonInteractive -PublicUrl '' -TrustedProxyAddresses ''
+        Assert-Equal $o.public_origin '';Assert-Equal $o.trusted_proxy_addresses.Count 0
+        Assert-True ('ai.example.com' -notin $o.allowed_hosts);Assert-Equal $o.port 18091
+    }
     Test 'self-contained package matches every current source file' {
         $setup = Join-Path $repo 'dist/install-omnibox-ai.ps1'
         $text = Get-Content $setup -Raw
@@ -779,7 +826,7 @@ try {
         $memory = [IO.MemoryStream]::new([Convert]::FromBase64String($encoded))
         $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Read)
         try {
-            Assert-Equal $archive.Entries.Count 20
+            Assert-Equal $archive.Entries.Count 21
             foreach ($entry in $archive.Entries) {
                 Assert-True ($entry.FullName -notmatch '(^/|\.\.)')
                 $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)
