@@ -46,8 +46,12 @@ location / {
     proxy_set_header X-Forwarded-Proto $scheme;
     proxy_set_header X-Forwarded-Host $http_host;
     proxy_set_header X-Forwarded-For $remote_addr;
+    proxy_set_header Authorization $http_authorization;
     proxy_set_header Connection "";
-    proxy_read_timeout 300s;
+    proxy_buffering off;
+    proxy_cache off;
+    proxy_read_timeout 1800s;
+    proxy_send_timeout 1800s;
 }
 ```
 
@@ -63,8 +67,6 @@ location / {
 
 ## Адрес панели и API моделей
 
-**`https://ai.example.com` — только панель управления.** Он не является OpenAI Base URL для Jan/Pi. API Bonsai/Ollama по-прежнему слушают localhost ПК. Их используют через SSH-туннель или отдельно настроенный доступ к API.
+С версии 0.6.0 один домен и одно правило NAS обслуживают панель и OpenAI API: `https://llm.fnx.red/` → панель, `https://llm.fnx.red/v1` → API. NAS проксирует весь корень на **`http://192.168.1.77:18090`**; маршруты `/v1/*` сервер передаёт выбранному движку. Не добавляй `:11435` к домену.
 
-В разделе **Подключение** крупное поле **OpenAI Base URL — вставьте в Jan или Pi** показывает адрес для клиента. Для SSH это `http://127.0.0.1:11435/v1` (Bonsai в стандартной конфигурации) и `http://127.0.0.1:11436/v1` (Ollama). Там же доступны Model, API key и команда туннеля. Если впоследствии опубликуешь API отдельно, в карточке можно указать собственный Base URL с `/v1`; это не изменяет сервер и не создаёт proxy.
-
-Источник директив: [официальная документация Nginx proxy module](https://nginx.org/en/docs/http/ngx_http_proxy_module.html).
+Сохраняй `Authorization` для Bearer API key, отключи `proxy_buffering` и увеличь `proxy_read_timeout`/`proxy_send_timeout` до 1800 секунд для генерации. Панель использует собственный пароль/CSRF; API — отдельный ключ или режим без ключа. Отдельный API-порт (например, 11435) остаётся необязательным вариантом прямого доступа. [Настройки клиентов и пример NAS](model-api.md).

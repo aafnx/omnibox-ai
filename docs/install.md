@@ -33,6 +33,9 @@
 | IP/DNS-имя панели | Адрес ПК или сохранённый адрес |
 | Порт панели | `18090` или сохранённый порт |
 | Разрешённые сети Firewall | `LocalSubnet` или сохранённое значение |
+| Сетевой OpenAI API | `yes`, либо сохранённое значение |
+| Порт / Base URL API | `18090` / адрес по IP ПК, либо сохранённые значения |
+| Использовать API key | `yes`, либо сохранённый режим |
 | HTTPS reverse proxy на NAS | `no`, либо сохранённый режим |
 | Пароль панели (при первой установке) | Enter генерирует пароль; от 12 символов при ручном вводе |
 
@@ -47,6 +50,8 @@
 Папка должна быть отдельной, с абсолютным ASCII-путём без `%` и кавычек. Чужая непустая папка и другая существующая команда `ai` вызывают отказ. При обновлении старые файлы программы и JSON копируются в `C:\tools\ai\backups\<дата-время-идентификатор>`.
 
 Параметры движков, их тип запуска, таймеры простоя и WoL сохраняются. Создаётся отдельная служба панели `omnibox-ai` с автоматическим запуском; WinSW копируется из существующей установки движка. Планировщик не используется. Панель открывает выбранный HTTP-порт только для указанных адресов Firewall. Каталог панели защищается ACL для SYSTEM, Administrators и пользователя установки.
+
+Отдельный сетевой OpenAI API настраивается в том же мастере; `gateway.json` сохраняет порт, Base URL, движок и hash ключа. Создаётся Firewall-правило `omnibox-ai-api` с теми же разрешёнными адресами. Новая служба не запускает ИИ-движки.
 
 Веб-интерфейс: [управление, модели и доступ извне](web-panel.md). Пароль хранится как PBKDF2 hash; при обновлении он сохраняется. Панель требует доверенной LAN/VPN или SSH-туннеля.
 
@@ -98,6 +103,8 @@ if (@($env:Path -split ';' | Where-Object { $_.TrimEnd('\') -ieq 'C:\tools\ai' }
 
 Параметры панели: `-PanelHost`, `-PanelPort`, `-PanelRemoteAddresses` (например `LocalSubnet,10.10.0.0/24`), `-PanelPublicUrl`, `-PanelTrustedProxyAddresses` (только конкретные IP NAS). При обновлении сохраняются значения, которые явно не переопределены. Для NAS-прокси внешний HTTPS origin и конкретные IP NAS указываются вместе: [инструкция reverse proxy](reverse-proxy.md). Внешний URL не содержит пути; HTTPS завершается на NAS.
 
+Параметры API: `-ApiPort`, `-ApiBaseUrl`, `-NoApi`. [API и ключи](model-api.md). При обновлении через мастер можно включить сетевой API в уже установленной версии.
+
 `-NoPanelSetup` оставляет только CLI при первой установке; с уже установленной службой панели этот режим запрещён.
 
 Те же параметры доступны в `dist/install-omnibox-ai.ps1`. `-NoProfileUpdate` отключает обновление профиля. PowerShell 5.1 и прежний `-Remote` не поддерживаются: установка выполняется на самом ПК через PowerShell 7.
@@ -121,7 +128,7 @@ ai restore bonsai
 При необходимости сначала `ai stop`. Удаление панели само ИИ-движки не останавливает. В повышенной PowerShell-сессии останови и удали только службу панели и её правило Firewall:
 
 ```powershell
-Stop-Service -Name omnibox-ai -ErrorAction Stop; & 'C:\tools\ai\panel-service.exe' uninstall; if ($LASTEXITCODE -ne 0) { throw 'Не удалось удалить службу панели' }; Get-NetFirewallRule -Name omnibox-ai-panel -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+Stop-Service -Name omnibox-ai -ErrorAction Stop; & 'C:\tools\ai\panel-service.exe' uninstall; if ($LASTEXITCODE -ne 0) { throw 'Не удалось удалить службу панели' }; Get-NetFirewallRule -Name omnibox-ai-panel,omnibox-ai-api -ErrorAction SilentlyContinue | Remove-NetFirewallRule
 ```
 
 При другом каталоге замени путь к wrapper. Для установки без панели этот шаг пропускается.

@@ -3,6 +3,7 @@ import base64
 import hashlib
 import http.cookiejar
 import http.client
+import http.server
 import json
 import os
 from pathlib import Path
@@ -11,6 +12,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import unittest
 import urllib.error
@@ -19,9 +21,31 @@ import urllib.request
 ROOT = Path(__file__).resolve().parent.parent
 PWSH = os.environ.get('PWSH', 'pwsh')
 PASSWORD = 'temporary integration password'
+API_KEY = 'fixture-only-api-key'
+
+class Upstream(http.server.BaseHTTPRequestHandler):
+    def log_message(self, *args):
+        pass
+
+    def do_GET(self):
+        self.server.seen_auth = self.headers.get('Authorization')
+        body = json.dumps({'object':'list','data':[{'id':'bonsai-2-27b','object':'model'}]}).encode()
+        self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
+
+    def do_POST(self):
+        self.server.seen_auth = self.headers.get('Authorization')
+        data = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+        if data.get('stream'):
+            self.send_response(200); self.send_header('Content-Type','text/event-stream'); self.end_headers()
+            self.wfile.write(b'data: {"choices":[{"delta":{"content":"first"}}]}\n\n'); self.wfile.flush()
+            time.sleep(1.2)
+            self.wfile.write(b'data: [DONE]\n\n'); self.wfile.flush()
+        else:
+            body=json.dumps({'choices':[{'message':{'content':'fixture'}}],'forwarded':data}).encode()
+            self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
 
 class PanelFixture:
-    def __init__(self, proxy=False):
+    def __init__(self, proxy=False, gateway=False, shared_port=False):
         self.temp = tempfile.TemporaryDirectory(prefix='omnibox-ai-http-')
         self.root = Path(self.temp.name)
         shutil.copytree(ROOT / 'web', self.root / 'web')
@@ -38,6 +62,20 @@ class PanelFixture:
         logs.mkdir()
         (logs / 'bonsai-service.err.log').write_text('fixture error log\n')
         (self.root / 'config.json').write_text(json.dumps(dict(context='196608', service='Running', backends=dict(bonsai=dict(log_directory=str(logs), log_prefix='bonsai-service'), ollama=dict(log_directory=str(logs), log_prefix='ollama-service')))))
+        self.upstream = None
+        if gateway:
+            self.upstream = http.server.ThreadingHTTPServer(('127.0.0.1',0), Upstream)
+            threading.Thread(target=self.upstream.serve_forever,daemon=True).start()
+            with socket.socket() as sock:
+                sock.bind(('127.0.0.1',0)); self.api_port=sock.getsockname()[1]
+            if shared_port:self.api_port=self.port
+            with socket.socket() as sock:
+                sock.bind(('127.0.0.1',0)); unavailable=sock.getsockname()[1]
+            state=json.loads((self.root/'config.json').read_text())
+            state['backends']['bonsai']['base_url']=f'http://127.0.0.1:{self.upstream.server_port}'
+            state['backends']['ollama']['base_url']=f'http://127.0.0.1:{unavailable}'
+            (self.root/'config.json').write_text(json.dumps(state))
+            (self.root/'gateway.json').write_text(json.dumps(dict(schema_version=1,enabled=True,port=self.api_port,base_url=f'http://127.0.0.1:{self.api_port}/v1',backend='bonsai',require_key=True,key_hash=hashlib.sha256(API_KEY.encode()).hexdigest())))
         self.url = f'http://127.0.0.1:{self.port}'
         self.output = (self.root / 'server-output.log').open('w')
         self.process = subprocess.Popen([PWSH, '-NoProfile', '-File', str(ROOT / 'tests/http-fixture.ps1'), '-Root', str(self.root)], stdout=self.output, stderr=subprocess.STDOUT)
@@ -64,6 +102,8 @@ class PanelFixture:
                 self.process.kill()
                 self.process.wait()
         self.output.close()
+        if self.upstream:
+            self.upstream.shutdown(); self.upstream.server_close()
         self.temp.cleanup()
 
 class HttpTests(unittest.TestCase):
@@ -185,6 +225,123 @@ class HttpTests(unittest.TestCase):
         for _ in range(6):
             self.assertEqual(self.call('/api/login', {'password': 'incorrect'}, auth=False)[0], 401)
         self.assertEqual(self.call('/api/login', {'password': PASSWORD}, auth=False)[0], 429)
+
+class GatewayTests(unittest.TestCase):
+    call=classmethod(HttpTests.call.__func__)
+
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture=PanelFixture(gateway=True)
+        cls.cookies=http.cookiejar.CookieJar();cls.client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cls.cookies))
+        cls.csrf=cls.call('/api/login',{'password':PASSWORD})[1]['csrf']
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.fixture.close()
+
+    def setUp(self):
+        p=self.fixture.root/'gateway.json';c=json.loads(p.read_text());c.update(backend='bonsai',require_key=True,key_hash=hashlib.sha256(API_KEY.encode()).hexdigest());p.write_text(json.dumps(c))
+
+    def model_request(self, path='/v1/models', body=None, key=API_KEY, port=None, extra=None):
+        connection=http.client.HTTPConnection('127.0.0.1',port or self.fixture.api_port,timeout=5)
+        headers={} if key is None else {'Authorization':'Bearer '+key}
+        if extra:headers.update(extra)
+        if body is not None:headers['Content-Type']='application/json'
+        try:
+            connection.request('GET' if body is None else 'POST',path,body=None if body is None else json.dumps(body).encode(),headers=headers)
+            r=connection.getresponse();return r.status,json.loads(r.read()),r.headers
+        finally:connection.close()
+
+    def test_01_auth_and_models(self):
+        code,data,_=self.model_request(key=None);self.assertEqual(code,401);self.assertIn('message',data['error'])
+        self.assertEqual(self.model_request(key='wrong')[0],401)
+        self.assertEqual(self.model_request()[1]['data'][0]['id'],'bonsai-2-27b')
+
+    def test_02_gateway_credentials_are_never_exposed_in_view(self):
+        code,data,_=self.call('/api/gateway');self.assertEqual(code,200);self.assertTrue(data['has_key'])
+        self.assertNotIn('key_hash',data);self.assertNotIn(API_KEY,json.dumps(data))
+        self.assertEqual(self.call('/gateway.json')[0],404)
+
+    def test_03_request_and_tools_are_forwarded_without_gateway_key(self):
+        body={'model':'bonsai-2-27b','messages':[{'role':'user','content':'test'}],'stream':False,'tools':[{'type':'function','function':{'name':'fixture'}}]}
+        code,data,_=self.model_request('/v1/chat/completions',body);self.assertEqual(code,200);self.assertEqual(data['forwarded'],body)
+        self.assertIsNone(self.fixture.upstream.seen_auth)
+
+    def test_04_stream_is_incremental_and_panel_stays_available(self):
+        connection=http.client.HTTPConnection('127.0.0.1',self.fixture.api_port,timeout=5)
+        try:
+            started=time.monotonic();connection.request('POST','/v1/chat/completions',json.dumps({'model':'bonsai-2-27b','stream':True}),{'Content-Type':'application/json','Authorization':'Bearer '+API_KEY})
+            response=connection.getresponse();self.assertEqual(response.status,200);self.assertIn('first',response.readline().decode());self.assertLess(time.monotonic()-started,.8)
+            before=time.monotonic();self.assertEqual(self.call('/api/session')[0],200);self.assertLess(time.monotonic()-before,.4)
+            self.assertIn('[DONE]',response.read().decode());self.assertGreater(time.monotonic()-started,1)
+        finally:connection.close()
+
+    def test_05_key_rotation_revokes_old_key(self):
+        code,data,_=self.call('/api/gateway',{'action':'generate'},csrf=self.csrf);self.assertEqual(code,200);self.assertTrue(data['key'].startswith('obai-'))
+        self.assertNotIn(data['key'],(self.fixture.root/'gateway.json').read_text())
+        self.assertEqual(self.model_request(key=API_KEY)[0],401);self.assertEqual(self.model_request(key=data['key'])[0],200)
+
+    def test_06_optional_key_and_backend_selection(self):
+        c=self.call('/api/gateway')[1]
+        self.assertEqual(self.call('/api/gateway',{'action':'save','base_url':c['base_url'],'backend':'bonsai','require_key':False},csrf=self.csrf)[0],200)
+        self.assertEqual(self.model_request(key=None)[0],200)
+        self.assertEqual(self.model_request(key='local')[0],200)
+        self.assertEqual(self.call('/api/gateway',{'action':'save','base_url':c['base_url'],'backend':'ollama','require_key':False},csrf=self.csrf)[0],200)
+        self.assertEqual(self.model_request(key=None)[0],503)
+
+    def test_07_control_routes_and_queries_are_not_proxied(self):
+        self.assertEqual(self.model_request('/api/gateway')[0],404)
+        self.assertEqual(self.model_request('/v1/models?url=http://other')[0],404)
+        self.assertEqual(self.call('/api/gateway',{'action':'generate'})[0],403)
+
+    def test_08_oversized_body_rejected_before_upload(self):
+        connection=http.client.HTTPConnection('127.0.0.1',self.fixture.api_port,timeout=5)
+        try:
+            connection.putrequest('POST','/v1/chat/completions');connection.putheader('Authorization','Bearer '+API_KEY);connection.putheader('Content-Type','application/json');connection.putheader('Content-Length',str(9*1024*1024));connection.endheaders()
+            r=connection.getresponse();self.assertEqual(r.status,413);r.read()
+        finally:connection.close()
+
+    def test_09_catalog_runs_in_background(self):
+        code,data,_=self.call('/api/catalog',{'mode':'search','value':'uncensored'},csrf=self.csrf);self.assertEqual(code,202)
+        self.assertEqual(self.call('/api/session')[0],200)
+        for _ in range(30):
+            result=self.call('/api/catalog?id='+data['id'])[1]
+            if result['state']=='done':break
+            time.sleep(.05)
+        self.assertEqual(result['state'],'done');self.assertEqual(result['data']['models'][0]['id'],'fixture/model')
+
+    def test_10_same_panel_port_routes_v1_with_independent_api_auth(self):
+        port=self.fixture.port
+        self.assertEqual(self.model_request(port=port,key=None)[0],401)
+        self.assertEqual(self.model_request(port=port)[1]['data'][0]['id'],'bonsai-2-27b')
+        self.assertEqual(self.model_request(port=port,key='wrong')[0],401)
+        self.assertEqual(self.call('/api/gateway',auth=False)[0],401)
+        self.assertEqual(self.call('/api/session')[0],200)
+
+    def test_11_nas_can_forward_both_panel_and_api_to_one_upstream(self):
+        body={'model':'bonsai-2-27b','messages':[{'role':'user','content':'same NAS upstream'}]}
+        forwarded={'X-Forwarded-Host':'llm.fnx.red','X-Forwarded-Proto':'https'}
+        code,data,_=self.model_request('/v1/chat/completions',body,port=self.fixture.port,extra=forwarded)
+        self.assertEqual(code,200);self.assertEqual(data['forwarded'],body)
+        self.assertEqual(self.model_request('/v1/models?other=1',port=self.fixture.port)[0],404)
+        self.assertEqual(self.call('/')[0],200)
+
+    def test_12_shared_port_streaming_is_incremental(self):
+        connection=http.client.HTTPConnection('127.0.0.1',self.fixture.port,timeout=5)
+        try:
+            started=time.monotonic();connection.request('POST','/v1/chat/completions',json.dumps({'stream':True}),{'Content-Type':'application/json','Authorization':'Bearer '+API_KEY})
+            response=connection.getresponse();self.assertEqual(response.status,200);self.assertIn('first',response.readline().decode());self.assertLess(time.monotonic()-started,.8)
+            self.assertEqual(self.call('/api/session')[0],200);self.assertIn('[DONE]',response.read().decode())
+        finally:connection.close()
+
+    def test_13_one_listener_port_starts_without_a_secondary_api_port(self):
+        fixture=PanelFixture(gateway=True,shared_port=True)
+        try:
+            request=urllib.request.Request(fixture.url+'/v1/models',headers={'Authorization':'Bearer '+API_KEY})
+            with urllib.request.urlopen(request,timeout=5) as response:
+                self.assertEqual(json.loads(response.read())['data'][0]['id'],'bonsai-2-27b')
+            with urllib.request.urlopen(fixture.url,timeout=5) as response:self.assertEqual(response.status,200)
+        finally:fixture.close()
 
 class ProxyTests(unittest.TestCase):
     @classmethod

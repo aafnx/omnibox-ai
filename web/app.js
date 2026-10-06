@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 let csrf = '', snapshot = null, activeTab = 'overview', settingsDirty = false, selectedBackend = '', pollTimer = null, loggedIn = false;
 let formRevision = 0;
 const submittedForms = new Map();
-const clientEndpoints = new Map();
+let gateway = null, gatewayDirty = false, panelPort = 18090;
 const clientModels = new Map();
 const fields = {context:'context',idle_minutes:'idle',alias:'alias',gpu_layers:'gpu-layers',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch'};
 const labels = {start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
@@ -14,12 +14,12 @@ async function api(path, body) {
   return data;
 }
 function notice(message, error=false) { $('notice').hidden=false; $('notice').textContent=message; $('notice').classList.toggle('error',error); }
-function showLogin() { loggedIn=false; clearTimeout(pollTimer); $('login').hidden=false; $('dashboard').hidden=true; csrf=''; }
-async function showDashboard() { const session=await api('/api/session'); csrf=session.csrf; $('ssh-target').value=session.ssh_target; loggedIn=true; $('login').hidden=true; $('dashboard').hidden=false; await refresh(true); schedulePoll(); }
+function showLogin() { $('new-api-key').hidden=true;$('key-copy').replaceChildren();gatewayDirty=false;loggedIn=false; clearTimeout(pollTimer); $('login').hidden=false; $('dashboard').hidden=true; csrf=''; }
+async function showDashboard() { const session=await api('/api/session'); csrf=session.csrf; panelPort=session.port; loggedIn=true; $('login').hidden=true; $('dashboard').hidden=false; await refresh(true); schedulePoll(); }
 function schedulePoll() { clearTimeout(pollTimer); if(!loggedIn)return; pollTimer=setTimeout(async()=>{ if(!document.hidden) { try { await refresh(false); } catch(e) { notice(e.message,true); } } schedulePoll(); },8000); }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&loggedIn)refresh(false).catch(e=>notice(e.message,true));});
 function backend() { return snapshot?.backends.find(b=>b.name===selectedBackend); }
-function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; renderSettings(); }
+function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; $('catalog-results').replaceChildren(); $('catalog-status').textContent=''; renderSettings(); }
 function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='logs')refreshLogs().catch(e=>notice(e.message,true)); }
 async function refresh(gpu) {
   const data=await api(`/api/status${gpu?'?gpu=1':''}`); snapshot=data; $('version').textContent=`v${data.version}`; $('computer').textContent=data.computer;
@@ -30,7 +30,7 @@ async function refresh(gpu) {
   if(!selectedBackend)selectedBackend=data.default_backend;
   $('model-backend').value=selectedBackend;
   if(!settingsDirty)renderSettings();
-  if(!$('connections').contains(document.activeElement))renderConnections();
+  gateway=await api('/api/gateway');if(!gatewayDirty)renderGatewayForm();if(!$('connections').contains(document.activeElement))renderConnections();
 }
 function badgeText(b) { if(b.service==='Running') return b.sleeping?'Модель спит':b.api==='Ready'?'API готов':'API недоступен'; return ({Stopped:'Остановлен',Missing:'Не установлен',StartPending:'Запускается',StopPending:'Останавливается'})[b.service]||b.service; }
 function renderEngines() {
@@ -93,31 +93,48 @@ function copyRow(label,value) {
   button.addEventListener('click',async()=>{try{if(navigator.clipboard&&window.isSecureContext)await navigator.clipboard.writeText(value);else{const input=document.createElement('textarea');input.value=value;document.body.append(input);input.select();if(!document.execCommand('copy'))throw new Error('Выделите строку и скопируйте вручную.');input.remove();}button.textContent='Скопировано';setTimeout(()=>button.textContent='Копировать',1500);}catch(e){notice(e.message,true);}});
   field.append(code,button);row.append(caption,field);return row;
 }
+function renderGatewayForm() {
+  if(!snapshot||!gateway)return;
+  $('api-backend').replaceChildren();snapshot.backends.forEach(b=>$('api-backend').add(new Option(b.name,b.name)));$('api-backend').value=gateway.backend;
+  $('api-base-url').value=gateway.base_url;$('api-require-key').checked=gateway.require_key;
+  $('api-state').textContent=!gateway.enabled?'Сетевой API не включён. Повторите установщик и выберите OpenAI API.':`API доступен на порту панели ${panelPort} по пути /v1. Настроенный порт API: ${gateway.port}. ${gateway.require_key?'Используйте сохранённый ключ или сгенерируйте новый.':'Авторизация отключена: ключ не нужен.'}`;
+  $('save-api').disabled=!gateway.enabled;$('generate-api-key').disabled=!gateway.enabled;
+}
 function renderConnections() {
-  if(!snapshot)return;const target=$('ssh-target').value.trim();$('connections').replaceChildren();
-  snapshot.backends.forEach((b,index)=>{
-    const card=document.createElement('article');card.className='connect-card';const heading=document.createElement('h2');heading.textContent=b.name;card.append(heading);
-    const localPort=11435+index, serverPort=new URL(b.endpoint).port, remoteHost=new URL(b.endpoint).hostname;
-    const tunnel=/^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+$/.test(target)?`ssh -N -o ExitOnForwardFailure=yes -o ServerAliveInterval=30 -L ${localPort}:${remoteHost}:${serverPort} ${target}`:'Введите SSH-адрес как user@host.';
-    const base=clientEndpoints.get(b.name)||`http://127.0.0.1:${localPort}/v1`;
-    const endpointRow=copyRow('OpenAI Base URL — вставьте в Jan или Pi',base);endpointRow.classList.add('endpoint-primary');card.append(endpointRow);
-    const help=document.createElement('p');help.className='muted';help.textContent=clientEndpoints.has(b.name)?'Вы указали свой доступный адрес API. Он должен вести к API этого движка.':'Этот адрес работает НА НОУТБУКЕ после открытия SSH-туннеля ниже. На смартфоне также нужен туннель или отдельно доступный API.';card.append(help);
-    let model=b.type==='prism'?b.settings?.alias||'Имя API-модели':clientModels.get(b.name)||b.models?.[0]?.name||'';
-    if(b.type==='ollama'&&(b.models||[]).length){
-      if(!b.models.some(m=>m.name===model))model=b.models[0].name;
-      const label=document.createElement('label');label.className='connection-model';label.textContent='Модель для подключения';const select=document.createElement('select');b.models.forEach(m=>select.add(new Option(m.name,m.name)));select.value=model;
-      select.addEventListener('change',()=>{clientModels.set(b.name,select.value);renderConnections();});label.append(select);card.append(label);
-    }
-    card.append(copyRow('Model / имя модели',model||'Сначала запустите Ollama и скачайте модель'),copyRow('API key — для текущего API без авторизации','local'));
-    const keyHelp=document.createElement('p');keyHelp.className='muted';keyHelp.textContent='Если API движка или его proxy защищён ключом, укажите его ключ вместо local. Пароль панели сюда не подходит.';card.append(keyHelp);
-    if(!clientEndpoints.has(b.name))card.append(copyRow('1. Откройте SSH-туннель на ноутбуке',tunnel));
-    const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent='Другой адрес API и технические адреса';details.append(summary);
-    const label=document.createElement('label');label.textContent='Свой OpenAI Base URL (если API доступен через VPN или отдельный proxy)';const input=document.createElement('input');input.type='url';input.placeholder='https://models.example.com/v1';input.value=clientEndpoints.get(b.name)||'';
-    input.addEventListener('change',()=>{const value=input.value.trim();if(!value){clientEndpoints.delete(b.name);renderConnections();return;}try{const u=new URL(value);if(!['http:','https:'].includes(u.protocol)||u.username||u.password||u.search||u.hash||!/\/v1\/?$/.test(u.pathname))throw new Error('Нужен HTTP/HTTPS Base URL, заканчивающийся на /v1, без пароля и параметров.');clientEndpoints.set(b.name,value.replace(/\/$/,''));renderConnections();}catch(e){notice(e.message,true);}});
-    label.append(input);details.append(label,copyRow('POST endpoint для генерации',`${base}/chat/completions`),copyRow('OpenAI Base URL на самом серверном ПК',b.endpoint));
-    const proxyHelp=document.createElement('p');proxyHelp.className='muted';proxyHelp.textContent='Публикация панели через NAS не публикует API движков. Другой адрес действует в этой вкладке и не меняет настройки сервера.';details.append(proxyHelp);card.append(details);
-    $('connections').append(card);
-  });
+  if(!snapshot||!gateway)return;$('connections').replaceChildren();if(!gateway.enabled)return;
+  const b=snapshot.backends.find(b=>b.name===gateway.backend);if(!b)return;
+  const card=document.createElement('article');card.className='connect-card';const heading=document.createElement('h2');heading.textContent=`OpenAI API · ${b.name}`;card.append(heading);
+  const endpointRow=copyRow('OpenAI Base URL — вставьте в Jan или Pi',gateway.base_url);endpointRow.classList.add('endpoint-primary');card.append(endpointRow);
+  const help=document.createElement('p');help.className='muted';help.textContent=`${badgeText(b)}. Сервер должен быть запущен; запрос к остановленному серверу его не включает.`;card.append(help);
+  let model=b.type==='prism'?b.settings?.alias||'Имя API-модели':clientModels.get(b.name)||b.models?.[0]?.name||'';
+  if(b.type==='ollama'&&(b.models||[]).length){if(!b.models.some(m=>m.name===model))model=b.models[0].name;const label=document.createElement('label');label.className='connection-model';label.textContent='Модель для подключения';const select=document.createElement('select');b.models.forEach(m=>select.add(new Option(m.name,m.name)));select.value=model;select.addEventListener('change',()=>{clientModels.set(b.name,select.value);renderConnections();});label.append(select);card.append(label);}
+  card.append(copyRow('Model / имя модели',model||'Запустите Ollama для списка моделей'));
+  if(!gateway.require_key)card.append(copyRow('API key — отключён; local только если клиент требует значение','local'));
+  else{const p=document.createElement('p');p.className='muted';p.textContent='API key: используйте ключ из Bitwarden. При утрате сгенерируйте новый выше. Пароль панели сюда не подходит.';card.append(p);}
+  const details=document.createElement('details');const summary=document.createElement('summary');summary.textContent='Технические адреса';details.append(summary,copyRow('POST endpoint',`${gateway.base_url}/chat/completions`),copyRow('Локальный API выбранного движка на ПК',b.endpoint));card.append(details);$('connections').append(card);
+}
+async function saveGateway(body) {
+  const data=await api('/api/gateway',body);gateway=data.gateway;gatewayDirty=false;renderGatewayForm();renderConnections();
+  if(data.key){$('new-api-key').hidden=false;$('key-copy').replaceChildren(copyRow('API key — скопируйте и сохраните сейчас',data.key));}
+  else if(!gateway.require_key){$('new-api-key').hidden=true;$('key-copy').replaceChildren();}
+  notice(data.key?'Новый ключ сгенерирован. Предыдущий ключ отозван.':'Настройки API сохранены. Движок автоматически не запускается.');
+}
+let catalogBusy=false;
+async function catalogRequest(mode,value) {
+  if(catalogBusy)throw new Error('Дождитесь текущего поиска.');catalogBusy=true;$('catalog-search-button').disabled=true;$('catalog-status').textContent='Получаем данные Hugging Face…';
+  try{const job=await api('/api/catalog',{mode,value});for(let i=0;i<45;i++){await new Promise(resolve=>setTimeout(resolve,750));const result=await api(`/api/catalog?id=${encodeURIComponent(job.id)}`);if(result.state==='failed')throw new Error(result.error);if(result.state==='done'){$('catalog-status').textContent='';return result.data;}}throw new Error('Поиск не ответил вовремя. Попробуйте позже.');}
+  finally{catalogBusy=false;$('catalog-search-button').disabled=false;}
+}
+function sourceLink(label,url) {const a=document.createElement('a');a.textContent=label;a.href=url;a.target='_blank';a.rel='noopener noreferrer';return a;}
+async function searchCatalog(query) {
+  try{const data=await catalogRequest('search',query);$('catalog-results').replaceChildren();if(!data.models.length)$('catalog-status').textContent='Модели не найдены. Измените запрос или откройте каталог источника.';
+  data.models.forEach(m=>{const card=document.createElement('article');card.className='catalog-card';const h=document.createElement('h3');h.textContent=m.name;const p=document.createElement('p');p.className='muted';p.textContent=`Скачиваний: ${Number(m.downloads).toLocaleString('ru-RU')}${m.gated?' · требуется доступ автора':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent='Выбрать GGUF';button.addEventListener('click',()=>showCatalogFiles(m.id));card.append(h,p,sourceLink('Страница и описание ↗',m.url),button);$('catalog-results').append(card);});
+  }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
+}
+async function showCatalogFiles(repository) {
+  try{const data=await catalogRequest('files',repository);$('catalog-results').replaceChildren();$('catalog-results').append(sourceLink(`${repository} · описание и лицензия ↗`,data.url));if(!data.files.length)$('catalog-status').textContent='Подходящие текстовые GGUF не найдены.';
+  data.files.forEach(f=>{const row=document.createElement('article');row.className='catalog-file';const title=document.createElement('strong');title.textContent=f.name;const meta=document.createElement('span');meta.className='muted';meta.textContent=`${f.bytes?(f.bytes/1024**3).toFixed(2)+' ГБ':'Размер не указан'}${f.prism_only?' · нужен PrismML':''}${f.split?' · многотомный файл':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent='Скачать на ПК';const b=backend();const tag=`hf.co/${repository}:${f.name}`;button.disabled=f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200));button.addEventListener('click',()=>{const b=backend();if(!b||f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200))){notice('Этот файл не поддерживается выбранным движком.',true);return;}const body=b.type==='prism'?{action:'download',backend:selectedBackend,url:f.url,filename:f.filename,sha256:f.sha256}:{action:'pull',backend:selectedBackend,model:tag};action(body).catch(e=>notice(e.message,true));});row.append(title,meta,button);$('catalog-results').append(row);});
+  }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
 }
 async function refreshLogs() { if(!snapshot)return; const data=await api(`/api/logs?backend=${encodeURIComponent($('log-backend').value)}`);$('logs').replaceChildren();data.logs.forEach(log=>{const h=document.createElement('h3');h.textContent=log.stream;const pre=document.createElement('pre');pre.textContent=log.text;$('logs').append(h,pre);}); }
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();$('login-error').textContent='';const button=e.currentTarget.querySelector('button');button.disabled=true;try{await api('/api/login',{password:$('password').value});$('password').value='';await showDashboard();}catch(error){$('login-error').textContent=error.message;}finally{button.disabled=false;}});
@@ -133,5 +150,10 @@ $('restore').addEventListener('click',()=>action({action:'restore',backend:selec
 $('load-model').addEventListener('click',()=>{const b=backend();const body={action:'load',backend:selectedBackend};if(b.type==='prism'){if(!$('settings-form').reportValidity())return;body.settings=collectSettings();}else body.model=$('model-choice').value;action(body).catch(e=>notice(e.message,true));});
 $('unload-model').addEventListener('click',()=>action({action:'unload',backend:selectedBackend,model:$('model-choice').value}).catch(e=>notice(e.message,true)));
 $('download-form').addEventListener('submit',e=>{e.preventDefault();const b=backend();const body=b.type==='prism'?{action:'download',backend:selectedBackend,url:$('download-url').value.trim(),filename:$('download-filename').value.trim(),sha256:$('download-sha').value.trim()}:{action:'pull',backend:selectedBackend,model:$('pull-name').value.trim()};action(body).catch(error=>notice(error.message,true));});
-$('ssh-target').addEventListener('input',renderConnections);$('refresh-logs').addEventListener('click',()=>refreshLogs().catch(e=>notice(e.message,true)));$('log-backend').addEventListener('change',()=>refreshLogs().catch(e=>notice(e.message,true)));
+$('refresh-logs').addEventListener('click',()=>refreshLogs().catch(e=>notice(e.message,true)));$('log-backend').addEventListener('change',()=>refreshLogs().catch(e=>notice(e.message,true)));
+$('api-settings-form').addEventListener('input',()=>gatewayDirty=true);
+$('api-settings-form').addEventListener('submit',e=>{e.preventDefault();saveGateway({action:'save',backend:$('api-backend').value,base_url:$('api-base-url').value.trim(),require_key:$('api-require-key').checked}).catch(e=>notice(e.message,true));});
+$('generate-api-key').addEventListener('click',()=>saveGateway({action:'generate'}).catch(e=>notice(e.message,true)));
+$('catalog-form').addEventListener('submit',e=>{e.preventDefault();searchCatalog($('catalog-query').value.trim());});
+document.querySelectorAll('[data-search]').forEach(button=>button.addEventListener('click',()=>{$('catalog-query').value=button.dataset.search;searchCatalog(button.dataset.search);}));
 showDashboard().catch(()=>showLogin());

@@ -4,3 +4,4 @@
 *.cmd text eol=crlf
 *.md text eol=lf
 *.json text eol=lf
+*.cs text eol=lf

@@ -1,6 +1,34 @@
 Set-StrictMode -Version Latest
 Import-Module (Join-Path $PSScriptRoot 'Panel.Security.psm1') -Force
 Import-Module (Join-Path $PSScriptRoot 'Setup.Helpers.psm1') -Force
+Import-Module (Join-Path $PSScriptRoot 'Gateway.Helpers.psm1') -Force
+
+function Get-AiGatewayInstallOptions {
+    param([string]$Directory, [string]$HostName, [string]$Backend = 'bonsai', [switch]$NonInteractive, [int]$Port = 18090, [string]$BaseUrl = '', [switch]$NoApi, [int]$PanelPort = 18090, [string]$PublicUrl = '')
+    $path = Join-Path $Directory 'gateway.json'
+    $exists = Test-Path -LiteralPath $path -PathType Leaf
+    $c = Read-AiGatewayConfig $path
+    $enabled = if ($exists) { $c.enabled } else { $true }
+    if ($NoApi) { $enabled = $false }
+    if (-not $PSBoundParameters.ContainsKey('Port')) { $Port=if($exists){$c.port}else{$PanelPort} }
+    if (-not $BaseUrl) { $BaseUrl=if($exists){$c.base_url}elseif($PublicUrl){$PublicUrl.TrimEnd('/')+'/v1'}else{"http://${HostName}:$Port/v1"} }
+    $require = if($exists){$c.require_key}else{$enabled}
+    if (-not $NonInteractive) {
+        $enabled=Read-AiYesNo -Prompt 'Включить сетевой OpenAI API для Jan/Pi?' -Default $enabled
+        if($enabled){
+            Write-Host "OpenAI API доступен на порту панели $PanelPort по пути /v1. Другой порт добавляет отдельный вход."
+            $value=Read-Host "Порт OpenAI API [$Port]";if($value){$Port=[int]$value;if(-not $exists -and -not $PublicUrl -and -not $PSBoundParameters.ContainsKey('BaseUrl')){$BaseUrl="http://${HostName}:$Port/v1"}}
+            $value=Read-Host "OpenAI Base URL для клиентов [$BaseUrl]";if($value){$BaseUrl=$value.Trim()}
+            $require=Read-AiYesNo -Prompt 'Использовать API key?' -Default $require
+        }
+    }
+    if(-not $enabled -and -not $exists){$require=$false}
+    $hash=if($exists){$c.key_hash}else{''};$generated=''
+    if($require -and -not $hash){$pair=New-AiApiKey;$hash=$pair.hash;$generated=$pair.key}
+    $result=@{schema_version=1;enabled=[bool]$enabled;port=$Port;base_url=$BaseUrl.TrimEnd('/');backend=$(if($exists){$c.backend}else{$Backend});require_key=[bool]$require;key_hash=$hash;generated_key=$generated}
+    if($Port -lt 1024 -or $Port -gt 65535 -or -not(Test-AiClientBaseUrl $result.base_url)){throw 'Для OpenAI API нужен порт 1024..65535 и HTTP/HTTPS Base URL с /v1.'}
+    return $result
+}
 
 function Get-AiPanelInstallOptions {
     param([string]$Directory, [string]$HostName = '', [int]$Port = 18090, [string]$RemoteAddresses = 'LocalSubnet', [switch]$NonInteractive,
@@ -81,7 +109,7 @@ function Protect-AiPanelDirectory {
 }
 
 function Install-AiPanelService {
-    param([string]$Directory, [string]$PwshPath, $Config, $Options)
+    param([string]$Directory, [string]$PwshPath, $Config, $Options, $GatewayOptions)
     $wrapper = Join-Path $Directory 'panel-service.exe'
     if (-not (Test-Path -LiteralPath $wrapper -PathType Leaf)) {
         $source = $null
@@ -98,9 +126,12 @@ function Install-AiPanelService {
         $service.WaitForStatus('Stopped', [TimeSpan]::FromSeconds(30))
     }
     if (Get-NetTCPConnection -LocalPort $Options.port -State Listen -ErrorAction SilentlyContinue) { throw "Порт $($Options.port) занят другим процессом. Выбери другой порт панели." }
+    if($GatewayOptions.enabled -and $GatewayOptions.port -ne $Options.port -and (Get-NetTCPConnection -LocalPort $GatewayOptions.port -State Listen -ErrorAction SilentlyContinue)){throw "Порт OpenAI API $($GatewayOptions.port) занят."}
     $password = $Options.generated_password
     $saved = @{}; foreach ($key in $Options.Keys) { if ($key -ne 'generated_password') { $saved[$key] = $Options[$key] } }
     Set-Content -LiteralPath (Join-Path $Directory 'panel.json') -Value ($saved | ConvertTo-Json -Depth 8) -Encoding utf8
+    $savedGateway=@{};foreach($key in $GatewayOptions.Keys){if($key -ne 'generated_key'){$savedGateway[$key]=$GatewayOptions[$key]}}
+    Write-AiGatewayConfig (Join-Path $Directory 'gateway.json') $savedGateway
     $xml = New-AiPanelServiceXml $PwshPath $Directory
     $xml.Save((Join-Path $Directory 'panel-service.xml'))
     $null = New-Item -ItemType Directory -Path (Join-Path $Directory 'logs') -Force
@@ -110,6 +141,8 @@ function Install-AiPanelService {
     $rule = Get-NetFirewallRule -Name 'omnibox-ai-panel' -ErrorAction SilentlyContinue
     if ($null -ne $rule) { Remove-NetFirewallRule -Name 'omnibox-ai-panel' }
     $null = New-NetFirewallRule -Name 'omnibox-ai-panel' -DisplayName 'OmniBox AI panel' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort $Options.port -Profile Any -RemoteAddress $Options.remote_addresses
+    Get-NetFirewallRule -Name 'omnibox-ai-api' -ErrorAction SilentlyContinue | Remove-NetFirewallRule
+    if($GatewayOptions.enabled -and $GatewayOptions.port -ne $Options.port){$null=New-NetFirewallRule -Name 'omnibox-ai-api' -DisplayName 'OmniBox OpenAI API' -Direction Inbound -Action Allow -Enabled True -Protocol TCP -LocalPort $GatewayOptions.port -Profile Any -RemoteAddress $Options.remote_addresses}
     Start-Service -Name 'omnibox-ai' -ErrorAction Stop
     $hostName = $Options.allowed_hosts[0]
     $ready = $false
@@ -119,9 +152,10 @@ function Install-AiPanelService {
     if (-not $ready) { throw "Панель не ответила. Журналы: $Directory\logs\panel-service.err.log и wrapper.log" }
     Write-Host "Веб-панель: http://${hostName}:$($Options.port)"
     if ($Options.public_origin) { Write-Host "Через NAS после настройки proxy: $($Options.public_origin)" }
+    if($GatewayOptions.enabled){Write-Host "OpenAI Base URL: $($GatewayOptions.base_url)";if($GatewayOptions.generated_key){Write-Host "API key (сохрани в Bitwarden): $($GatewayOptions.generated_key)"}}
     if ($password) { Write-Host "Сгенерированный пароль панели: $password"; Write-Host 'Сохрани пароль в Bitwarden: открытым текстом он нигде не сохраняется.' }
     else { Write-Host 'Пароль панели: выбранный при первой установке.' }
     Write-Host 'Панель запускается с Windows. ИИ-движки сами не запускаются.'
 }
 
-Export-ModuleMember -Function Get-AiPanelInstallOptions, Install-AiPanelService, New-AiPanelServiceXml
+Export-ModuleMember -Function Get-AiPanelInstallOptions, Get-AiGatewayInstallOptions, Install-AiPanelService, New-AiPanelServiceXml

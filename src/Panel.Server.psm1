@@ -70,28 +70,50 @@ function Start-AiPanelOperation {
 }
 
 function Start-OmniBoxPanel {
-    param([string]$Root, [string]$PanelConfigPath = (Join-Path $Root 'panel.json'), [string]$EngineModulePath = (Join-Path $Root 'src/OmniBox.Ai.psm1'))
+    param([string]$Root, [string]$PanelConfigPath = (Join-Path $Root 'panel.json'), [string]$EngineModulePath = (Join-Path $Root 'src/OmniBox.Ai.psm1'), [string]$CatalogModulePath = (Join-Path $PSScriptRoot 'Model.Catalog.psm1'))
     Import-Module (Join-Path $PSScriptRoot 'Panel.Security.psm1') -Force
+    Import-Module (Join-Path $PSScriptRoot 'Gateway.Helpers.psm1') -Force
     Import-Module $EngineModulePath -Force
     $panel = Read-AiPanelConfig $PanelConfigPath
     $configPath = Join-Path $Root 'config.json'
+    $gatewayPath = Join-Path $Root 'gateway.json'
+    $gateway = Read-AiGatewayConfig $gatewayPath
+    $gatewayPort = $gateway.port
+    $apiHosts = @($panel.allowed_hosts)
+    if ($gateway.enabled) { $apiHosts = @(@($apiHosts + ([Uri]$gateway.base_url).Host) | Select-Object -Unique) }
+    if ($gateway.enabled -and -not ('OmniBox.OpenAiProxy' -as [type])) { Add-Type -Path (Join-Path $PSScriptRoot 'OpenAi.Proxy.cs') }
     $listener = [Net.HttpListener]::new()
     foreach ($hostName in $panel.allowed_hosts) { $listener.Prefixes.Add("http://${hostName}:$($panel.port)/") }
+    if ($gateway.enabled -and $gatewayPort -ne $panel.port) { foreach ($hostName in $apiHosts) { $listener.Prefixes.Add("http://${hostName}:$gatewayPort/") } }
     if ($IsWindows) {
         $listener.TimeoutManager.HeaderWait = [TimeSpan]::FromSeconds(10)
         $listener.TimeoutManager.EntityBody = [TimeSpan]::FromSeconds(10)
     }
-    $sessions = @{}; $attempts = @{}; $operations = @{}
+    $sessions = @{}; $attempts = @{}; $operations = @{}; $catalog = @{}
     $assets = @{ '/' = @('web/index.html','text/html; charset=utf-8'); '/app.js' = @('web/app.js','text/javascript; charset=utf-8'); '/style.css' = @('web/style.css','text/css; charset=utf-8') }
     try {
         $listener.Start()
-        Write-Host "OmniBox AI 0.5.0 panel: port $($panel.port)"
+        Write-Host "OmniBox AI 0.6.0 panel: port $($panel.port)"
         while ($listener.IsListening) {
             # Blocking wait: no background polling, model probes, GPU queries, or wake timers.
             $context = $listener.GetContext()
             try {
                 $request = $context.Request; $path = $request.Url.AbsolutePath; $method = $request.HttpMethod
-                if ($request.Url.Host -notin $panel.allowed_hosts) { Send-AiHttpResponse $context 403 @{ error = 'Host запрещён.' }; continue }
+                # Route /v1 on the panel port before panel session/CSRF checks. A NAS
+                # can forward the entire domain to one upstream without port routing.
+                $onPanelPort = $request.LocalEndPoint.Port -eq $panel.port
+                $isApi = $gateway.enabled -and (($onPanelPort -and ($path -eq '/v1' -or $path.StartsWith('/v1/'))) -or (-not $onPanelPort -and $request.LocalEndPoint.Port -eq $gatewayPort))
+                $hosts = if ($isApi) { $apiHosts } else { $panel.allowed_hosts }
+                if ($request.Url.Host -notin $hosts) { Send-AiHttpResponse $context 403 @{ error = 'Host запрещён.' }; continue }
+                if ($isApi) {
+                    $apiConfig = Read-AiGatewayConfig $gatewayPath
+                    $backends = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
+                    if (-not $apiConfig.enabled -or -not $backends.backends.Contains($apiConfig.backend)) { Send-AiHttpResponse $context 503 @{error=@{message='Selected backend is unavailable.';type='omnibox_error'}}; continue }
+                    $b = $backends.backends[$apiConfig.backend]
+                    $upstreamKey = if ($b.Contains('upstream_api_key')) { [string]$b.upstream_api_key } else { '' }
+                    $null = [OmniBox.OpenAiProxy]::Handle($context, [string]$b.base_url, [bool]$apiConfig.require_key, [string]$apiConfig.key_hash, $upstreamKey)
+                    continue
+                }
                 if ($method -notin @('GET','POST')) { Send-AiHttpResponse $context 405 @{ error = 'Метод запрещён.' }; continue }
                 if ($method -eq 'GET' -and $assets.Contains($path)) {
                     $asset = $assets[$path]
@@ -127,6 +149,32 @@ function Start-OmniBoxPanel {
                 if ($method -eq 'POST' -and $request.Headers['X-Omnibox-CSRF'] -cne $session.csrf) { Send-AiHttpResponse $context 403 @{ error = 'CSRF-проверка не пройдена.' }; continue }
                 switch ("$method $path") {
                     'GET /api/session' { Send-AiHttpResponse $context 200 @{ csrf = $session.csrf; ssh_target = $panel.ssh_target; port = $panel.port } }
+                    'GET /api/gateway' { Send-AiHttpResponse $context 200 (Get-AiGatewayView (Read-AiGatewayConfig $gatewayPath)) }
+                    'POST /api/catalog' {
+                        foreach($id in @($catalog.Keys)){if($catalog[$id].created -lt [DateTime]::UtcNow.AddMinutes(-5) -and $catalog[$id].job.State -in @('Completed','Failed','Stopped')){Remove-Job $catalog[$id].job -Force;$catalog.Remove($id)}}
+                        if(@($catalog.Values|Where-Object{$_.job.State -notin @('Completed','Failed','Stopped')}).Count -or $catalog.Count -ge 20){throw 'Предыдущий поиск ещё выполняется. Повтори позже.'}
+                        $body=Read-AiHttpJson $request
+                        if($body.Count -ne 2 -or $body.mode -notin @('search','files') -or -not $body.Contains('value') -or $body.value -isnot [string] -or $body.value.Length -gt 100){throw 'Поиск: mode search/files и value до 100 символов.'}
+                        $job=Start-ThreadJob -ArgumentList $CatalogModulePath,$body -ScriptBlock {param($Module,$Body) try{Import-Module $Module -Force;$data=if($Body.mode -eq 'search'){Search-AiModelCatalog $Body.value}else{Get-AiCatalogFiles $Body.value};@{ok=$true;data=$data}}catch{@{ok=$false;error=$_.Exception.Message}}}
+                        $id=[Guid]::NewGuid().ToString('N');$catalog[$id]=@{job=$job;created=[DateTime]::UtcNow};Send-AiHttpResponse $context 202 @{id=$id}
+                    }
+                    'GET /api/catalog' {
+                        $id=$request.QueryString['id'];if(-not $catalog.Contains($id)){throw 'Неизвестный поиск.'}
+                        $entry=$catalog[$id]
+                        if($entry.job.State -notin @('Completed','Failed','Stopped')){Send-AiHttpResponse $context 200 @{state='running'};break}
+                        $result=@(Receive-Job $entry.job -Keep -ErrorAction SilentlyContinue)|Where-Object{$_ -is [System.Collections.IDictionary] -and $_.Contains('ok')}|Select-Object -Last 1
+                        if($null -eq $result -or -not $result.ok){$errorText=if($null -ne $result){$result.error}else{'Поиск прерван.'};Send-AiHttpResponse $context 200 @{state='failed';error=$errorText};break}
+                        Send-AiHttpResponse $context 200 @{state='done';data=$result.data}
+                    }
+                    'POST /api/gateway' {
+                        $body = Read-AiHttpJson $request
+                        $c = Read-AiGatewayConfig $gatewayPath
+                        if (-not $c.enabled) { throw 'Сетевой API ещё не установлен. Повтори установщик с включённым OpenAI API.' }
+                        $backends = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
+                        $changed = Update-AiGatewaySettings $c $body @($backends.backends.Keys)
+                        Write-AiGatewayConfig $gatewayPath $changed.config
+                        Send-AiHttpResponse $context 200 @{ gateway=(Get-AiGatewayView $changed.config);key=$changed.key }
+                    }
                     'POST /api/logout' { $sessions.Remove($cookie.Value); $secureCookie = if ($transport.secure) { '; Secure' } else { '' }; $context.Response.Headers['Set-Cookie'] = "omnibox_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0$secureCookie"; Send-AiHttpResponse $context 200 @{ ok = $true } }
                     'GET /api/status' {
                         $data = Get-AiDashboard -ConfigPath $configPath -IncludeGpu:($request.QueryString['gpu'] -eq '1')
@@ -160,6 +208,7 @@ function Start-OmniBoxPanel {
     } finally {
         $listener.Close()
         foreach ($operation in $operations.Values) { if ($null -ne $operation.job) { Stop-Job $operation.job; Remove-Job $operation.job -Force } }
+        foreach($entry in $catalog.Values){Stop-Job $entry.job;Remove-Job $entry.job -Force}
     }
 }
 

@@ -95,7 +95,7 @@ try {
     Test 'help and version need no config' {
         $m = New-TestModule
         Assert-True ((Invoke-Ai -Arguments @() -ConfigPath 'missing') -like '*OmniBox AI*')
-        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.5.0'
+        Assert-Equal (Invoke-Ai -Arguments @('version') -ConfigPath 'missing') '0.6.0'
         Assert-Equal @(Get-Calls $m).Count 0
     }
     Test 'example config and endpoint' {
@@ -818,6 +818,62 @@ try {
         Assert-Equal $o.public_origin '';Assert-Equal $o.trusted_proxy_addresses.Count 0
         Assert-True ('ai.example.com' -notin $o.allowed_hosts);Assert-Equal $o.port 18091
     }
+    Test 'gateway installer defaults to the shared panel port and generates a key' {
+        $o=Get-AiGatewayInstallOptions -Directory (Join-Path $testRoot 'new-api') -HostName '192.168.1.77' -NonInteractive
+        Assert-True $o.enabled;Assert-True $o.require_key;Assert-Equal $o.port 18090;Assert-Equal $o.base_url 'http://192.168.1.77:18090/v1'
+        Assert-True ($o.generated_key -match '^obai-[a-f0-9]{64}$');Assert-Equal $o.key_hash.Length 64
+    }
+    Test 'gateway installer advertises the existing NAS origin and allows an extra API port' {
+        $o=Get-AiGatewayInstallOptions -Directory (Join-Path $testRoot 'nas-api') -HostName '192.168.1.77' -NonInteractive -PanelPort 18091 -PublicUrl 'https://llm.fnx.red'
+        Assert-Equal $o.port 18091;Assert-Equal $o.base_url 'https://llm.fnx.red/v1'
+        $o=Get-AiGatewayInstallOptions -Directory (Join-Path $testRoot 'extra-api') -HostName '192.168.1.77' -NonInteractive -Port 11435
+        Assert-Equal $o.port 11435;Assert-Equal $o.base_url 'http://192.168.1.77:11435/v1'
+    }
+    Test 'gateway installer can leave network API disabled' {
+        $o=Get-AiGatewayInstallOptions -Directory (Join-Path $testRoot 'no-api') -HostName '192.168.1.77' -NonInteractive -NoApi
+        Assert-True (-not $o.enabled);Assert-True (-not $o.require_key);Assert-Equal $o.generated_key ''
+    }
+    Test 'gateway API keys are random and hash only configuration is sufficient' {
+        Import-Module (Join-Path $repo 'src/Gateway.Helpers.psm1') -Force
+        $a=New-AiApiKey;$b=New-AiApiKey;Assert-True ($a.key -cne $b.key);Assert-True ($a.hash -cne $b.hash)
+        Assert-Equal $a.hash ([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($a.key))).ToLowerInvariant())
+    }
+    Test 'gateway validates client URL without accepting embedded credentials' {
+        Assert-True (Test-AiClientBaseUrl 'https://llm.fnx.red/v1');Assert-True (Test-AiClientBaseUrl 'https://llm.fnx.red:11435/v1')
+        foreach($url in @('https://llm.fnx.red','https://user:secret@llm.fnx.red/v1','file:///v1','http://host/v1?secret=x')){Assert-True (-not(Test-AiClientBaseUrl $url))}
+    }
+    Test 'gateway update rejects arbitrary targets and supports optional auth' {
+        $a=New-AiApiKey;$c=@{schema_version=1;enabled=$true;port=11435;base_url='http://192.168.1.77:11435/v1';backend='bonsai';require_key=$true;key_hash=$a.hash}
+        Assert-Throws {Update-AiGatewaySettings $c @{action='save';backend='http://other';base_url=$c.base_url;require_key=$false} @('bonsai','ollama')} '*известный движок*'
+        $r=Update-AiGatewaySettings $c @{action='save';backend='ollama';base_url='https://llm.fnx.red/v1';require_key=$false} @('bonsai','ollama')
+        Assert-Equal $r.config.backend 'ollama';Assert-True (-not $r.config.require_key);Assert-Equal $r.config.key_hash $a.hash
+        $view=Get-AiGatewayView $c;Assert-True (-not $view.Contains('key_hash'))
+    }
+    Test 'gateway writes atomically and keeps original on invalid configuration' {
+        $path=Join-Path $testRoot 'gateway.json';$pair=New-AiApiKey
+        $c=@{schema_version=1;enabled=$true;port=11435;base_url='http://192.168.1.77:11435/v1';backend='bonsai';require_key=$true;key_hash=$pair.hash}
+        Write-AiGatewayConfig $path $c;$original=Get-Content $path -Raw;$c.key_hash=''
+        Assert-Throws {Write-AiGatewayConfig $path $c} '*hash API key*';Assert-Equal (Get-Content $path -Raw) $original
+        Assert-True (-not $original.Contains($pair.key));Assert-Equal @(Get-ChildItem $testRoot -Filter 'gateway.json.tmp-*').Count 0
+    }
+    Test 'catalog search encodes user query and retains only valid repository links' {
+        $cm=Import-Module (Join-Path $repo 'src/Model.Catalog.psm1') -Force -PassThru
+        & $cm {function script:Invoke-AiHubApi {param($Path)$script:lastPath=$Path;@([pscustomobject]@{id='author/model-GGUF';downloads=10;gated=$false},[pscustomobject]@{id='../bad';downloads=1;gated=$false})}}
+        $c=Search-AiModelCatalog 'uncensored & test';Assert-Equal $c.models.Count 1;Assert-Equal $c.models[0].url 'https://huggingface.co/author/model-GGUF'
+        Assert-True ((& $cm {$script:lastPath}) -like '*uncensored%20%26%20test*')
+        Assert-Throws {Search-AiModelCatalog 'x'} '*2 до 100*'
+    }
+    Test 'catalog files pin revision and label unsupported split and Prism formats' {
+        $cm=Get-Module Model.Catalog
+        & $cm {function script:Invoke-AiHubApi {param($Path)[pscustomobject]@{sha=('b'*40);siblings=@([pscustomobject]@{rfilename='model-PQ2_0.gguf';size=100;lfs=[pscustomobject]@{sha256=('a'*64)}},[pscustomobject]@{rfilename='model-00001-of-00002.gguf';size=50},[pscustomobject]@{rfilename='mmproj-model.gguf';size=50})}}}
+        $c=Get-AiCatalogFiles 'author/model';Assert-Equal $c.files.Count 2;Assert-True $c.files[0].prism_only;Assert-True $c.files[1].split
+        Assert-True ($c.files[0].url -like ('*/resolve/'+('b'*40)+'/*'));Assert-Equal $c.files[0].sha256 ('a'*64)
+        Assert-Throws {Get-AiCatalogFiles '../secret'} '*author/model*'
+    }
+    Test 'OpenAI proxy source compiles under the installed PowerShell runtime' {
+        if(-not ('OmniBox.OpenAiProxy' -as [type])){Add-Type -Path (Join-Path $repo 'src/OpenAi.Proxy.cs')}
+        Assert-Equal ([OmniBox.OpenAiProxy].FullName) 'OmniBox.OpenAiProxy'
+    }
     Test 'self-contained package matches every current source file' {
         $setup = Join-Path $repo 'dist/install-omnibox-ai.ps1'
         $text = Get-Content $setup -Raw
@@ -826,7 +882,7 @@ try {
         $memory = [IO.MemoryStream]::new([Convert]::FromBase64String($encoded))
         $archive = [IO.Compression.ZipArchive]::new($memory, [IO.Compression.ZipArchiveMode]::Read)
         try {
-            Assert-Equal $archive.Entries.Count 21
+            Assert-Equal $archive.Entries.Count 26
             foreach ($entry in $archive.Entries) {
                 Assert-True ($entry.FullName -notmatch '(^/|\.\.)')
                 $reader = [IO.StreamReader]::new($entry.Open(), [Text.Encoding]::UTF8)
