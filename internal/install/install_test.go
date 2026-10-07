@@ -47,8 +47,14 @@ func newRig(t *testing.T, input string) *rig {
 		Addresses:  func() []string { return []string{"192.168.1.77", "omnibox", "localhost"} },
 		Restrict:   func(string) error { return nil }, ShimDir: filepath.Join(root, "shim"),
 		AddToPath: func(dir string) (func() error, error) {
-			r.path = append(r.path, dir)
-			return func() error { r.path = r.path[:len(r.path)-1]; return nil }, nil
+			if !slices.Contains(r.path, dir) {
+				r.path = append(r.path, dir)
+			}
+			return func() error { return nil }, nil
+		},
+		RemoveFromPath: func(dir string) error {
+			r.path = slices.DeleteFunc(r.path, func(p string) bool { return p == dir })
+			return nil
 		}}
 	return r
 }
