@@ -1441,6 +1441,22 @@ try {
         $config.backends.bonsai.models_directory = 'relative\models'; $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $f.path
         Assert-Throws { Invoke-Ai @('status') $f.path } '*models_directory*'
     }
+    Test 'disk overview reports drives, their roles, low space and model sizes per engine' {
+        $e = New-EngineFixture
+        $ollamaModels = Join-Path $e.root 'ollama-models'
+        foreach ($file in @('manifests/registry/library/qwen3/8b', 'manifests/registry/library/gemma/2b', 'blobs/sha256-a', 'blobs/sha256-b')) { $path = Join-Path $ollamaModels $file; $null = New-Item -ItemType Directory -Path (Split-Path $path -Parent) -Force; [IO.File]::WriteAllBytes($path, [byte[]]::new(1000)) }
+        $xml = [xml](Get-Content -LiteralPath $e.ollama -Raw); $node = $xml.CreateElement('env'); $node.SetAttribute('name', 'OLLAMA_MODELS'); $node.SetAttribute('value', $ollamaModels); $null = $xml.service.AppendChild($node); $xml.Save($e.ollama)
+        $sep = [IO.Path]::DirectorySeparatorChar
+        & $e.m { param($Root, $Sep) $script:fakeDrives = @(@{ name = 'R:'; label = 'System'; root = $Sep.ToString(); total = 500GB; free = 400GB }, @{ name = 'T:'; label = 'Models'; root = ([IO.Path]::GetFullPath($Root).TrimEnd($Sep) + $Sep); total = 100GB; free = 5GB }); function script:Get-AiFixedDrives { $script:fakeDrives } } $testRoot $sep
+        $disk = & $e.m { param($p) Get-AiDiskOverview $p } $e.path
+        $prism = $disk.models | Where-Object engine -eq 'PrismML'; $ollama = $disk.models | Where-Object engine -eq 'Ollama'
+        Assert-Equal $prism.models 2; Assert-True ($prism.bytes -gt 0)
+        Assert-Equal $ollama.models 2; Assert-True ($ollama.bytes -ge 4000)
+        $t = $disk.drives | Where-Object name -eq 'T:'; $r = $disk.drives | Where-Object name -eq 'R:'
+        Assert-True (@($t.roles) -contains 'OmniBox AI'); Assert-True (@($t.roles) -contains 'модели PrismML'); Assert-True (@($t.roles) -contains 'модели Ollama')
+        Assert-Equal $t.used 95GB; Assert-True $t.low; Assert-Equal @($r.roles).Count 0; Assert-True (-not $r.low)
+        $null = Invoke-Ai @('storage') $e.path
+    }
     Test 'Ollama CPU placement disables GPU discovery and automatic placement restores prior masks' {
         $f=New-ContextFixture;$m=New-TestModule;$b=$f.config.backends.ollama
         $x=& $m {param($b)New-AiLaunchXml $b @{placement='cpu'}} $b

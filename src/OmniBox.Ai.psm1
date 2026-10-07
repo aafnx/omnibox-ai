@@ -751,6 +751,13 @@ function Invoke-Ai {
             Write-Host "Журналы: $(& $mb $usage.logs_bytes) (файлов: $($usage.log_files)), $keep"
             if ($usage.logs_over_limit) { Write-Host "Журналы больше порога $($usage.log_warn_mb) МБ. Очистить устаревшие: ai storage clean" }
             Write-Host "Резервные копии: $(& $mb $usage.backups_bytes) · обновления: $(& $mb $usage.updates_bytes) · временные файлы: $(& $mb $usage.temp_bytes)"
+            $gb = { param($Bytes) '{0} ГБ' -f [math]::Round($Bytes / 1GB, 1).ToString([Globalization.CultureInfo]::InvariantCulture) }
+            $disk = Get-AiDiskOverview $ConfigPath
+            foreach ($model in $disk.models) { Write-Host "Модели $($model.engine): $(& $gb $model.bytes) (моделей: $($model.models))$(if ($model.path) { " · $($model.path)" })" }
+            foreach ($drive in $disk.drives) {
+                $roles = if (@($drive.roles).Count) { " · $(@($drive.roles) -join ', ')" } else { '' }
+                Write-Host "Диск $($drive.name): занято $(& $gb $drive.used) из $(& $gb $drive.total), свободно $(& $gb $drive.free)$roles$(if ($drive.low) { ' · мало места' })"
+            }
         }
         'status' {
             if ($rest.Count) { throw 'Использование: ai status' }
@@ -792,4 +799,4 @@ function Invoke-Ai {
 . (Join-Path $PSScriptRoot 'Panel.Cli.ps1')
 . (Join-Path $PSScriptRoot 'Telemetry.ps1')
 . (Join-Path $PSScriptRoot 'Engine.Manager.ps1')
-Export-ModuleMember -Function Invoke-Ai, Get-AiDashboard, Invoke-AiPanelAction, Get-AiTelemetry, Get-AiGatewayRuntime, Get-AiEngineOverview, Get-AiEngineReleases
+Export-ModuleMember -Function Invoke-Ai, Get-AiDashboard, Invoke-AiPanelAction, Get-AiTelemetry, Get-AiGatewayRuntime, Get-AiEngineOverview, Get-AiEngineReleases, Get-AiDiskOverview
