@@ -54,6 +54,8 @@ type Options struct {
 	// Engines lists installed engine versions; Releases asks GitHub for one engine's versions.
 	Engines  func() any
 	Releases func(ctx context.Context, engine string) (any, error)
+	// Catalog searches Hugging Face (query) or lists a repository's GGUF files (repo).
+	Catalog func(ctx context.Context, query, repo string) (any, error)
 }
 
 type session struct {
@@ -117,7 +119,7 @@ func New(opt Options) (*Server, error) {
 // Routes of the PowerShell panel that later stages port; until then they answer 501.
 var pendingRoutes = map[string]bool{
 	"GET /api/gateway": true,
-	"GET /api/updates": true, "GET /api/catalog": true,
+	"GET /api/updates": true,
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -210,6 +212,14 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.json(w, http.StatusOK, map[string]any{"releases": releases})
+	case route == "GET /api/catalog" && s.opt.Catalog != nil:
+		q := r.URL.Query()
+		result, err := s.opt.Catalog(r.Context(), q.Get("q"), q.Get("repo"))
+		if err != nil {
+			s.json(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+			return
+		}
+		s.json(w, http.StatusOK, result)
 	case route == "GET /api/storage" && s.opt.Storage != nil:
 		s.json(w, http.StatusOK, s.opt.Storage())
 	case route == "POST /api/storage" && s.opt.StorageAction != nil:

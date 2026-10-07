@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/aafnx/omnibox-ai/internal/catalog"
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/engine"
 	"github.com/aafnx/omnibox-ai/internal/platform"
@@ -230,8 +231,20 @@ func drives(data string, models []ModelUsage) []DriveUsage {
 	return out
 }
 
-// Cleanup removes logs untouched longer than the retention period and engine staging
-// directories older than a day. Files a running engine writes are recent, so they stay.
+// FreeSpace is the free space of the drive that holds path.
+func FreeSpace(path string) (int64, bool) {
+	if d := owner(listDrives(), path); d != nil {
+		return d.Free, true
+	}
+	return 0, false
+}
+
+// staleParts are partial model downloads nobody resumed for a week.
+const staleParts = 7 * 24 * time.Hour
+
+// Cleanup removes logs untouched longer than the retention period, engine staging directories
+// older than a day and partial downloads not resumed for a week. Files a running engine or
+// download writes are recent, so they stay.
 func Cleanup(data string, cfg *config.Config, now time.Time) Result {
 	var items []file
 	if days := cfg.Storage.LogRetentionDays; days > 0 {
@@ -245,6 +258,19 @@ func Cleanup(data string, cfg *config.Config, now time.Time) Result {
 	for _, f := range matching(EnginesDir(data), staging, true) {
 		if f.mod.Before(now.Add(-24 * time.Hour)) {
 			items = append(items, f)
+		}
+	}
+	if e, ok := cfg.Engines[config.PrismML]; ok {
+		dirs := []string{e.ModelsDirectory}
+		if d := engine.ModelDirectory(e); d != e.ModelsDirectory {
+			dirs = append(dirs, d)
+		}
+		for _, dir := range dirs {
+			for _, f := range matching(dir, catalog.PartPattern, false) {
+				if f.mod.Before(now.Add(-staleParts)) {
+					items = append(items, f)
+				}
+			}
 		}
 	}
 	var r Result

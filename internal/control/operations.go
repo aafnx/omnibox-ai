@@ -20,14 +20,30 @@ type Gate interface {
 
 // Operation is one panel operation as the panel shows it.
 type Operation struct {
-	ID       string    `json:"id"`
-	Action   string    `json:"action"`
-	Engine   string    `json:"backend"`
-	State    string    `json:"state"` // running, done or failed
-	Message  string    `json:"message"`
-	Started  time.Time `json:"started"`
-	Elapsed  float64   `json:"elapsed_seconds"`
+	ID      string    `json:"id"`
+	Action  string    `json:"action"`
+	Engine  string    `json:"backend"`
+	State   string    `json:"state"` // running, done or failed
+	Message string    `json:"message"`
+	Started time.Time `json:"started"`
+	Elapsed float64   `json:"elapsed_seconds"`
+	// Progress of a download: bytes done, total (0 if unknown) and the current speed.
+	Done     int64   `json:"bytes_done,omitempty"`
+	Total    int64   `json:"bytes_total,omitempty"`
+	Speed    float64 `json:"bytes_per_second,omitempty"`
 	category string
+	cancel   context.CancelFunc
+	mark     time.Time
+	markDone int64
+}
+
+type progressKey struct{}
+
+// Progress reports download progress for the operation running in ctx.
+func Progress(ctx context.Context, done, total int64) {
+	if f, ok := ctx.Value(progressKey{}).(func(int64, int64)); ok {
+		f(done, total)
+	}
 }
 
 // Operations runs panel operations in the background, one per category at a time.
@@ -88,8 +104,12 @@ func (o *Operations) Start(r Request) (string, error) {
 	var b [16]byte
 	_, _ = rand.Read(b[:])
 	op := &Operation{ID: hex.EncodeToString(b[:]), Action: r.Action, Engine: r.Engine, State: "running", Message: "Выполняется…", Started: o.now().UTC(), category: cat}
+	ctx, cancel := context.WithCancel(context.Background())
+	op.cancel = cancel
+	ctx = context.WithValue(ctx, progressKey{}, func(done, total int64) { o.progress(op, done, total) })
 	o.list[op.ID] = op
 	go func() {
+		defer cancel()
 		var message string
 		var err error
 		func() {
@@ -101,7 +121,7 @@ func (o *Operations) Start(r Request) (string, error) {
 			if guarded {
 				defer o.Gate.EndControl()
 			}
-			message, err = o.Run(context.Background(), r)
+			message, err = o.Run(ctx, r)
 		}()
 		o.mu.Lock()
 		defer o.mu.Unlock()
@@ -115,6 +135,38 @@ func (o *Operations) Start(r Request) (string, error) {
 		o.prune()
 	}()
 	return op.ID, nil
+}
+
+func (o *Operations) progress(op *Operation, done, total int64) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	now := o.now()
+	if op.mark.IsZero() {
+		op.mark, op.markDone = now, done
+	} else if dt := now.Sub(op.mark).Seconds(); dt >= 2 {
+		// Speed over the last couple of seconds, not since the start, so a resumed download reads right.
+		op.Speed = float64(done-op.markDone) / dt
+		op.mark, op.markDone = now, done
+	}
+	op.Done, op.Total = done, total
+}
+
+// ErrNotCancelable means the operation cannot be canceled safely.
+var ErrNotCancelable = errors.New("Отменить можно только скачивание.")
+
+// Cancel stops a running download; engine and settings operations run to the end.
+func (o *Operations) Cancel(id string) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	op, ok := o.list[id]
+	if !ok || op.State != "running" {
+		return errors.New("Операция не выполняется.")
+	}
+	if op.category != "download" {
+		return ErrNotCancelable
+	}
+	op.cancel()
+	return nil
 }
 
 func (o *Operations) prune() {

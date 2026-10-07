@@ -140,3 +140,23 @@ func TestSaveValidatesAndRemovesContentWhenTurnedOff(t *testing.T) {
 		t.Fatal("setting not saved")
 	}
 }
+
+func TestCleanupRemovesStalePartialDownloads(t *testing.T) {
+	data, store := setup(t)
+	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
+	dir := store.Get().Engines[config.PrismML].ModelsDirectory
+	stale := filepath.Join(dir, ".download-0123456789abcdef0123456789abcdef.part")
+	fresh := filepath.Join(dir, ".download-fedcba9876543210fedcba9876543210.part")
+	model := filepath.Join(dir, "old-model-Q4_K_M.gguf")
+	write(t, stale, 100, now.AddDate(0, 0, -8))
+	write(t, fresh, 100, now.AddDate(0, 0, -2))
+	write(t, model, 100, now.AddDate(-1, 0, 0))
+	if r := Cleanup(data, store.Get(), now); r.Removed != 1 {
+		t.Fatalf("%+v", r)
+	}
+	for path, kept := range map[string]bool{stale: false, fresh: true, model: true} {
+		if _, err := os.Stat(path); (err == nil) != kept {
+			t.Fatalf("%s kept=%v", path, err == nil)
+		}
+	}
+}
