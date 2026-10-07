@@ -4,6 +4,8 @@ package platform
 
 import (
 	"errors"
+	"strings"
+	"syscall"
 	"time"
 
 	"golang.org/x/sys/windows"
@@ -160,3 +162,66 @@ func (SystemServices) Remove(name string, timeout time.Duration) error {
 
 // IsAdmin reports whether the process runs elevated.
 func IsAdmin() bool { return windows.GetCurrentProcessToken().IsElevated() }
+
+// commandLine is how the SCM stores a program with its arguments.
+func commandLine(spec ServiceSpec) string {
+	parts := []string{syscall.EscapeArg(spec.Executable)}
+	for _, a := range spec.Args {
+		parts = append(parts, syscall.EscapeArg(a))
+	}
+	return strings.Join(parts, " ")
+}
+
+func (SystemServices) Change(spec ServiceSpec) error {
+	m, s, err := open(spec.Name)
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	defer s.Close()
+	c, err := s.Config()
+	if err != nil {
+		return err
+	}
+	c.BinaryPathName = commandLine(spec)
+	if err := s.UpdateConfig(c); err != nil {
+		return err
+	}
+	// Verify: a change the SCM silently ignored would leave the old program in place.
+	after, err := s.Config()
+	if err != nil {
+		return err
+	}
+	if after.BinaryPathName != c.BinaryPathName {
+		return errors.New("служба не приняла новую команду запуска")
+	}
+	return nil
+}
+
+func (SystemServices) Executable(name string) (string, error) {
+	m, s, err := open(name)
+	if err != nil {
+		return "", err
+	}
+	defer m.Disconnect()
+	defer s.Close()
+	c, err := s.Config()
+	if err != nil {
+		return "", err
+	}
+	return firstArg(c.BinaryPathName), nil
+}
+
+// firstArg is the program of a Windows command line.
+func firstArg(command string) string {
+	command = strings.TrimSpace(command)
+	if strings.HasPrefix(command, `"`) {
+		if end := strings.Index(command[1:], `"`); end >= 0 {
+			return command[1 : end+1]
+		}
+	}
+	if i := strings.IndexByte(command, ' '); i >= 0 {
+		return command[:i]
+	}
+	return command
+}

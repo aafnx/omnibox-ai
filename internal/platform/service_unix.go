@@ -138,3 +138,29 @@ func (s SystemServices) Remove(name string, timeout time.Duration) error {
 
 // IsAdmin reports whether the process runs as root.
 func IsAdmin() bool { return os.Geteuid() == 0 }
+
+func (s SystemServices) Change(spec ServiceSpec) error {
+	if _, err := os.Stat(filepath.Join(s.UnitDir, spec.Name+".service")); err != nil {
+		return err
+	}
+	return s.Install(spec)
+}
+
+func (s SystemServices) Executable(name string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(s.UnitDir, name+".service"))
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if rest, ok := strings.CutPrefix(line, "ExecStart="); ok {
+			if strings.HasPrefix(rest, `"`) {
+				if end := strings.Index(rest[1:], `"`); end >= 0 {
+					return strings.NewReplacer(`\\`, `\`, `\"`, `"`, `$$`, `$`, `%%`, `%`).Replace(rest[1 : end+1]), nil
+				}
+			}
+			first, _, _ := strings.Cut(rest, " ")
+			return first, nil
+		}
+	}
+	return "", fmt.Errorf("в службе %s нет ExecStart", name)
+}
