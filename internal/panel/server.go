@@ -43,6 +43,11 @@ type Options struct {
 	Logs func(engine string) any
 	// Action starts a background engine operation from structured fields and returns its id.
 	Action func(body map[string]any) (any, error)
+	// API serves /v1 once the panel has checked the Host header.
+	API http.Handler
+	// Activity is the /v1 request history; RequestContent returns one stored request by id.
+	Activity       func() any
+	RequestContent func(id string) (json.RawMessage, bool)
 }
 
 type session struct {
@@ -105,9 +110,8 @@ func New(opt Options) (*Server, error) {
 
 // Routes of the PowerShell panel that later stages port; until then they answer 501.
 var pendingRoutes = map[string]bool{
-	"GET /api/activity": true,
-	"GET /api/storage":  true, "GET /api/engines": true, "GET /api/engine-releases": true, "GET /api/gateway": true,
-	"GET /api/updates": true, "GET /api/catalog": true, "GET /api/request-content": true,
+	"GET /api/storage": true, "GET /api/engines": true, "GET /api/engine-releases": true, "GET /api/gateway": true,
+	"GET /api/updates": true, "GET /api/catalog": true,
 }
 
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +125,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	isAPI := cfg.API.Enabled && (path == "/v1" || strings.HasPrefix(path, "/v1/"))
 	if !hostAllowed(cfg, r.Host, isAPI) {
 		s.json(w, http.StatusForbidden, map[string]any{"error": "Host запрещён."})
+		return
+	}
+	if isAPI && s.opt.API != nil {
+		s.opt.API.ServeHTTP(w, r)
 		return
 	}
 	if isAPI {
@@ -172,6 +180,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.json(w, http.StatusOK, map[string]any{"logs": s.opt.Logs(name)})
+	case route == "GET /api/activity" && s.opt.Activity != nil:
+		s.json(w, http.StatusOK, s.opt.Activity())
+	case route == "GET /api/request-content" && s.opt.RequestContent != nil:
+		line, ok := s.opt.RequestContent(r.URL.Query().Get("id"))
+		if !ok {
+			s.json(w, http.StatusBadRequest, map[string]any{"error": "Содержимое этого запроса не сохранено."})
+			return
+		}
+		s.write(w, http.StatusOK, "application/json; charset=utf-8", line)
 	case route == "POST /api/actions" && s.opt.Action != nil:
 		body, err := readJSON(r)
 		if err == nil {
