@@ -43,6 +43,19 @@ func ServiceName(engine string) string { return "omnibox-" + engine }
 // PanelService is the service of the panel itself.
 const PanelService = "omnibox"
 
+// Default ports: the panel and /v1 share one port for the NAS; engines listen on loopback next to it.
+const (
+	DefaultPanelPort = 8800
+)
+
+// DefaultEnginePort is where a newly installed engine listens on loopback.
+func DefaultEnginePort(engine string) int {
+	if engine == Ollama {
+		return 8802
+	}
+	return 8801
+}
+
 // Config is config.json.
 type Config struct {
 	SchemaVersion int                `json:"schema_version"`
@@ -99,7 +112,7 @@ type Storage struct {
 func Default() *Config {
 	return &Config{
 		SchemaVersion: 1,
-		Panel:         Panel{Port: 18090},
+		Panel:         Panel{Port: DefaultPanelPort},
 		API:           API{Engine: PrismML},
 		Storage:       Storage{LogRetentionDays: 30, LogWarnMB: 200, RequestLog: "metadata"},
 		Engines:       map[string]*Engine{},
