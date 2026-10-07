@@ -1,6 +1,8 @@
 package panel
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -15,7 +17,8 @@ import (
 
 func TestStaticFilesAreRevalidatedOrCached(t *testing.T) {
 	s := newServer(t, testConfig(t, nil))
-	for path, want := range map[string]string{"/": "no-cache", "/app.js": "no-cache", "/style.css": "no-cache", "/inter-400.woff": "max-age=", "/brand-dark.svg": "max-age="} {
+	for path, want := range map[string]string{"/": "no-cache", "/app.js": "no-cache", "/style.css": "no-cache", "/inter-400.woff": "max-age=", "/brand-dark.svg": "max-age=",
+		"/manifest.webmanifest": "no-cache", "/sw.js": "no-cache", "/icon-512.png": "max-age="} {
 		w := call(s, "GET", path, "", nil)
 		etag := w.Header().Get("ETag")
 		if w.Code != 200 || etag == "" || !strings.Contains(w.Header().Get("Cache-Control"), want) || w.Header().Get("X-Content-Type-Options") != "nosniff" {
@@ -85,5 +88,29 @@ func TestContentSearchAndExportRoutes(t *testing.T) {
 	}
 	if w := call(s, "GET", "/api/request-content?session=0123456789abcdef01234567&export=1", "", nil); w.Code != 401 {
 		t.Fatalf("export without a session: %d", w.Code)
+	}
+}
+
+func TestPanelIsInstallable(t *testing.T) {
+	s := newServer(t, testConfig(t, nil))
+	w := call(s, "GET", "/manifest.webmanifest", "", nil)
+	var m struct {
+		StartURL string `json:"start_url"`
+		Display  string
+		Icons    []struct{ Src, Purpose string }
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &m); err != nil || m.StartURL != "/" || m.Display != "standalone" || len(m.Icons) != 3 {
+		t.Fatalf("%v %+v", err, m)
+	}
+	for _, icon := range m.Icons {
+		if r := call(s, "GET", icon.Src, "", nil); r.Code != 200 || r.Header().Get("Content-Type") != "image/png" || !bytes.HasPrefix(r.Body.Bytes(), []byte("\x89PNG")) {
+			t.Fatalf("%s: %d", icon.Src, r.Code)
+		}
+	}
+	if !strings.Contains(call(s, "GET", "/", "", nil).Body.String(), `rel="manifest"`) {
+		t.Fatal("the page does not link the manifest")
+	}
+	if sw := call(s, "GET", "/sw.js", "", nil).Body.String(); !strings.Contains(sw, "fetch") || strings.Contains(sw, "caches.open") {
+		t.Fatal("the service worker must not cache panel data")
 	}
 }

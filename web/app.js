@@ -461,3 +461,5 @@ $('password-form').addEventListener('submit',async e=>{
  try{await api('/api/password',{current,password:next});notice('Пароль панели изменён. Другие сеансы входа завершены.');}catch(error){notice(error.message,true);}
 });
 
+// The panel installs on a phone through HTTPS (the NAS address); plain HTTP in the LAN skips it.
+if('serviceWorker' in navigator&&window.isSecureContext)navigator.serviceWorker.register('/sw.js').catch(()=>{});
