@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/control"
@@ -56,6 +57,7 @@ type Installer struct {
 	FailAt string
 
 	in   *bufio.Reader
+	eof  bool
 	undo []step
 }
 
@@ -222,12 +224,40 @@ func (i *Installer) ask(question, def string) string {
 	} else {
 		fmt.Fprintf(i.Out, "%s: ", question)
 	}
-	line, _ := i.in.ReadString('\n')
-	line = strings.TrimSpace(line)
-	if line == "" {
+	line, err := i.in.ReadString('\n')
+	i.eof = err != nil
+	if line = clean(line); line == "" {
 		return def
 	}
 	return line
+}
+
+// clean drops what a terminal or a copied link can add around an answer: spaces, invisible
+// characters (zero-width space, BOM) and enclosing quotes or angle brackets.
+func clean(s string) string {
+	s = strings.Map(func(r rune) rune {
+		if unicode.Is(unicode.Cf, r) {
+			return -1
+		}
+		return r
+	}, s)
+	return strings.Trim(strings.TrimSpace(s), "\"'`<>")
+}
+
+// askValid repeats a question until check accepts the answer. Without an answer to give
+// (--yes or end of input) a rejected default is an error.
+func (i *Installer) askValid(question, def string, check func(string) (string, error)) (string, error) {
+	for {
+		answer := i.ask(question, def)
+		value, err := check(answer)
+		if err == nil {
+			return value, nil
+		}
+		if i.Yes || i.eof {
+			return "", err
+		}
+		i.say("%s Получено: %q. Повторите ввод.", strings.TrimSuffix(err.Error(), "."), answer)
+	}
 }
 
 func (i *Installer) yes(question string, def bool) bool {
@@ -290,10 +320,22 @@ func (i *Installer) wizard() (answers, error) {
 			return a, errors.New("некорректный порт")
 		}
 	}
-	for _, h := range strings.Split(i.ask("Адреса панели через запятую", strings.Join(addresses, ", ")), ",") {
-		if h = strings.TrimSpace(h); h != "" && !slices.Contains(a.hosts, h) {
-			a.hosts = append(a.hosts, h)
+	if _, err := i.askValid("Адреса панели через запятую", strings.Join(addresses, ", "), func(s string) (string, error) {
+		a.hosts = nil
+		for _, h := range strings.Split(s, ",") {
+			if h = clean(h); h != "" && !slices.Contains(a.hosts, h) {
+				if err := config.ValidHost(h); err != nil {
+					return "", err
+				}
+				a.hosts = append(a.hosts, h)
+			}
 		}
+		if len(a.hosts) == 0 || len(a.hosts) > 20 {
+			return "", errors.New("Нужно от 1 до 20 адресов.")
+		}
+		return s, nil
+	}); err != nil {
+		return a, err
 	}
 	first := "localhost"
 	for _, h := range a.hosts {
@@ -302,13 +344,43 @@ func (i *Installer) wizard() (answers, error) {
 			break
 		}
 	}
-	a.apiURL = strings.TrimRight(i.ask("Адрес API для клиентов", "http://"+first+":"+strconv.Itoa(a.port)+"/v1"), "/")
-	if origin := i.ask("HTTPS-адрес через reverse proxy на NAS (Enter — без NAS)", ""); origin != "" {
-		a.publicOrigin = origin
-		for _, ip := range strings.Split(i.ask("IP NAS через запятую", ""), ",") {
-			if ip = strings.TrimSpace(ip); ip != "" {
-				a.trustedProxies = append(a.trustedProxies, ip)
+	var err error
+	if a.apiURL, err = i.askValid("Адрес API для клиентов", "http://"+first+":"+strconv.Itoa(a.port)+"/v1", func(s string) (string, error) {
+		if s = strings.TrimRight(s, "/"); !config.ClientBaseURL(s) {
+			return "", errors.New("Нужен адрес HTTP/HTTPS, который заканчивается на /v1.")
+		}
+		return s, nil
+	}); err != nil {
+		return a, err
+	}
+	if a.publicOrigin, err = i.askValid("HTTPS-адрес через reverse proxy на NAS (Enter — без NAS)", "", func(s string) (string, error) {
+		if s == "" {
+			return "", nil
+		}
+		if !strings.Contains(s, "://") {
+			s = "https://" + s
+		}
+		return config.PublicOrigin(s)
+	}); err != nil {
+		return a, err
+	}
+	if a.publicOrigin != "" {
+		if _, err := i.askValid("IP NAS через запятую", "", func(s string) (string, error) {
+			a.trustedProxies = nil
+			for _, ip := range strings.Split(s, ",") {
+				if ip = clean(ip); ip != "" {
+					if net.ParseIP(ip) == nil {
+						return "", errors.New("Нужны IP-адреса NAS, например 192.168.1.10, без масок и портов.")
+					}
+					a.trustedProxies = append(a.trustedProxies, ip)
+				}
 			}
+			if len(a.trustedProxies) == 0 || len(a.trustedProxies) > 20 {
+				return "", errors.New("Нужно от 1 до 20 IP-адресов NAS.")
+			}
+			return s, nil
+		}); err != nil {
+			return a, err
 		}
 	}
 	a.engines = i.yes("Установить PrismML и Ollama последних версий?", true)

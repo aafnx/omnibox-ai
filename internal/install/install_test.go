@@ -106,6 +106,31 @@ func TestAnswersAreUsed(t *testing.T) {
 	}
 }
 
+func TestWrongAnswerIsAskedAgain(t *testing.T) {
+	// A pasted link may carry invisible characters; a typo must not end the whole install.
+	answers := strings.Join([]string{"", "", "", "https://llm.fnx.red/panel", "\u200b<llm.fnx.red>\u200b", "nas", "192.168.1.10", "n", ""}, "\r\n") + "\r\n"
+	r := newRig(t, answers)
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("%v\n%s", err, r.out)
+	}
+	cfg, _ := config.Load(r.configPath())
+	if cfg.Panel.PublicOrigin != "https://llm.fnx.red" || !slices.Equal(cfg.Panel.TrustedProxies, []string{"192.168.1.10"}) {
+		t.Fatalf("%+v", cfg.Panel)
+	}
+	if strings.Count(r.out.String(), "Повторите ввод") != 2 || !strings.Contains(r.out.String(), `"nas"`) {
+		t.Fatalf("wrong answers not reported:\n%s", r.out)
+	}
+
+	// Input that ends on a wrong answer stops the wizard instead of asking forever.
+	r = newRig(t, "\n\n\nhttps://llm.fnx.red\nnas")
+	if err := r.Run(context.Background()); err == nil {
+		t.Fatal("install went on without a NAS address")
+	}
+	if _, err := os.Stat(r.configPath()); err == nil {
+		t.Fatal("config written")
+	}
+}
+
 func TestFailureAtEveryStepUndoesEverything(t *testing.T) {
 	for _, stepName := range []string{"files", "data", "config", "services", "firewall", "command", "path", "panel", "panel-started"} {
 		r := newRig(t, "")
