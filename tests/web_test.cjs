@@ -101,8 +101,8 @@ function run(code){return vm.runInContext(code,context);}
   assert.ok(run("residencyText({mode:'hybrid',gpu_layers:41,total_layers:41,cpu_moe_layers:999})").includes('эксперты 41 слоёв в RAM'));
   assert.ok(!run("residencyText({mode:'vram',gpu_layers:41,total_layers:41,cpu_moe_layers:null})").includes('эксперты'));
   // Updates: the panel shows the version and the one command that installs and updates.
-  run("renderUpdateInfo()");assert.equal(nodes['update-version'].textContent,'Установлена версия 0.18.0.');assert.equal(nodes['update-commands'].children.length,2);
-  assert.ok(nodes['update-commands'].children[0].children[1].children[0].textContent.includes('install.ps1'));
+  run("renderUpdateInfo()");assert.equal(nodes['update-version'].textContent,'Установлена версия 0.18.0.');assert.equal(nodes['update-commands'].children.length,3);
+  assert.equal(nodes['update-commands'].children[0].children[1].children[0].textContent,'ai update');assert.ok(nodes['update-commands'].children[1].children[1].children[0].textContent.includes('install.ps1'));
   // Downloads show progress and can be canceled; other operations cannot.
   run("renderOperations([{id:'d1',action:'download',backend:'prismml',state:'running',elapsed_seconds:5,message:'',bytes_done:1024**3,bytes_total:4*1024**3,bytes_per_second:50*1024**2},{id:'s1',action:'start',backend:'prismml',state:'running',elapsed_seconds:2,message:''}])");
   const [downloadRow,startRow]=nodes.operations.children;const downloadBox=downloadRow.children.find(n=>n.className==='operation-progress');
