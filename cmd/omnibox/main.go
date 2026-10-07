@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"syscall"
@@ -19,6 +20,7 @@ import (
 
 	omnibox "github.com/aafnx/omnibox-ai"
 	"github.com/aafnx/omnibox-ai/internal/catalog"
+	"github.com/aafnx/omnibox-ai/internal/cli"
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/control"
 	"github.com/aafnx/omnibox-ai/internal/engine"
@@ -26,6 +28,7 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/gateway"
 	"github.com/aafnx/omnibox-ai/internal/host"
 	"github.com/aafnx/omnibox-ai/internal/install"
+	"github.com/aafnx/omnibox-ai/internal/local"
 	"github.com/aafnx/omnibox-ai/internal/panel"
 	"github.com/aafnx/omnibox-ai/internal/platform"
 	"github.com/aafnx/omnibox-ai/internal/status"
@@ -53,6 +56,8 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "ai":
+		return cli.Run(args[1:], local.Dial(platform.DataDir()), stdout, stderr)
 	case "install":
 		if err := runInstall(args[1:], os.Stdin, stdout); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -77,6 +82,7 @@ func run(args []string, stdout, stderr io.Writer) int {
 func usage(w io.Writer) {
 	fmt.Fprintln(w, `OmniBox AI
   omnibox version
+  omnibox ai <команда>        управление на этом компьютере (ai help)
   omnibox serve [--data <каталог данных>]
   omnibox engine <prismml|ollama> [--data <каталог данных>]
   omnibox install [--yes] [--data <каталог данных>] [--program <каталог программы>]`)
@@ -100,7 +106,8 @@ func runInstall(args []string, in io.Reader, out io.Writer) error {
 	}
 	i := &install.Installer{ProgramDir: *program, DataDir: *data, Version: omnibox.Version, Source: exe,
 		Services: platform.NewServices(), Manager: &enginemgr.Manager{DataDir: *data}, In: in, Out: out, Yes: *yes,
-		AllowPort: platform.AllowPort, RemoveRule: platform.RemovePortRule, Health: install.PanelHealth}
+		AllowPort: platform.AllowPort, RemoveRule: platform.RemovePortRule, Health: install.PanelHealth,
+		Restrict: platform.RestrictToAdmins, AddToPath: platform.AddToPath, ShimDir: shimDir(*program)}
 	return i.Run(context.Background())
 }
 
@@ -231,6 +238,46 @@ func serve(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
+	// The ai command reaches the service through a local socket only administrators can open.
+	localLn, err := local.Listen(*data)
+	if err != nil {
+		return err
+	}
+	localServer := &http.Server{ReadHeaderTimeout: 10 * time.Second, Handler: local.Handler(local.Options{
+		Status: func(ctx context.Context) any {
+			c := current()
+			d := builder.Build(ctx, false)
+			return struct {
+				status.Dashboard
+				Panel string `json:"panel"`
+				API   string `json:"api"`
+			}{d, "http://" + c.Panel.Hosts[0] + ":" + strconv.Itoa(c.Panel.Port), c.API.PublicURL}
+		},
+		Logs: func(engine string) any { return status.Logs(*data, current(), engine) },
+		Action: func(body map[string]any) (string, error) {
+			r, err := control.ParseRequest(body)
+			if err != nil {
+				return "", err
+			}
+			return operations.Start(r)
+		},
+		Operation: func(id string) (any, bool) { return operations.Get(id) },
+		ResetPassword: func() (string, error) {
+			password := panel.GeneratePassword()
+			hash, err := panel.NewPassword(password)
+			if err != nil {
+				return "", err
+			}
+			if err := store.Update(func(c *config.Config) error { c.Panel.Password = hash; return nil }); err != nil {
+				return "", err
+			}
+			handler.EndSessions()
+			return password, nil
+		},
+		NewKey: func() (string, error) { return gateway.UpdateSettings(store, map[string]any{"action": "generate"}) },
+	})}
+	go func() { _ = localServer.Serve(localLn) }()
+	defer localServer.Close()
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10}
 	ln, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.Panel.Port))
 	if err != nil {
@@ -289,4 +336,12 @@ func observeSlots(ctx context.Context, cfg *config.Config, api *gateway.Gateway)
 			api.ObserveSlot(config.PrismML, id, slot.NextToken.NDecoded, slot.NCtx)
 		}
 	}
+}
+
+// shimDir is where the ai command is placed.
+func shimDir(program string) string {
+	if runtime.GOOS == "windows" {
+		return program
+	}
+	return "/usr/local/bin"
 }

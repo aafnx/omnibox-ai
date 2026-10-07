@@ -463,3 +463,10 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, t transp
 	s.mu.Unlock()
 	s.json(w, http.StatusOK, map[string]any{"ok": true})
 }
+
+// EndSessions signs everyone out, e.g. after a password reset from the command line.
+func (s *Server) EndSessions() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	clear(s.sessions)
+}

@@ -130,3 +130,10 @@ func originAllowed(origin, authority, scheme string) bool {
 	return err == nil && u.Scheme == scheme && strings.EqualFold(u.Host, authority) && (u.Path == "" || u.Path == "/") &&
 		u.User == nil && u.RawQuery == "" && u.Fragment == ""
 }
+
+// GeneratePassword returns a random 24-character panel password.
+func GeneratePassword() string {
+	var b [12]byte
+	_, _ = rand.Read(b[:])
+	return hex.EncodeToString(b[:])
+}

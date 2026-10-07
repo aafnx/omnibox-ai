@@ -208,3 +208,13 @@ func (o *Operations) Running() bool {
 	}
 	return false
 }
+
+// Get returns one operation by id.
+func (o *Operations) Get(id string) (Operation, bool) {
+	for _, op := range o.List() {
+		if op.ID == id {
+			return op, true
+		}
+	}
+	return Operation{}, false
+}

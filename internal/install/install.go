@@ -6,8 +6,6 @@ package install
 import (
 	"bufio"
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -52,6 +50,11 @@ type Installer struct {
 	RemoveRule func(rule string) error
 	Health     func(ctx context.Context, port int, host string) error
 	Addresses  func() []string
+	// Restrict limits the data directory to administrators; AddToPath makes "ai" a command.
+	Restrict  func(path string) error
+	AddToPath func(dir string) (func() error, error)
+	// ShimDir is where the ai command goes: the program directory on Windows, /usr/local/bin on Linux.
+	ShimDir string
 	// FailAt makes the named step fail, to test the rollback.
 	FailAt string
 
@@ -104,6 +107,39 @@ func (i *Installer) binary() string {
 		name += ".exe"
 	}
 	return filepath.Join(i.ProgramDir, "bin", i.Version, name)
+}
+
+// shim is the ai command: a tiny script that runs this version's binary.
+func (i *Installer) shim() (path, content string) {
+	if runtime.GOOS == "windows" {
+		return filepath.Join(i.ShimDir, "ai.cmd"), "@\"" + i.binary() + "\" ai %*\r\n"
+	}
+	return filepath.Join(i.ShimDir, "ai"), "#!/bin/sh\nexec \"" + i.binary() + "\" ai \"$@\"\n"
+}
+
+// placeCommand writes the ai command (an update points it at the new version) and puts it on PATH.
+func (i *Installer) placeCommand() error {
+	path, content := i.shim()
+	old, readErr := os.ReadFile(path)
+	if err := i.do("command", func() error {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(content), 0o755)
+	}, func() error {
+		if readErr != nil {
+			return os.Remove(path)
+		}
+		return os.WriteFile(path, old, 0o755)
+	}); err != nil {
+		return err
+	}
+	var undo func() error
+	return i.do("path", func() error {
+		var err error
+		undo, err = i.AddToPath(i.ShimDir)
+		return err
+	}, func() error { return undo() })
 }
 
 func panelSpec(exe, data string) platform.ServiceSpec {
@@ -230,12 +266,6 @@ func DefaultAddresses() []string {
 	return append(out, "localhost")
 }
 
-func randomPassword() string {
-	var b [12]byte
-	_, _ = rand.Read(b[:])
-	return hex.EncodeToString(b[:])
-}
-
 type answers struct {
 	port           int
 	hosts          []string
@@ -308,7 +338,7 @@ func (i *Installer) fresh(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	password, key := randomPassword(), ""
+	password, key := panel.GeneratePassword(), ""
 	hash, err := panel.NewPassword(password)
 	if err != nil {
 		return err
@@ -326,7 +356,12 @@ func (i *Installer) fresh(ctx context.Context) error {
 		if err := i.placeBinary(); err != nil {
 			return err
 		}
-		if err := i.do("data", func() error { return os.MkdirAll(filepath.Join(i.DataDir, "logs"), 0o755) }, nil); err != nil {
+		if err := i.do("data", func() error {
+			if err := os.MkdirAll(filepath.Join(i.DataDir, "logs"), 0o755); err != nil {
+				return err
+			}
+			return i.Restrict(i.DataDir)
+		}, nil); err != nil {
 			return err
 		}
 		if err := i.do("config", func() error { return cfg.Save(i.configPath()) }, func() error { return os.Remove(i.configPath()) }); err != nil {
@@ -338,6 +373,9 @@ func (i *Installer) fresh(ctx context.Context) error {
 			return err
 		}
 		if err := i.do("firewall", func() error { return i.AllowPort(FirewallRule, a.port) }, func() error { return i.RemoveRule(FirewallRule) }); err != nil {
+			return err
+		}
+		if err := i.placeCommand(); err != nil {
 			return err
 		}
 		if err := i.do("panel", func() error { return i.Services.Start(config.PanelService) }, func() error { return i.Services.Stop(config.PanelService, control.StopTimeout) }); err != nil {
@@ -369,6 +407,7 @@ func (i *Installer) fresh(ctx context.Context) error {
 	i.say("API для клиентов (Base URL): %s", a.apiURL)
 	i.say("API key: %s", key)
 	i.say("Пароль и ключ показаны один раз и нигде не сохранены. Сохраните их в менеджере паролей; пароль можно сменить в панели.")
+	i.say("Команда ai (в новом окне терминала, от имени администратора): ai status, ai help; забытый пароль — ai password reset.")
 	if runtime.GOOS != "windows" {
 		i.say("Откройте в межсетевом экране TCP-порт %d для локальной сети.", a.port)
 	}
@@ -448,6 +487,9 @@ func (i *Installer) update(ctx context.Context) error {
 			if err := i.do("services", func() error { return i.Services.Change(spec) }, func() error { return i.Services.Change(previous) }); err != nil {
 				return err
 			}
+		}
+		if err := i.placeCommand(); err != nil {
+			return err
 		}
 		// The panel restarts on the new program; a failure brings the old one back up.
 		if err := i.do("panel", func() error {
