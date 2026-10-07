@@ -121,11 +121,6 @@ func New(opt Options) (*Server, error) {
 	return s, nil
 }
 
-// Routes of the PowerShell panel that later stages port; until then they answer 501.
-var pendingRoutes = map[string]bool{
-	"GET /api/updates": true,
-}
-
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if v := recover(); v != nil {
@@ -266,8 +261,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.mu.Unlock()
 		http.SetCookie(w, s.sessionCookie("", -1, t.secure))
 		s.json(w, http.StatusOK, map[string]any{"ok": true})
-	case pendingRoutes[route] || r.Method == http.MethodPost && strings.HasPrefix(path, "/api/"):
-		s.json(w, http.StatusNotImplemented, map[string]any{"error": "Ещё не перенесено в Go-версию."})
 	default:
 		s.json(w, http.StatusNotFound, map[string]any{"error": "Не найдено."})
 	}

@@ -30,7 +30,7 @@ function run(code){return vm.runInContext(code,context);}
   run("placeThemeSwitch(true)");assert.ok(nodes['topbar-actions'].children.includes(nodes['theme-switch']));
   run("placeThemeSwitch(false)");assert.ok(context.document.body.children.includes(nodes['theme-switch']));
   run("applyTheme('system')");assert.equal(context.document.documentElement.dataset.theme,'light');
-  run("snapshot={backends:[{name:'bonsai',type:'prism',service:'Running',api:'Ready',sleeping:false,loaded_model:'model.gguf',selected_model:'model',settings:{context:32768,alias:'model'},models:[],errors:[]}],operations:[]};selectedBackend='bonsai';renderEngines();");
+  run("snapshot={version:'0.18.0',backends:[{name:'prismml',type:'prismml',service:'Running',api:'Ready',sleeping:false,loaded_model:'model.gguf',selected_model:'model',settings:{context:32768,alias:'model'},models:[],errors:[]}],operations:[]};selectedBackend='prismml';renderEngines();");
   assert.equal(nodes.engines.children[0].querySelector('start').hidden,true);assert.equal(nodes.engines.children[0].querySelector('stop').hidden,false);
   // CPU placement keeps the KV cache in RAM; leaving it restores GPU offload.
   nodes.placement.value='cpu';run("syncKvOffload(true)");assert.equal(nodes['kv-offload'].value,'off');assert.equal(nodes['kv-offload'].disabled,true);
@@ -38,9 +38,9 @@ function run(code){return vm.runInContext(code,context);}
   nodes['kv-offload'].value='off';run("syncKvOffload(false)");assert.equal(nodes['kv-offload'].value,'off');
   // Disk usage: warning only above the configured log volume; unknown retention values stay selectable.
   nodes['log-retention'].options=[{value:'30'}];nodes['log-retention'].add=o=>nodes['log-retention'].options.push(o);
-  run("renderStorage({logs_bytes:5*1024**2,log_files:4,backups_bytes:1024**2,updates_bytes:0,temp_bytes:0,log_retention_days:30,log_warn_mb:200,logs_over_limit:false})");
+  run("renderStorage({logs_bytes:5*1024**2,log_files:4,temp_bytes:0,log_retention_days:30,log_warn_mb:200,logs_over_limit:false})");
   assert.equal(nodes['storage-warning'].hidden,true);assert.ok(nodes['storage-summary'].textContent.includes('5.0 МБ (файлов: 4)'));assert.equal(nodes['log-warn'].value,200);
-  run("renderStorage({logs_bytes:300*1024**2,log_files:9,backups_bytes:0,updates_bytes:0,temp_bytes:0,log_retention_days:45,log_warn_mb:200,logs_over_limit:true})");
+  run("renderStorage({logs_bytes:300*1024**2,log_files:9,temp_bytes:0,log_retention_days:45,log_warn_mb:200,logs_over_limit:true})");
   assert.equal(nodes['storage-warning'].hidden,false);assert.ok(nodes['storage-warning'].textContent.includes('200 МБ'));assert.equal(nodes['log-retention'].value,'45');
   // Request content: openable only in content mode; messages, reasoning and the answer are shown as text.
   assert.equal(run("contentCell({id:'a'})").textContent,'—');run("requestLog='content'");assert.equal(run("contentCell({id:'a'})").children[0].textContent,'Открыть');run("requestLog='metadata'");
@@ -48,28 +48,28 @@ function run(code){return vm.runInContext(code,context);}
   assert.ok(shown.includes('[user] hi')&&shown.includes('РАЗМЫШЛЕНИЯ\n\nthink')&&shown.includes('ОТВЕТ\n\nanswer'));
   // Engine manager: status text, install vs update actions and version list after a lookup.
   assert.equal(run("engineStatusText({installed:false})"),'Не установлен');assert.equal(run("engineStatusText({installed:true,state:'Stopped',version:''})"),'Установлен вне OmniBox');
-  run("engineReleases={prismml:[{tag:'b2',published:'2026-10-02T00:00:00Z',prerelease:false},{tag:'b1',published:'2026-09-01T00:00:00Z',prerelease:true}]};renderEngineManager([{type:'prism',label:'PrismML',cli:'prismml',installed:true,name:'bonsai',service:'bonsai',state:'Stopped',version:'b2',managed:true,versions:['b2'],executable:'x'},{type:'ollama',label:'Ollama',cli:'ollama',installed:false,versions:[]}])");
+  run("engineReleases={prismml:[{tag:'b2',published:'2026-10-02T00:00:00Z',prerelease:false},{tag:'b1',published:'2026-09-01T00:00:00Z',prerelease:true}]};renderEngineManager([{name:'prismml',label:'PrismML',installed:true,state:'Stopped',version:'b2',managed:true,versions:['b2'],pending:false},{name:'ollama',label:'Ollama',installed:false,state:'NotInstalled',version:'',managed:false,versions:[]}])");
   const [prismBox,ollamaBox]=nodes['engine-manager'].children;const prismRow=prismBox.children[2],ollamaRow=ollamaBox.children[2];
   assert.equal(prismBox.children[0].children[1].textContent,'Версия b2');assert.equal(prismRow.children[0].children.length,2);assert.ok(prismRow.children[0].children[0].text.includes('установлена'));
+  assert.ok(prismBox.children[1].textContent.includes('omnibox-prismml'));
   assert.equal(prismRow.children[3].textContent,'Обновить до последней');assert.equal(prismRow.children[4].textContent,'Удалить');
   assert.equal(ollamaRow.children[0].hidden,true);assert.equal(ollamaRow.children[3].textContent,'Установить последнюю');assert.equal(ollamaRow.children.length,4);
   const engineCalls=[];context.window.confirm=()=>true;const realAction=run('action');run('action=async body=>{globalThis.__sent.push(body);}');context.__sent=engineCalls;
-  await run("engineAction({installed:true,label:'PrismML',name:'bonsai',cli:'prismml'},'b1')");await run("engineAction({installed:false,label:'Ollama',cli:'ollama'},'')");await run("removeEngine({label:'PrismML',name:'bonsai'})");
-  assert.equal(JSON.stringify(engineCalls),JSON.stringify([{action:'engine-update',backend:'bonsai',version:'b1'},{action:'engine-install',engine:'ollama',version:''},{action:'engine-remove',backend:'bonsai'}]));
+  await run("engineAction({installed:true,label:'PrismML',name:'prismml'},'b1')");await run("engineAction({installed:false,label:'Ollama',name:'ollama'},'')");await run("removeEngine({label:'PrismML',name:'prismml'})");
+  assert.equal(JSON.stringify(engineCalls),JSON.stringify([{action:'engine-update',engine:'prismml',version:'b1'},{action:'engine-install',engine:'ollama',version:''},{action:'engine-remove',engine:'prismml'}]));
   context.__realAction=realAction;run('action=globalThis.__realAction');
   // Drives and model sizes: one row per drive, warning for a nearly full model drive.
-  run("renderDrives({models:[{name:'bonsai',engine:'PrismML',bytes:29*1024**3,models:3,drive:'D:'},{name:'ollama',engine:'Ollama',bytes:45*1024**3,models:4,drive:'C:'}],drives:[{name:'C:',label:'System',total:1000*1024**3,free:400*1024**3,used:600*1024**3,roles:['OmniBox AI'],low:false},{name:'D:',label:'',total:2000*1024**3,free:15*1024**3,used:1985*1024**3,roles:['модели PrismML'],low:true}]})");
+  run("renderDrives({models:[{name:'prismml',engine:'PrismML',bytes:29*1024**3,models:3,drive:'D:'},{name:'ollama',engine:'Ollama',bytes:45*1024**3,models:4,drive:'C:'}],drives:[{name:'C:',label:'System',total:1000*1024**3,free:400*1024**3,used:600*1024**3,roles:['OmniBox AI'],low:false},{name:'D:',label:'',total:2000*1024**3,free:15*1024**3,used:1985*1024**3,roles:['модели PrismML'],low:true}]})");
   assert.equal(nodes['storage-models'].textContent,'Модели: PrismML 29.0 ГБ (3) · Ollama 45.0 ГБ (4)');
   const [driveC,driveD]=nodes['storage-drives'].children;assert.equal(driveC.className,'drive');assert.equal(driveD.className,'drive low');
   assert.equal(driveC.children[1].value,60);assert.ok(driveD.children[0].children[1].textContent.includes('из 1.95 ТБ'));assert.ok(driveD.children[2].textContent.includes('мало свободного места'));
   assert.equal(nodes['model-disk'].hidden,false);assert.ok(nodes['model-disk'].textContent.startsWith('Свободно на диске моделей D:: 15.0 ГБ'));
   // The download form uses the drive of the selected engine's models, even when another engine's drive has more room.
-  run("renderDrives({models:[{name:'ollama',engine:'Ollama',bytes:45*1024**3,models:4,drive:'C:'},{name:'bonsai',engine:'PrismML',bytes:29*1024**3,models:3,drive:'D:'}],drives:[{name:'C:',label:'',total:1000*1024**3,free:400*1024**3,used:600*1024**3,roles:['модели Ollama'],low:false},{name:'D:',label:'',total:100*1024**3,free:5*1024**3,used:95*1024**3,roles:['модели PrismML'],low:true}]})");
+  run("renderDrives({models:[{name:'ollama',engine:'Ollama',bytes:45*1024**3,models:4,drive:'C:'},{name:'prismml',engine:'PrismML',bytes:29*1024**3,models:3,drive:'D:'}],drives:[{name:'C:',label:'',total:1000*1024**3,free:400*1024**3,used:600*1024**3,roles:['модели Ollama'],low:false},{name:'D:',label:'',total:100*1024**3,free:5*1024**3,used:95*1024**3,roles:['модели PrismML'],low:true}]})");
   assert.ok(nodes['model-disk'].textContent.startsWith('Свободно на диске моделей D:: 5.0 ГБ · модели PrismML'),nodes['model-disk'].textContent);
   run("selectedBackend='ollama';renderModelDisk()");assert.ok(nodes['model-disk'].textContent.startsWith('Свободно на диске моделей C:: 400.0 ГБ · модели Ollama'));
-  run("selectedBackend='missing';renderModelDisk()");assert.equal(nodes['model-disk'].hidden,true);run("selectedBackend='bonsai';renderModelDisk()");
+  run("selectedBackend='missing';renderModelDisk()");assert.equal(nodes['model-disk'].hidden,true);run("selectedBackend='prismml';renderModelDisk()");
   run("renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'model.gguf');assert.ok(nodes['kpi-model-caption'].textContent.startsWith('PrismML · '));
-  // The prism engine is shown as PrismML whatever its historical config key.
   assert.equal(nodes.engines.children[0].querySelector('h2').textContent,'PrismML');assert.equal(run("engineName('unknown')"),'unknown');
   // Basic mode hides advanced groups; the choice is remembered per browser.
   run("applySettingsMode()");assert.equal(nodes.advanced.hidden,true);assert.equal(nodes.generation.hidden,true);assert.equal(nodes['mode-hint'].hidden,false);assert.equal(nodes['settings-mode'].hidden,false);
@@ -83,7 +83,7 @@ function run(code){return vm.runInContext(code,context);}
   run("snapshot.backends[0].service='Running';renderEngines()");
   assert.equal(run('Boolean(monitoringActive())'),true);
   run("snapshot.backends[0].sleeping=true");assert.equal(run('Boolean(monitoringActive())'),false);
-  run("snapshot.backends[0].sleeping=false;snapshot.backends[0].service='Stopped';snapshot.operations=[{id:'op',backend:'bonsai',action:'start',state:'running',elapsed_seconds:12,message:'Starting'}];renderEngines();renderOperations(snapshot.operations);");
+  run("snapshot.backends[0].sleeping=false;snapshot.backends[0].service='Stopped';snapshot.operations=[{id:'op',backend:'prismml',action:'start',state:'running',elapsed_seconds:12,message:'Starting'}];renderEngines();renderOperations(snapshot.operations);");
   assert.ok(nodes.engines.children[0].children.some(n=>n.className==='engine-progress'));
   assert.ok(nodes.operations.children[0].children.some(n=>n.className==='operation-progress'));
   run("renderTelemetry({enabled:true,sample:{timestamp:new Date().toISOString(),cpu_percent:25,ram_used_gb:16,ram_total_gb:32,ram_percent:50,cpu_temperature:null,gpu:[{name:'GPU',total:16000,used:8000,free:8000,utilization:42,temperature:65,power_watts:150}]}})");
@@ -92,7 +92,7 @@ function run(code){return vm.runInContext(code,context);}
   run("renderTelemetry({enabled:false,reason:'Idle.'})");assert.equal(nodes['cpu-value'].textContent,'25%');assert.ok(nodes['telemetry-state'].textContent.startsWith('Снимок '));assert.ok(nodes['telemetry-state'].textContent.includes('Idle.'));
   run("lastSample=null;renderTelemetry({enabled:false,reason:'Idle'})");assert.equal(nodes['cpu-value'].textContent,'—');assert.equal(nodes['telemetry-state'].textContent,'Idle');
   run("renderTelemetry({enabled:true,snapshot:true,sample:{timestamp:new Date().toISOString(),cpu_percent:3,ram_used_gb:9,ram_total_gb:32,ram_percent:28,gpu:[]}})");assert.equal(nodes['cpu-value'].textContent,'3%');assert.ok(nodes['telemetry-state'].textContent.includes('Обновить данные'));
-  run("snapshot.backends[0].service='Running';activity={active:{backend:'bonsai',model:'model',session_id:'abc12345',context_limit:32768,input_tokens:10,output_tokens:null,total_tokens:null,context_used:null},requests:[],sessions:[]};renderActivity();");
+  run("snapshot.backends[0].service='Running';activity={active:{backend:'prismml',model:'model',session_id:'abc12345',context_limit:32768,input_tokens:10,output_tokens:null,total_tokens:null,context_used:null},requests:[],sessions:[]};renderActivity();");
   assert.ok(nodes['live-session'].children[0].children[4].children[1].textContent==='—');
   assert.ok(nodes['live-session'].children.find(n=>n.className==='live-context').children[0].textContent.includes('осталось —'));
   assert.ok(run("idleText({service:'Running',idle:{expires_at:new Date(Date.now()+61000).toISOString(),estimated:true}})").startsWith('≈ 1:'));
@@ -100,18 +100,20 @@ function run(code){return vm.runInContext(code,context);}
   assert.ok(run("residencyText({mode:'hybrid',gpu_layers:12,total_layers:60})").includes('12/60'));
   assert.ok(run("residencyText({mode:'hybrid',gpu_layers:41,total_layers:41,cpu_moe_layers:999})").includes('эксперты 41 слоёв в RAM'));
   assert.ok(!run("residencyText({mode:'vram',gpu_layers:41,total_layers:41,cpu_moe_layers:null})").includes('эксперты'));
-  run("renderUpdateStatus({current:'0.9.4',latest:'0.9.4',phase:'checking',message:'Checking',gh_available:true,authenticated:true,code:''})");
-  assert.equal(nodes['update-check'].disabled,true);assert.equal(nodes['update-progress'].hidden,false);assert.equal(nodes['update-apply'].hidden,true);
-  run("renderUpdateStatus({current:'0.9.4',latest:'0.9.4',phase:'ready',message:'Ready',gh_available:true,authenticated:true,code:''})");
-  assert.equal(nodes['update-check'].disabled,false);assert.equal(nodes['update-apply'].hidden,false);assert.equal(nodes['update-progress'].hidden,true);
-  run("renderUpdateStatus({current:'0.9.4',phase:'login',message:'Login',gh_available:true,authenticated:false,code:'ABCD-1234'})");
-  assert.equal(nodes['update-device'].hidden,false);assert.equal(nodes['update-code'].children.length,1);assert.equal(nodes['update-cancel'].hidden,false);
-  run("renderUpdateStatus({current:'0.9.4',phase:'installing',message:'Restart',gh_available:true,authenticated:true,code:''})");
-  assert.equal(nodes['update-cancel'].hidden,true);assert.equal(store.get('omnibox-update-pending'),'1');
-  run("renderUpdateStatus({current:'0.9.4',phase:'done',message:'Done',gh_available:false,authenticated:true,code:''})");
-  assert.equal(store.get('omnibox-update-pending'),'0');assert.equal(nodes['update-gh-install'].hidden,false);
-  nodes['update-token'].value='one-use-secret';context.fetch=async(path,options)=>{requests.push({path,body:options.body});return{ok:true,status:202,json:async()=>({current:'0.9.4',phase:'checking',message:'Checking',gh_available:true,authenticated:false,code:''})}};
-  nodes['update-token-form'].listeners.submit[0]({preventDefault:()=>{}});assert.equal(nodes['update-token'].value,'');await new Promise(setImmediate);
-  assert.equal(JSON.parse(requests.at(-1).body).token,'one-use-secret');assert.ok([...store.values()].every(v=>!String(v).includes('secret')));
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
+  // Updates: the panel shows the version and the one command that installs and updates.
+  run("renderUpdateInfo()");assert.equal(nodes['update-version'].textContent,'Установлена версия 0.18.0.');assert.equal(nodes['update-commands'].children.length,2);
+  assert.ok(nodes['update-commands'].children[0].children[1].children[0].textContent.includes('install.ps1'));
+  // Downloads show progress and can be canceled; other operations cannot.
+  run("renderOperations([{id:'d1',action:'download',backend:'prismml',state:'running',elapsed_seconds:5,message:'',bytes_done:1024**3,bytes_total:4*1024**3,bytes_per_second:50*1024**2},{id:'s1',action:'start',backend:'prismml',state:'running',elapsed_seconds:2,message:''}])");
+  const [downloadRow,startRow]=nodes.operations.children;const downloadBox=downloadRow.children.find(n=>n.className==='operation-progress');
+  assert.ok(downloadBox.children[1].textContent.startsWith('1.00 из 4.00 ГБ (25%) · 50.0 МБ/с · осталось 2 мин'),downloadBox.children[1].textContent);
+  assert.equal(downloadBox.children[2].textContent,'Отменить');assert.equal(startRow.children.find(n=>n.className==='operation-progress').children.length,2);
+  // API settings: queue fields, no engine choice; /v1 serves the running engine.
+  run("gateway={enabled:true,base_url:'https://llm.fnx.red/v1',require_key:true,has_key:true,queue_depth:4,queue_timeout_seconds:60};renderGatewayForm()");
+  assert.equal(nodes['api-queue-depth'].value,4);assert.equal(nodes['api-queue-timeout'].value,60);
+  // Password change: mismatched repeat is refused before the request and the fields are cleared.
+  const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
+  await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
+  assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue settings and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});
