@@ -33,12 +33,11 @@ function Invoke-Scenario([string]$Name, [scriptblock]$Write) {
 }
 $replace = { param($Path, $Bytes) $tmp = "$Path.tmp-$([Guid]::NewGuid().ToString('N'))"; [IO.File]::WriteAllBytes($tmp, $Bytes); [IO.File]::Replace($tmp, $Path, [System.Management.Automation.Language.NullString]::Value) }
 $move = { param($Path, $Bytes) $tmp = "$Path.tmp-$([Guid]::NewGuid().ToString('N'))"; [IO.File]::WriteAllBytes($tmp, $Bytes); [IO.File]::Move($tmp, $Path, $true) }
-foreach ($round in 1..3) {
-    Invoke-Scenario "replace$round" $replace
-    Invoke-Scenario "move$round" $move
-}
+foreach ($round in 1..2) { Invoke-Scenario "replace$round" $replace }
+try { Invoke-Scenario 'move' $move } catch { "move writer fails with a reader open: $($_.Exception.InnerException.Message)" }
 Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
 # The real reader with its retries, as the failing test uses it.
+foreach ($round in 1..4) {
 $path = Join-Path ([IO.Path]::GetTempPath()) ('diag-real-' + [Guid]::NewGuid().ToString('N') + '.json'); [IO.File]::WriteAllText($path, '{"a":1}')
 $state = [hashtable]::Synchronized(@{ stop = $false; ok = 0; errors = [Collections.ArrayList]::Synchronized([Collections.ArrayList]::new()); slowest = 0.0 })
 $job = Start-ThreadJob -ArgumentList (Join-Path $repo 'src/File.Read.psm1'), $path, $state -ScriptBlock {
@@ -57,3 +56,4 @@ $m = Get-Module OmniBox.Ai
 for ($i = 0; $i -lt 400; $i++) { & $m { param($p, $b) Write-AiAtomicBytes $p $b } $path $bytes }
 $state.stop = $true; $job | Wait-Job | Receive-Job; Remove-Job $job
 "real reader: ok $($state.ok), slowest call {0:N0} ms, errors: {1}" -f $state.slowest, (($state.errors | Group-Object | ForEach-Object { "$($_.Name) x$($_.Count)" }) -join '; ')
+}
