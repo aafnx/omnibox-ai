@@ -139,6 +139,6 @@ Python нужен только для HTTP-тестов. Поведение JS-�
 pwsh -NoProfile -File .\scripts\build-setup.ps1
 ```
 
-[Мониторинг и журнал](docs/monitoring.md) · [Архитектура](docs/architecture.md) · [Веб-панель](docs/web-panel.md) · [Установка](docs/install.md) · [OpenAI API](docs/model-api.md) · [Каталог моделей](docs/models.md) · [NAS reverse proxy](docs/reverse-proxy.md) · [Изменения](CHANGELOG.md)
+[Мониторинг и журнал](docs/monitoring.md) · [Архитектура](docs/architecture.md) · [Переход на Go](docs/architecture-go.md) · [Веб-панель](docs/web-panel.md) · [Установка](docs/install.md) · [OpenAI API](docs/model-api.md) · [Каталог моделей](docs/models.md) · [NAS reverse proxy](docs/reverse-proxy.md) · [Изменения](CHANGELOG.md)
 
 Обновление из браузера: **Обновления → Проверить обновления → Установить и перезапустить**. Вход через gh по коду или разовый GitHub token; [подробности](docs/web-panel.md#обновления-приложения).
