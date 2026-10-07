@@ -59,6 +59,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if len(args) > 1 && args[1] == "update" {
 			return runUpdate(args[2:], defaultUpdater(), stdout, stderr)
 		}
+		if len(args) > 1 && args[1] == "uninstall" {
+			if err := runUninstall(args[2:], os.Stdin, stdout); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			return 0
+		}
 		return cli.Run(args[1:], local.Dial(platform.DataDir()), stdout, stderr)
 	case "install":
 		if err := runInstall(args[1:], os.Stdin, stdout); err != nil {
@@ -346,6 +353,32 @@ func observeSlots(ctx context.Context, cfg *config.Config, api *gateway.Gateway)
 			api.ObserveSlot(config.PrismML, id, slot.NextToken.NDecoded, slot.NCtx)
 		}
 	}
+}
+
+// runUninstall is "ai uninstall": it removes the services and the program; data and models stay
+// unless the owner answers otherwise.
+func runUninstall(args []string, in io.Reader, out io.Writer) error {
+	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "не спрашивать: удалить программу, оставить данные и модели")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if !platform.IsAdmin() {
+		return errors.New("Удаление требует прав администратора (Windows) или root (Linux).")
+	}
+	program := platform.ProgramDir()
+	i := &install.Installer{ProgramDir: program, DataDir: platform.DataDir(), Version: omnibox.Version,
+		Services: platform.NewServices(), In: in, Out: out, Yes: *yes, RemoveRule: platform.RemovePortRule,
+		ShimDir: shimDir(program), RemoveFromPath: platform.RemoveFromPath,
+		RemoveProgram: func(dir string) error {
+			if exe, err := os.Executable(); err == nil {
+				if rel, err := filepath.Rel(dir, exe); err == nil && filepath.IsLocal(rel) {
+					return platform.RemoveAfterExit(dir)
+				}
+			}
+			return os.RemoveAll(dir)
+		}}
+	return i.Uninstall(context.Background())
 }
 
 // shimDir is where the ai command is placed.

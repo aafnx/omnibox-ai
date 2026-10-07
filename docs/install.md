@@ -83,15 +83,10 @@ ai update 0.19.0     # определённая версия, в том числ
 
 ## Удаление
 
-Пока вручную, от имени администратора:
+От имени администратора (Linux — через `sudo`):
 
-```powershell
-sc.exe stop omnibox-prismml; sc.exe delete omnibox-prismml
-sc.exe stop omnibox-ollama; sc.exe delete omnibox-ollama
-sc.exe stop omnibox; sc.exe delete omnibox
-netsh advfirewall firewall delete rule name="OmniBox AI"
-Remove-Item -Recurse "C:\Program Files\OmniBox AI"
-# Данные и модели: Remove-Item -Recurse "C:\ProgramData\OmniBox AI"
+```sh
+ai uninstall
 ```
 
-Уберите `C:\Program Files\OmniBox AI` из системной переменной PATH.
+Команда спрашивает подтверждение и удаляет службы `omnibox`, `omnibox-prismml`, `omnibox-ollama`, правило Firewall, команду `ai` с записью в PATH и каталог программы (на Windows — через несколько секунд после выхода: работающую программу Windows не удаляет). Затем она спрашивает отдельно, удалить ли данные (настройки, пароль, API key, журналы) и скачанные модели; по умолчанию и то и другое остаётся, и повторная установка их подхватит. `ai uninstall --yes` удаляет программу без вопросов и оставляет данные и модели.

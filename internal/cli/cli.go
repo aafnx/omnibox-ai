@@ -32,6 +32,7 @@ const usage = `ai — управление OmniBox AI на этом компью
   ai key new                 новый API key (прежний сразу перестаёт действовать)
   ai update [версия]         скачать выпуск, проверить SHA256 и обновить программу;
                              без версии — последняя (нужен gh или GitHub token)
+  ai uninstall               удалить программу; данные и модели — по вашему ответу
   ai version                 версия`
 
 // Run executes one command and returns the process exit code.
