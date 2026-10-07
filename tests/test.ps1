@@ -1387,7 +1387,7 @@ try {
         $models = @(& $e.m { param($c) Get-AiPrismModels $c.backends.bonsai } $e.config)
         & $e.m { $script:services.bonsai.Status = 'Running' }
         $text = & $e.m { param($p) Uninstall-AiEngine $p 'bonsai' } $e.path
-        Assert-True ($text -like '*Модели остались*'); Assert-True ((Get-Calls $e.m) -contains 'stop:bonsai'); Assert-True ((Get-Calls $e.m) -contains 'remove:bonsai')
+        Assert-True ($text -like '*Модели и настройки остались*'); Assert-True ((Get-Calls $e.m) -contains 'stop:bonsai'); Assert-True ((Get-Calls $e.m) -contains 'remove:bonsai')
         $config = Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable
         Assert-True (-not $config.backends.Contains('bonsai')); Assert-Equal $config.default_backend 'ollama'
         Assert-Equal (Get-Content -LiteralPath $gateway -Raw | ConvertFrom-Json).backend 'ollama'
@@ -1456,6 +1456,79 @@ try {
         Assert-True (@($t.roles) -contains 'OmniBox AI'); Assert-True (@($t.roles) -contains 'модели PrismML'); Assert-True (@($t.roles) -contains 'модели Ollama')
         Assert-Equal $t.used 95GB; Assert-True $t.low; Assert-Equal @($r.roles).Count 0; Assert-True (-not $r.low)
         $null = Invoke-Ai @('storage') $e.path
+    }
+    Test 'engine version switch waits for the active generation and never restarts under it' {
+        $e = New-EngineFixture
+        if (-not ('OmniBox.OpenAiProxy' -as [type])) { Add-Type -Path @((Join-Path $repo 'src/Inference.Stats.cs'), (Join-Path $repo 'src/OpenAi.Proxy.cs')) }
+        [OmniBox.InferenceStats]::Configure((Join-Path $e.root 'requests'))
+        & $e.m { $script:services.bonsai.Status = 'Running'; $script:AiGenerationWaitSeconds = 1 }
+        $before = Get-Content -LiteralPath $e.bonsai -Raw
+        $cancel = [Threading.CancellationTokenSource]::new()
+        $request = [OmniBox.InferenceStats]::Begin('bonsai', 'bonsai-2-27b', '/v1/chat/completions', 196608, $null, $cancel)
+        try {
+            Assert-Throws { & $e.m { param($p) Set-AiEngineVersion $p 'bonsai' 'b2' } $e.path } '*занята генерацией*'
+            Assert-True (-not ((Get-Calls $e.m) -contains 'stop:bonsai')) 'Engine restarted under an active generation'
+            Assert-Equal (Get-Content -LiteralPath $e.bonsai -Raw) $before
+            Assert-True (-not $cancel.IsCancellationRequested)
+        } finally { [OmniBox.InferenceStats]::Finish($request, 200, $true); $cancel.Dispose() }
+        $null = & $e.m { param($p) Set-AiEngineVersion $p 'bonsai' 'b2' } $e.path
+        Assert-True ((Get-Calls $e.m) -contains 'start:bonsai')
+        # The guard is released after the switch: a control operation can start again.
+        Assert-True ([OmniBox.InferenceStats]::BeginControl($false)); [OmniBox.InferenceStats]::EndControl()
+    }
+    Test 'engine install keeps config changes made during the download' {
+        $e = New-EngineFixture
+        $config = Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable; $config.backends.Remove('bonsai'); $config.default_backend = 'ollama'; $config.backends.ollama.active_model = 'qwen3:old'; $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $e.path
+        & $e.m { param($p) $script:services.Remove('bonsai'); $script:configPath = $p; $script:realDownload = (Get-Command Invoke-AiEngineDownload).ScriptBlock
+            function script:Invoke-AiEngineDownload { param($Uri, $OutFile)
+                $c = Get-Content -LiteralPath $script:configPath -Raw | ConvertFrom-Json -AsHashtable; $c.backends.ollama.active_model = 'qwen3:new'; $c | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $script:configPath
+                & $script:realDownload $Uri $OutFile } } $e.path
+        $null = & $e.m { param($p) Install-AiEngine $p 'prism' 'b2' } $e.path
+        $config = Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable
+        Assert-Equal $config.backends.ollama.active_model 'qwen3:new'; Assert-True $config.backends.Contains('prismml')
+    }
+    Test 'reinstalling a removed engine restores its profile, service name and models' {
+        $e = New-EngineFixture
+        $config = Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable; $config.backends.bonsai.log_directory = Join-Path $e.root 'old-logs'; $config | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $e.path
+        $modelsBefore = @(& $e.m { param($c) Get-AiPrismModels $c.backends.bonsai } $e.config).Count
+        $null = & $e.m { param($p) Uninstall-AiEngine $p 'bonsai' } $e.path
+        Assert-True (Test-Path -LiteralPath $e.bonsai)
+        $text = & $e.m { param($p) Install-AiEngine $p 'prism' 'b2' } $e.path
+        Assert-True ($text -like '*Прежние настройки*')
+        $config = Get-Content -LiteralPath $e.path -Raw | ConvertFrom-Json -AsHashtable
+        Assert-True $config.backends.Contains('bonsai'); Assert-Equal $config.backends.bonsai.service_config $e.bonsai
+        Assert-True (-not $config.Contains('removed_engines') -or -not $config.removed_engines.Contains('prism'))
+        Assert-Equal @(& $e.m { param($p) Get-AiPrismModels (Read-AiConfig $p).backends.bonsai } $e.path).Count $modelsBefore
+        $xml = [xml](Get-Content -LiteralPath $e.bonsai -Raw)
+        Assert-True ($xml.service.arguments.Contains('--alias bonsai-2-27b')); Assert-True ($xml.service.executable -match '[\\/]b2[\\/]')
+        Assert-True ((Get-Calls $e.m) -contains 'create:bonsai')
+        Assert-Equal (& $e.m { $script:commands['bonsai'] }) (New-AiNativeServiceCommand '' $e.root $e.bonsai)
+    }
+    Test 'split GGUF models are listed once, protected as a whole and deleted with all parts' {
+        $e = New-EngineFixture
+        $dir = Split-Path (& $e.m { param($c) (Get-AiLaunchSettings $c.backends.bonsai).model } $e.config) -Parent
+        $first = Join-Path $dir 'big-Q4_K_M-00001-of-00002.gguf'; $second = Join-Path $dir 'big-Q4_K_M-00002-of-00002.gguf'
+        [IO.File]::WriteAllBytes($first, [byte[]]::new(300)); [IO.File]::WriteAllBytes($second, [byte[]]::new(700))
+        $models = @(& $e.m { param($c) Get-AiPrismModels $c.backends.bonsai } $e.config)
+        $big = @($models | Where-Object { $_.name -like 'big-*' })
+        Assert-Equal $big.Count 1; Assert-Equal $big[0].parts 2; Assert-Equal $big[0].bytes 1000L; Assert-Equal $big[0].id $first
+        $x = & $e.m { param($c, $m) New-AiLaunchXml $c.backends.bonsai @{ model = $m } } $e.config $first; $x.Save($e.bonsai)
+        Assert-Throws { & $e.m { param($p, $id) Remove-AiEngineModel $p 'bonsai' $id } $e.path $second } '*не найдена*'
+        Assert-Throws { & $e.m { param($p, $id) Remove-AiEngineModel $p 'bonsai' $id } $e.path $first } '*выбрана*'
+        Assert-True (Test-Path -LiteralPath $second)
+        $other = ($models | Where-Object name -eq 'other-model.gguf').id
+        $x = & $e.m { param($c, $m) New-AiLaunchXml $c.backends.bonsai @{ model = $m } } $e.config $other; $x.Save($e.bonsai)
+        Assert-True ((& $e.m { param($p, $id) Remove-AiEngineModel $p 'bonsai' $id } $e.path $first) -like '*частей: 2*')
+        Assert-True (-not (Test-Path -LiteralPath $first)); Assert-True (-not (Test-Path -LiteralPath $second))
+    }
+    Test 'failed service removal restores engine settings and keeps the service' {
+        $e = New-EngineFixture
+        $gateway = Join-Path $e.root 'gateway.json'; @{ schema_version = 1; backend = 'bonsai'; enabled = $true } | ConvertTo-Json | Set-Content -LiteralPath $gateway
+        $configBefore = Get-Content -LiteralPath $e.path -Raw; $gatewayBefore = Get-Content -LiteralPath $gateway -Raw
+        & $e.m { function script:Remove-AiEngineService { param($Name) throw 'access denied' } }
+        Assert-Throws { & $e.m { param($p) Uninstall-AiEngine $p 'bonsai' } $e.path } '*Настройки восстановлены*'
+        Assert-Equal (Get-Content -LiteralPath $e.path -Raw) $configBefore; Assert-Equal (Get-Content -LiteralPath $gateway -Raw) $gatewayBefore
+        Assert-True ($null -ne (& $e.m { $script:services['bonsai'] }))
     }
     Test 'Ollama CPU placement disables GPU discovery and automatic placement restores prior masks' {
         $f=New-ContextFixture;$m=New-TestModule;$b=$f.config.backends.ollama
@@ -1571,6 +1644,8 @@ try {
         foreach($r in $releases){Assert-True ($r.note.Length -gt 0) "No note for $($r.version)"}
         # Each older entry must point at a commit whose packaged installer is exactly that version.
         $shallow=(& git -C $repo rev-parse --is-shallow-repository 2>$null) -eq 'true'
+        # A source copy without git history (an archive) cannot check commits; CI always has history.
+        if(-not $env:CI -and (& git -C $repo rev-parse --is-inside-work-tree 2>$null) -ne 'true'){$shallow=$true}
         foreach($r in @($releases|Select-Object -Skip 1)){
             $type=& git -C $repo cat-file -t $r.commit 2>$null
             if($type -ne 'commit'){if($env:CI -or -not $shallow){throw "Commit $($r.commit) of $($r.version) is not in the repository history"};Write-Host "SKIP release commit check in shallow clone: $($r.version)";continue}

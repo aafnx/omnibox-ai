@@ -228,13 +228,28 @@ function Write-AiConfigFile {
     Write-AiAtomicBytes $ConfigPath ([Text.UTF8Encoding]::new($false).GetBytes(($Config | ConvertTo-Json -Depth 10)))
 }
 
+# A running engine restarts on a new runtime, which would cut an active generation. The panel
+# blocks new generations and waits for the current one; the CLI runs in another process and
+# cannot see the panel's generations, as with ai restart.
+$script:AiGenerationWaitSeconds = 120
+function Enter-AiGenerationGuard {
+    if (-not ('OmniBox.InferenceStats' -as [type])) { return $false }
+    $watch = [Diagnostics.Stopwatch]::StartNew()
+    while (-not [OmniBox.InferenceStats]::BeginControl($false)) {
+        if ($watch.Elapsed.TotalSeconds -ge $script:AiGenerationWaitSeconds) { throw 'Модель занята генерацией. Новая версия скачана; повторите обновление после завершения запроса.' }
+        Start-Sleep -Milliseconds 500
+    }
+    return $true
+}
+function Exit-AiGenerationGuard { if ('OmniBox.InferenceStats' -as [type]) { [OmniBox.InferenceStats]::EndControl() } }
+
 function Get-AiEngineOverview {
     param([string]$ConfigPath)
     $config = Read-AiConfig $ConfigPath
     $result = @()
     foreach ($type in @('prism', 'ollama')) {
         $kind = Get-AiEngineKind $type
-        $entry = [ordered]@{ type = $type; label = $kind.label; cli = $kind.name; installed = $false; name = $null; service = $null; state = 'NotInstalled'; version = ''; executable = ''; managed = $false; versions = @() }
+        $entry = [ordered]@{ type = $type; label = $kind.label; cli = $kind.name; installed = $false; restorable = [bool]($config.Contains('removed_engines') -and $config.removed_engines -is [Collections.IDictionary] -and $config.removed_engines.Contains($type)); name = $null; service = $null; state = 'NotInstalled'; version = ''; executable = ''; managed = $false; versions = @() }
         $names = @($config.backends.Keys | Where-Object { $config.backends[$_].type -eq $type })
         if ($names.Count) {
             $name = $names[0]; $backend = $config.backends[$name]
@@ -261,18 +276,25 @@ function Set-AiEngineVersion {
     $backend = Get-AiBackend $config $Name
     $runtime = Install-AiEngineRuntime $ConfigPath $backend.type $Tag
     $label = Get-AiEngineName $config $Name
-    $message = Invoke-AiLocked {
-        $xml = Read-AiServiceXml $backend
-        if ((Get-AiProfileExecutable $xml $backend.service_config) -ieq $runtime.executable) { return "$label уже использует версию $($runtime.tag)." }
-        Set-AiProfileRuntime $xml $runtime.executable
-        $service = Get-AiService $backend.service
-        if ($null -ne $service -and [string]$service.Status -in @('Running', 'StartPending')) {
-            Invoke-AiBackendStart $config $Name 'restart' $xml
-            return "$label`: версия $($runtime.tag) запущена."
+    $service = Get-AiService $backend.service
+    # Taken after the long download and before the lock, so a waiting generation never holds the lock.
+    $guarded = $null -ne $service -and [string]$service.Status -in @('Running', 'StartPending') -and (Enter-AiGenerationGuard)
+    try {
+        $message = Invoke-AiLocked {
+            $config = Read-AiConfig $ConfigPath
+            $backend = Get-AiBackend $config $Name
+            $xml = Read-AiServiceXml $backend
+            if ((Get-AiProfileExecutable $xml $backend.service_config) -ieq $runtime.executable) { return "$label уже использует версию $($runtime.tag)." }
+            Set-AiProfileRuntime $xml $runtime.executable
+            $service = Get-AiService $backend.service
+            if ($null -ne $service -and [string]$service.Status -in @('Running', 'StartPending')) {
+                Invoke-AiBackendStart $config $Name 'restart' $xml
+                return "$label`: версия $($runtime.tag) запущена."
+            }
+            Save-AiServiceXml $backend $xml
+            return "$label`: установлена версия $($runtime.tag). Движок остановлен; при ошибке следующего запуска вернётся прежняя версия."
         }
-        Save-AiServiceXml $backend $xml
-        return "$label`: установлена версия $($runtime.tag). Движок остановлен; при ошибке следующего запуска вернётся прежняя версия."
-    }
+    } finally { if ($guarded) { Exit-AiGenerationGuard } }
     $null = Remove-AiUnusedEngineVersions $ConfigPath $backend.type
     return $message
 }
@@ -300,50 +322,73 @@ function New-AiEngineProfileXml {
 function Install-AiEngine {
     param([string]$ConfigPath, [string]$Type, [string]$Tag)
     $kind = Get-AiEngineKind $Type
-    $config = Read-AiConfig $ConfigPath
-    if (@($config.backends.Values | Where-Object { $_.type -eq $Type }).Count) { throw "$($kind.label) уже установлен. Для другой версии используйте обновление." }
-    $name = $kind.name
-    if ($config.backends.Contains($name)) { throw "Имя $name уже занято другим движком в config.json." }
-    $baseUrl = "http://127.0.0.1:$($kind.port)"
-    if (@($config.backends.Values | Where-Object { ([Uri]$_.base_url).Port -eq $kind.port }).Count) { throw "Порт $($kind.port) уже использует другой движок." }
-    if ($null -ne (Get-AiService $name)) { throw "Служба Windows '$name' уже существует и не принадлежит OmniBox AI." }
+    $null = Assert-AiEngineInstallable $ConfigPath (Read-AiConfig $ConfigPath) $Type
     $runtime = Install-AiEngineRuntime $ConfigPath $Type $Tag
     $root = Get-AiInstallRoot $ConfigPath
     $engines = Get-AiEnginesRoot $ConfigPath
-    $profilePath = Join-Path $engines "$name-service.xml"
-    $logs = Join-Path $engines 'logs'
-    # The same command the installer registers, so later updates recognise the service as ours.
     Import-Module (Join-Path $PSScriptRoot 'Service.Install.psm1')
-    $command = New-AiNativeServiceCommand ([Environment]::ProcessPath) $root $profilePath
     return Invoke-AiLocked {
+        # The download may take minutes; config.json is read again so concurrent changes survive.
+        $config = Read-AiConfig $ConfigPath
+        $plan = Assert-AiEngineInstallable $ConfigPath $config $Type
         $originalConfig = [IO.File]::ReadAllBytes($ConfigPath)
         $createdService = $false
         try {
+            $entry = $plan.entry
+            $logs = [string]$entry.log_directory
             $null = New-Item -ItemType Directory -Path $logs -Force
-            if ($Type -eq 'prism') { $null = New-Item -ItemType Directory -Path (Join-Path $root 'models') -Force }
+            if ($Type -eq 'prism') { if ($entry.Contains('models_directory')) { $null = New-Item -ItemType Directory -Path $entry.models_directory -Force } }
             else { $null = New-Item -ItemType Directory -Path (Join-Path $root 'models\ollama') -Force }
             # A profile kept from an earlier removal keeps the owner's settings; only the runtime changes.
-            if (Test-Path -LiteralPath $profilePath -PathType Leaf) {
-                $xml = Read-AiServiceXml @{ service = $name; service_config = $profilePath }
+            if (Test-Path -LiteralPath $entry.service_config -PathType Leaf) {
+                $xml = Read-AiServiceXml @{ service = $entry.service; service_config = $entry.service_config }
                 Set-AiProfileRuntime $xml $runtime.executable
-            } else { $xml = New-AiEngineProfileXml $Type $name $runtime.executable $logs $root }
+            } else { $xml = New-AiEngineProfileXml $Type $entry.service $runtime.executable $logs $root }
             $stream = [IO.MemoryStream]::new()
-            try { $xml.Save($stream); Write-AiAtomicBytes $profilePath $stream.ToArray() } finally { $stream.Dispose() }
-            $entry = [ordered]@{ type = $Type; service = $name; base_url = $baseUrl; service_config = $profilePath; log_directory = $logs; log_prefix = "$name-service"; runtime_path = "$profilePath.runtime.json" }
-            if ($Type -eq 'ollama') { $entry.executable = $runtime.executable } else { $entry.models_directory = Join-Path $root 'models' }
-            $config.backends[$name] = $entry
+            try { $xml.Save($stream); Write-AiAtomicBytes $entry.service_config $stream.ToArray() } finally { $stream.Dispose() }
+            if ($Type -eq 'ollama') { $entry.executable = $runtime.executable }
+            $entry.runtime_path = "$($entry.service_config).runtime.json"
+            $config.backends[$plan.name] = $entry
+            if ($config.Contains('removed_engines') -and $config.removed_engines.Contains($Type)) { $config.removed_engines.Remove($Type) }
             Write-AiConfigFile $ConfigPath $config
             $null = Read-AiConfig $ConfigPath
-            New-AiEngineService $name $command "OmniBox AI · $name"
+            # The same command the installer registers, so later updates recognise the service as ours.
+            New-AiEngineService $entry.service (New-AiNativeServiceCommand ([Environment]::ProcessPath) $root $entry.service_config) "OmniBox AI · $($plan.name)"
             $createdService = $true
-            return "$($kind.label) $($runtime.tag) установлен. Движок не запущен: выберите модель и запустите его в панели."
+            $restored = if ($plan.restored) { ' Прежние настройки и каталог моделей восстановлены.' } else { '' }
+            return "$($kind.label) $($runtime.tag) установлен.$restored Движок не запущен: выберите модель и запустите его в панели."
         } catch {
             $cause = $_.Exception.Message
-            if ($createdService) { try { Remove-AiEngineService $name } catch { } }
+            if ($createdService) { try { Remove-AiEngineService $entry.service } catch { } }
             Write-AiAtomicBytes $ConfigPath $originalConfig
             throw "Установка $($kind.label) не выполнена: $cause. Конфигурация не изменена."
         }
     }
+}
+
+# Where a new engine goes: the entry of an engine removed earlier (its profile, service name,
+# models and logs) when its profile still exists, otherwise fresh paths under engines\.
+function Assert-AiEngineInstallable {
+    param([string]$ConfigPath, $Config, [string]$Type)
+    $kind = Get-AiEngineKind $Type
+    if (@($Config.backends.Values | Where-Object { $_.type -eq $Type }).Count) { throw "$($kind.label) уже установлен. Для другой версии используйте обновление." }
+    $root = Get-AiInstallRoot $ConfigPath
+    $engines = Join-Path $root 'engines'
+    $previous = if ($Config.Contains('removed_engines') -and $Config.removed_engines -is [Collections.IDictionary] -and $Config.removed_engines.Contains($Type)) { $Config.removed_engines[$Type] } else { $null }
+    if ($null -ne $previous -and $previous.entry -is [Collections.IDictionary] -and $previous.entry.service_config -and (Test-Path -LiteralPath $previous.entry.service_config -PathType Leaf)) {
+        $name = [string]$previous.name; $entry = [ordered]@{}; foreach ($key in $previous.entry.Keys) { $entry[$key] = $previous.entry[$key] }
+        $restored = $true
+    } else {
+        $name = $kind.name; $profilePath = Join-Path $engines "$name-service.xml"; $logs = Join-Path $engines 'logs'
+        $entry = [ordered]@{ type = $Type; service = $name; base_url = "http://127.0.0.1:$($kind.port)"; service_config = $profilePath; log_directory = $logs; log_prefix = "$name-service" }
+        if ($Type -eq 'prism') { $entry.models_directory = Join-Path $root 'models' }
+        $restored = $false
+    }
+    if ($Config.backends.Contains($name)) { throw "Имя $name уже занято другим движком в config.json." }
+    $port = ([Uri]$entry.base_url).Port
+    if (@($Config.backends.Values | Where-Object { ([Uri]$_.base_url).Port -eq $port }).Count) { throw "Порт $port уже использует другой движок." }
+    if ($null -ne (Get-AiService $entry.service)) { throw "Служба Windows '$($entry.service)' уже существует и не принадлежит OmniBox AI." }
+    return @{ name = $name; entry = $entry; restored = $restored }
 }
 
 # Removes the service, the config entry and OmniBox-managed runtimes. Models and
@@ -355,28 +400,44 @@ function Uninstall-AiEngine {
     $label = Get-AiEngineName $config $Name
     if ($config.backends.Count -lt 2) { throw 'Нельзя удалить единственный движок: панели нужен хотя бы один.' }
     $root = Get-AiInstallRoot $ConfigPath
+    $gatewayPath = Join-Path $root 'gateway.json'
     Import-Module (Join-Path $PSScriptRoot 'Service.Install.psm1')
-    $kept = @()
     Invoke-AiLocked {
+        $config = Read-AiConfig $ConfigPath
+        $backend = Get-AiBackend $config $Name
+        if ($config.backends.Count -lt 2) { throw 'Нельзя удалить единственный движок: панели нужен хотя бы один.' }
         $service = Get-AiService $backend.service
         if ($null -ne $service) {
             $command = Get-AiServiceCommandLine $backend.service
             if ($null -ne $command -and -not (Test-AiOwnedServiceCommand $command ([Environment]::ProcessPath) $root $backend.service_config)) { throw "Служба '$($backend.service)' запускает другую программу; удаление отменено." }
             Stop-AiBackend $config $Name
-            Remove-AiEngineService $backend.service
         }
-        $config.backends.Remove($Name)
-        if ($config.default_backend -eq $Name) { $config.default_backend = @($config.backends.Keys)[0] }
-        Write-AiConfigFile $ConfigPath $config
-        $gatewayPath = Join-Path $root 'gateway.json'
-        if (Test-Path -LiteralPath $gatewayPath -PathType Leaf) {
-            $gateway = Get-Content -LiteralPath $gatewayPath -Raw | ConvertFrom-Json -AsHashtable
-            if ($gateway.backend -eq $Name) { $gateway.backend = $config.default_backend; Write-AiAtomicBytes $gatewayPath ([Text.UTF8Encoding]::new($false).GetBytes(($gateway | ConvertTo-Json -Depth 10))) }
+        # Settings are written first and restored if the service cannot be removed, so the
+        # installation never ends with a registered engine that has no service or the reverse.
+        $originals = @{}
+        foreach ($path in @($ConfigPath, $gatewayPath)) { if (Test-Path -LiteralPath $path -PathType Leaf) { $originals[$path] = [IO.File]::ReadAllBytes($path) } }
+        try {
+            # Remember the removed engine so a reinstall gets its profile, service name, models and logs back.
+            if (-not $config.Contains('removed_engines') -or $config.removed_engines -isnot [Collections.IDictionary]) { $config.removed_engines = [ordered]@{} }
+            $config.removed_engines[$backend.type] = [ordered]@{ name = $Name; removed = [DateTime]::UtcNow.ToString('o'); entry = $backend }
+            $config.backends.Remove($Name)
+            if ($config.default_backend -eq $Name) { $config.default_backend = @($config.backends.Keys)[0] }
+            Write-AiConfigFile $ConfigPath $config
+            if ($originals.Contains($gatewayPath)) {
+                $gateway = Get-Content -LiteralPath $gatewayPath -Raw | ConvertFrom-Json -AsHashtable
+                if ($gateway.backend -eq $Name) { $gateway.backend = $config.default_backend; Write-AiAtomicBytes $gatewayPath ([Text.UTF8Encoding]::new($false).GetBytes(($gateway | ConvertTo-Json -Depth 10))) }
+            }
+            if ($null -ne $service) { Remove-AiEngineService $backend.service }
+        } catch {
+            $cause = $_.Exception.Message
+            foreach ($path in $originals.Keys) { try { Write-AiAtomicBytes $path $originals[$path] } catch { } }
+            throw "Удаление $label не выполнено: $cause. Настройки восстановлены, движок остановлен."
         }
         # Rollback history belongs to the removed service; the profile itself keeps settings for a reinstall.
-        foreach ($suffix in @('.ai-previous', '.ai-state.json', '.runtime.json')) { $path = $backend.service_config + $suffix; if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force } }
+        foreach ($suffix in @('.ai-previous', '.ai-state.json', '.runtime.json')) { $path = $backend.service_config + $suffix; if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue } }
     }
     $removed = @(Remove-AiUnusedEngineVersions $ConfigPath $backend.type)
+    $kept = @()
     try {
         $exe = Get-AiProfileExecutable ([xml](Get-Content -LiteralPath $backend.service_config -Raw)) $backend.service_config
         if ($exe -and -not (Get-AiEngineTagOf $ConfigPath $backend.type $exe)) { $kept += Split-Path $exe -Parent }
@@ -384,7 +445,7 @@ function Uninstall-AiEngine {
     $text = "$label удалён: служба и записи в настройках."
     if ($removed.Count) { $text += " Удалены версии: $($removed -join ', ')." }
     if ($kept.Count) { $text += " Файлы установки вне OmniBox оставлены: $($kept -join ', ')." }
-    return "$text Модели остались на диске."
+    return "$text Модели и настройки остались на диске; повторная установка их восстановит."
 }
 
 # Deletes one model from disk (PrismML GGUF) or from Ollama. The model a profile still
@@ -394,21 +455,46 @@ function Remove-AiEngineModel {
     $config = Read-AiConfig $ConfigPath
     $backend = Get-AiBackend $config $Name
     if ($backend.type -eq 'prism') {
-        $file = @(Get-AiPrismModels $backend | Where-Object { $_.id -ceq $Model })
-        if (-not $file.Count) { throw 'Модель не найдена в каталоге моделей.' }
-        $inUse = @((Get-AiLaunchSettings $backend).model)
-        $previous = "$($backend.service_config).ai-previous"
-        if (Test-Path -LiteralPath $previous -PathType Leaf) { try { $inUse += Get-AiArgumentValue @(Get-AiPrismArguments ([xml](Get-Content -LiteralPath $previous -Raw))) @('-m', '--model') '' } catch { } }
-        if (@($inUse | Where-Object { $_ -and [IO.Path]::GetFullPath($_) -ieq $file[0].id }).Count) { throw 'Эта модель выбрана в настройках или нужна для отката. Выберите другую модель и сохраните настройки.' }
-        Remove-Item -LiteralPath $file[0].id -Force
-        return "Модель $($file[0].name) удалена ($([math]::Round($file[0].bytes / 1GB, 1)) ГБ)."
+        return Invoke-AiLocked {
+            $file = @(Get-AiPrismModels $backend | Where-Object { $_.id -ceq $Model })
+            if (-not $file.Count) { throw 'Модель не найдена в каталоге моделей.' }
+            $parts = @(Get-AiGgufParts $file[0].id)
+            $inUse = @((Get-AiLaunchSettings $backend).model)
+            $previous = "$($backend.service_config).ai-previous"
+            if (Test-Path -LiteralPath $previous -PathType Leaf) { try { $inUse += Get-AiArgumentValue @(Get-AiPrismArguments ([xml](Get-Content -LiteralPath $previous -Raw))) @('-m', '--model') '' } catch { } }
+            # A split model is used through its first part but needs every part.
+            foreach ($path in @($inUse | Where-Object { $_ })) {
+                foreach ($part in @(Get-AiGgufParts ([IO.Path]::GetFullPath($path)))) {
+                    if ($parts -icontains $part) { throw 'Эта модель выбрана в настройках или нужна для отката. Выберите другую модель и сохраните настройки.' }
+                }
+            }
+            foreach ($part in $parts) { Remove-Item -LiteralPath $part -Force }
+            $what = if ($parts.Count -gt 1) { " (частей: $($parts.Count))" } else { '' }
+            return "Модель $($file[0].name) удалена$what, освобождено $([math]::Round($file[0].bytes / 1GB, 1)) ГБ."
+        }
     }
     Assert-AiModelName $Model
     $service = Get-AiService $backend.service
     if ($null -eq $service -or [string]$service.Status -ne 'Running') { throw 'Запустите Ollama: модели удаляются через её API.' }
     $null = Invoke-AiModelRequest $backend '/api/delete' @{ model = $Model } 120 'Delete'
-    if ($backend.Contains('active_model') -and $backend.active_model -eq $Model) { $backend.Remove('active_model'); Write-AiConfigFile $ConfigPath $config }
+    Invoke-AiLocked {
+        $config = Read-AiConfig $ConfigPath
+        $current = $config.backends[$Name]
+        if ($null -ne $current -and $current.Contains('active_model') -and $current.active_model -eq $Model) { $current.Remove('active_model'); Write-AiConfigFile $ConfigPath $config }
+    }
     return "Модель $Model удалена из Ollama."
+}
+
+# All files of a split GGUF (name-00001-of-00003.gguf ...) or the file itself.
+function Get-AiGgufParts {
+    param([string]$Path)
+    $name = [IO.Path]::GetFileName($Path)
+    if ($name -notmatch '^(?<base>.+)-(?<part>\d{5})-of-(?<total>\d{5})\.gguf$') { return @($Path) }
+    $directory = Split-Path $Path -Parent
+    $base = $Matches.base; $total = $Matches.total
+    $parts = @(Get-ChildItem -LiteralPath $directory -File -ErrorAction SilentlyContinue | Where-Object { $_.Name -match ('^' + [regex]::Escape($base) + '-\d{5}-of-' + $total + '\.gguf$') } | Sort-Object Name | ForEach-Object { $_.FullName })
+    if (-not $parts.Count) { return @($Path) }
+    return $parts
 }
 
 # Where each engine keeps its models. Ollama without OLLAMA_MODELS uses the profile of the
@@ -436,7 +522,7 @@ function Get-AiModelFolderSize {
     $size = @{ bytes = 0L; models = 0 }
     if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Container)) { return $size }
     if ($Type -eq 'prism') {
-        foreach ($file in @(Get-ChildItem -LiteralPath $Path -File -Filter '*.gguf' -ErrorAction SilentlyContinue)) { $size.bytes += $file.Length; if ($file.Name -notmatch '(?i)mmproj|projector') { $size.models++ } }
+        foreach ($file in @(Get-ChildItem -LiteralPath $Path -File -Filter '*.gguf' -ErrorAction SilentlyContinue)) { $size.bytes += $file.Length; if ($file.Name -notmatch '(?i)mmproj|projector' -and $file.Name -notmatch '-(?!00001)\d{5}-of-\d{5}\.gguf$') { $size.models++ } }
         return $size
     }
     # Ollama: blobs hold the weights, one manifest per installed model tag.

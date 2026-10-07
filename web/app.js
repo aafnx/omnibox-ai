@@ -148,7 +148,7 @@ function renderActivity() {
 function renderSettings() {
   const b=backend();if(!b)return; const s=b.settings||{};
   $('model-service').textContent=badgeText(b);
-  const models=$('model-choice'); const old=models.value; models.replaceChildren(); (b.models||[]).forEach(m=>models.add(new Option(`${m.name} · ${m.quant?m.quant+' · ':''}${(m.bytes/1024**3).toFixed(1)} ГБ`,m.id)));
+  const models=$('model-choice'); const old=models.value; models.replaceChildren(); (b.models||[]).forEach(m=>models.add(new Option(`${m.name} · ${m.quant?m.quant+' · ':''}${m.parts>1?`частей: ${m.parts} · `:''}${(m.bytes/1024**3).toFixed(1)} ГБ`,m.id)));
   if(b.type==='prism'&&s.model)models.value=s.model; else if((b.models||[]).some(m=>m.id===old))models.value=old;
   models.disabled=b.type==='ollama'&&!(b.models||[]).length;
   $('model-hint').textContent=b.type==='prism'?'GGUF из каталога модели на ПК.':'Для списка моделей Ollama должна быть запущена.';
@@ -237,7 +237,7 @@ function renderEngineManager(engines){
   engines.forEach(e=>{
     const box=document.createElement('div');box.className='engine-manage';box.dataset.engine=e.cli;
     const head=document.createElement('div');head.className='engine-manage-head';const title=document.createElement('h3');title.textContent=e.label;const badge=document.createElement('span');badge.className='badge';badge.textContent=engineStatusText(e);head.append(title,badge);
-    const info=document.createElement('p');info.className='muted';info.textContent=e.installed?(e.managed?`Служба ${e.service}. Скачанные версии: ${(e.versions||[]).join(', ')||'—'}.`:`Служба ${e.service}. Файл: ${e.executable||'не найден'}. Обновление перенесёт движок в каталог OmniBox; прежние файлы останутся на месте.`):'Будут созданы служба Windows (ручной запуск) и профиль. Модели скачиваются отдельно.';
+    const info=document.createElement('p');info.className='muted';info.textContent=e.installed?(e.managed?`Служба ${e.service}. Скачанные версии: ${(e.versions||[]).join(', ')||'—'}.`:`Служба ${e.service}. Файл: ${e.executable||'не найден'}. Обновление перенесёт движок в каталог OmniBox; прежние файлы останутся на месте.`):(e.restorable?'Будут восстановлены прежние служба, настройки и каталог моделей. ':'Будут созданы служба Windows (ручной запуск) и профиль. Модели скачиваются отдельно. ');
     const row=document.createElement('div');row.className='button-row';
     const select=document.createElement('select');select.className='engine-version';select.setAttribute('aria-label',`Версия ${e.label}`);
     const releases=engineReleases[e.cli]||[];select.hidden=!releases.length;
