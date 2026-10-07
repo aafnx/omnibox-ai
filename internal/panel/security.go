@@ -93,14 +93,7 @@ func requestTransport(r *http.Request, p *config.Panel) (transport, error) {
 		}
 		t.client = remote.String()
 	}
-	trusted := false
-	for _, ip := range p.TrustedProxyIPs() {
-		if remote != nil && ip.Equal(remote) {
-			trusted = true
-			break
-		}
-	}
-	if !trusted {
+	if !fromTrustedProxy(r, p) {
 		return t, nil
 	}
 	if r.Header.Get("X-Forwarded-Proto") != "https" {
@@ -119,6 +112,24 @@ func requestTransport(r *http.Request, p *config.Panel) (transport, error) {
 		t.client = ip.String()
 	}
 	return t, nil
+}
+
+// fromTrustedProxy reports whether the request comes straight from one of the NAS addresses.
+func fromTrustedProxy(r *http.Request, p *config.Panel) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	remote := net.ParseIP(host)
+	if remote == nil {
+		return false
+	}
+	for _, ip := range p.TrustedProxyIPs() {
+		if ip.Equal(remote) {
+			return true
+		}
+	}
+	return false
 }
 
 // originAllowed accepts no Origin (same-origin form posts) or exactly the panel's origin.
