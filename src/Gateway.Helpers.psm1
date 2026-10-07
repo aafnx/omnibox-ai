@@ -28,7 +28,7 @@ function Write-AiGatewayConfig {
     try {
         [IO.File]::WriteAllText($temp, ($Config | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
         $null = Read-AiGatewayConfig $temp
-        [IO.File]::Move($temp, $Path, $true)
+        Move-AiFileOver $temp $Path
     } finally { if ([IO.File]::Exists($temp)) { [IO.File]::Delete($temp) } }
 }
 

@@ -39,4 +39,12 @@ function Read-AiSharedText {
     }
 }
 
-Export-ModuleMember -Function Read-AiSharedText
+# Puts a fully written temporary file in place of a settings file that status readers may hold open.
+# Readers share Delete, so ReplaceFile succeeds under them; MoveFileEx with overwrite does not on Windows.
+function Move-AiFileOver {
+    param([string]$Source, [string]$Path)
+    if ([IO.File]::Exists($Path)) { [IO.File]::Replace($Source, $Path, [System.Management.Automation.Language.NullString]::Value) }
+    else { [IO.File]::Move($Source, $Path) }
+}
+
+Export-ModuleMember -Function Read-AiSharedText, Move-AiFileOver

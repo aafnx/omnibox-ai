@@ -832,6 +832,25 @@ try {
         Assert-True (-not (Test-Path (Join-Path $dir 'bad-model.gguf')))
         Assert-Equal @(Get-ChildItem -LiteralPath $dir -Filter '*.part').Count 0
     }
+    Test 'settings writers replace a file that a status reader holds open' {
+        $dir = Join-Path $testRoot ([Guid]::NewGuid().ToString('N')); $null = New-Item -ItemType Directory -Path $dir
+        Import-Module (Join-Path $repo 'src/File.Read.psm1') -Force
+        Import-Module (Join-Path $repo 'src/Gateway.Helpers.psm1') -Force
+        $path = Join-Path $dir 'gateway.json'
+        Write-AiGatewayConfig $path @{schema_version=1;enabled=$true;port=18090;base_url='https://llm.fnx.red/v1';backend='bonsai';require_key=$false;key_hash=''}
+        # A status read in progress: the same sharing the product's readers use.
+        $reader = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        try {
+            Write-AiGatewayConfig $path @{schema_version=1;enabled=$true;port=18090;base_url='https://llm.fnx.red/v1';backend='ollama';require_key=$false;key_hash=''}
+            $temp = Join-Path $dir 'plain.tmp'; [IO.File]::WriteAllText($temp, 'new'); [IO.File]::WriteAllText((Join-Path $dir 'plain.txt'), 'old')
+            $second = [IO.File]::Open((Join-Path $dir 'plain.txt'), [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            try { Move-AiFileOver $temp (Join-Path $dir 'plain.txt') } finally { $second.Dispose() }
+        } finally { $reader.Dispose() }
+        Assert-Equal (Read-AiGatewayConfig $path).backend 'ollama'
+        Assert-Equal (Read-AiSharedText (Join-Path $dir 'plain.txt')) 'new'; Assert-True (-not (Test-Path -LiteralPath $temp))
+        [IO.File]::WriteAllText($temp, 'first'); Move-AiFileOver $temp (Join-Path $dir 'fresh.txt')
+        Assert-Equal (Read-AiSharedText (Join-Path $dir 'fresh.txt')) 'first'
+    }
     Test 'concurrent production config and XML readers allow atomic replacement' {
         $f = New-WebModelFixture; $m = New-TestModule
         $state = @{ ready = [Threading.ManualResetEventSlim]::new($false); stop = [Threading.ManualResetEventSlim]::new($false) }

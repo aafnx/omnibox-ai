@@ -34,7 +34,7 @@ function Set-AiPanelPassword {
     try {
         [IO.File]::WriteAllText($temp, ($config | ConvertTo-Json -Depth 10), [Text.UTF8Encoding]::new($false))
         $null = Read-AiPanelConfig $temp
-        [IO.File]::Move($temp, $path, $true)
+        Move-AiFileOver $temp $path
     } finally { if([IO.File]::Exists($temp)){[IO.File]::Delete($temp)} }
     Restart-AiPanelService
 }
