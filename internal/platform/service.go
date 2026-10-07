@@ -39,6 +39,10 @@ type Services interface {
 	Stop(name string, timeout time.Duration) error
 	Install(spec ServiceSpec) error
 	Remove(name string, timeout time.Duration) error
+	// Change points an existing service at a new program and arguments (an update).
+	Change(spec ServiceSpec) error
+	// Executable is the program a service runs.
+	Executable(name string) (string, error)
 }
 
 // FakeServices is an in-memory service manager for tests.
@@ -135,4 +139,28 @@ func (f *FakeServices) Spec(name string) (ServiceSpec, bool) {
 		return ServiceSpec{}, false
 	}
 	return s.spec, true
+}
+
+func (f *FakeServices) Change(spec ServiceSpec) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.services[spec.Name]
+	if !ok {
+		return fmt.Errorf("служба %s не установлена", spec.Name)
+	}
+	f.Calls = append(f.Calls, "change:"+spec.Name)
+	start := s.info.StartType
+	s.spec = spec
+	s.info.StartType = start
+	return nil
+}
+
+func (f *FakeServices) Executable(name string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.services[name]
+	if !ok {
+		return "", fmt.Errorf("служба %s не установлена", name)
+	}
+	return s.spec.Executable, nil
 }

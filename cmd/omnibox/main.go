@@ -25,6 +25,7 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/enginemgr"
 	"github.com/aafnx/omnibox-ai/internal/gateway"
 	"github.com/aafnx/omnibox-ai/internal/host"
+	"github.com/aafnx/omnibox-ai/internal/install"
 	"github.com/aafnx/omnibox-ai/internal/panel"
 	"github.com/aafnx/omnibox-ai/internal/platform"
 	"github.com/aafnx/omnibox-ai/internal/status"
@@ -51,6 +52,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "install":
+		if err := runInstall(args[1:], os.Stdin, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "engine":
 		if err := runEngine(args[1:]); err != nil {
 			fmt.Fprintln(stderr, err)
@@ -70,7 +77,30 @@ func usage(w io.Writer) {
 	fmt.Fprintln(w, `OmniBox AI
   omnibox version
   omnibox serve [--data <каталог данных>]
-  omnibox engine <prismml|ollama> [--data <каталог данных>]`)
+  omnibox engine <prismml|ollama> [--data <каталог данных>]
+  omnibox install [--yes] [--data <каталог данных>] [--program <каталог программы>]`)
+}
+
+// runInstall installs this binary, or updates an existing installation keeping its settings.
+func runInstall(args []string, in io.Reader, out io.Writer) error {
+	fs := flag.NewFlagSet("install", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "принять все ответы по умолчанию")
+	data := fs.String("data", platform.DataDir(), "каталог данных")
+	program := fs.String("program", platform.ProgramDir(), "каталог программы")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if !platform.IsAdmin() {
+		return errors.New("Установка требует прав администратора (Windows) или root (Linux).")
+	}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	i := &install.Installer{ProgramDir: *program, DataDir: *data, Version: omnibox.Version, Source: exe,
+		Services: platform.NewServices(), Manager: &enginemgr.Manager{DataDir: *data}, In: in, Out: out, Yes: *yes,
+		AllowPort: platform.AllowPort, RemoveRule: platform.RemovePortRule, Health: install.PanelHealth}
+	return i.Run(context.Background())
 }
 
 // runEngine is the engine service: it runs one engine with its process tree until stopped.
