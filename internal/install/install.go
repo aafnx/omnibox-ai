@@ -351,14 +351,6 @@ func (i *Installer) wizard() (answers, error) {
 		}
 	}
 	var err error
-	if a.apiURL, err = i.askValid("Адрес API для клиентов", "http://"+first+":"+strconv.Itoa(a.port)+"/v1", func(s string) (string, error) {
-		if s = strings.TrimRight(s, "/"); !config.ClientBaseURL(s) {
-			return "", errors.New("Нужен адрес HTTP/HTTPS, который заканчивается на /v1.")
-		}
-		return s, nil
-	}); err != nil {
-		return a, err
-	}
 	if a.publicOrigin, err = i.askValid("HTTPS-адрес через reverse proxy на NAS («-» — без NAS)", DefaultPublicOrigin, func(s string) (string, error) {
 		if s == "-" || strings.EqualFold(s, "нет") || strings.EqualFold(s, "no") {
 			return "", nil
@@ -388,6 +380,19 @@ func (i *Installer) wizard() (answers, error) {
 		}); err != nil {
 			return a, err
 		}
+	}
+	// Clients outside the LAN reach the API through the NAS, under the same name as the panel.
+	apiDefault := "http://" + first + ":" + strconv.Itoa(a.port) + "/v1"
+	if a.publicOrigin != "" {
+		apiDefault = a.publicOrigin + "/v1"
+	}
+	if a.apiURL, err = i.askValid("Адрес API для клиентов", apiDefault, func(s string) (string, error) {
+		if s = strings.TrimRight(s, "/"); !config.ClientBaseURL(s) {
+			return "", errors.New("Нужен адрес HTTP/HTTPS, который заканчивается на /v1.")
+		}
+		return s, nil
+	}); err != nil {
+		return a, err
 	}
 	a.engines = i.yes("Установить PrismML и Ollama последних версий?", true)
 	a.models = i.ask("Каталог моделей", filepath.Join(i.DataDir, "models"))

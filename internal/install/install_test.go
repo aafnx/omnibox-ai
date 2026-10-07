@@ -64,7 +64,7 @@ func TestEnterThroughInstallUsesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Panel.Port != 8800 || !slices.Equal(cfg.Panel.Hosts, []string{"192.168.1.77", "omnibox", "localhost"}) || cfg.API.PublicURL != "http://192.168.1.77:8800/v1" || !cfg.API.RequireKey ||
+	if cfg.Panel.Port != 8800 || !slices.Equal(cfg.Panel.Hosts, []string{"192.168.1.77", "omnibox", "localhost"}) || cfg.API.PublicURL != "https://llm.fnx.red/v1" || !cfg.API.RequireKey ||
 		cfg.Panel.PublicOrigin != "https://llm.fnx.red" || !slices.Equal(cfg.Panel.TrustedProxies, []string{"192.168.1.10"}) {
 		t.Fatalf("%+v", cfg)
 	}
@@ -96,13 +96,13 @@ func TestEnterThroughInstallUsesDefaults(t *testing.T) {
 }
 
 func TestAnswersAreUsed(t *testing.T) {
-	answers := strings.Join([]string{"9000", "pc.lan, 10.0.0.5", "", "https://llm.fnx.red", "192.168.1.10", "n", "/srv/models", ""}, "\n") + "\n"
+	answers := strings.Join([]string{"9000", "pc.lan, 10.0.0.5", "https://llm.fnx.red", "192.168.1.10", "", "n", "/srv/models", ""}, "\n") + "\n"
 	r := newRig(t, answers)
 	if err := r.Run(context.Background()); err != nil {
 		t.Fatalf("%v\n%s", err, r.out)
 	}
 	cfg, _ := config.Load(r.configPath())
-	if cfg.Panel.Port != 9000 || !slices.Equal(cfg.Panel.Hosts, []string{"pc.lan", "10.0.0.5"}) || cfg.API.PublicURL != "http://10.0.0.5:9000/v1" ||
+	if cfg.Panel.Port != 9000 || !slices.Equal(cfg.Panel.Hosts, []string{"pc.lan", "10.0.0.5"}) || cfg.API.PublicURL != "https://llm.fnx.red/v1" ||
 		cfg.Panel.PublicOrigin != "https://llm.fnx.red" || !slices.Equal(cfg.Panel.TrustedProxies, []string{"192.168.1.10"}) {
 		t.Fatalf("%+v", cfg.Panel)
 	}
@@ -110,18 +110,18 @@ func TestAnswersAreUsed(t *testing.T) {
 		t.Fatal("engines installed although declined")
 	}
 
-	r = newRig(t, strings.Join([]string{"", "", "", "-", "n", ""}, "\n")+"\n")
+	r = newRig(t, strings.Join([]string{"", "", "-", "", "n", ""}, "\n")+"\n")
 	if err := r.Run(context.Background()); err != nil {
 		t.Fatalf("%v\n%s", err, r.out)
 	}
-	if cfg, _ := config.Load(r.configPath()); cfg.Panel.PublicOrigin != "" || len(cfg.Panel.TrustedProxies) != 0 {
+	if cfg, _ := config.Load(r.configPath()); cfg.Panel.PublicOrigin != "" || len(cfg.Panel.TrustedProxies) != 0 || cfg.API.PublicURL != "http://192.168.1.77:8800/v1" {
 		t.Fatalf("NAS set although declined: %+v", cfg.Panel)
 	}
 }
 
 func TestWrongAnswerIsAskedAgain(t *testing.T) {
 	// A pasted link may carry invisible characters; a typo must not end the whole install.
-	answers := strings.Join([]string{"", "", "", "https://llm.fnx.red/panel", "\u200b<llm.fnx.red>\u200b", "nas", "192.168.1.10", "n", ""}, "\r\n") + "\r\n"
+	answers := strings.Join([]string{"", "", "https://llm.fnx.red/panel", "\u200b<llm.fnx.red>\u200b", "nas", "192.168.1.10", "", "n", ""}, "\r\n") + "\r\n"
 	r := newRig(t, answers)
 	if err := r.Run(context.Background()); err != nil {
 		t.Fatalf("%v\n%s", err, r.out)
@@ -135,7 +135,7 @@ func TestWrongAnswerIsAskedAgain(t *testing.T) {
 	}
 
 	// Input that ends on a wrong answer stops the wizard instead of asking forever.
-	r = newRig(t, "\n\n\nhttps://llm.fnx.red\nnas")
+	r = newRig(t, "\n\nhttps://llm.fnx.red\nnas")
 	if err := r.Run(context.Background()); err == nil {
 		t.Fatal("install went on without a NAS address")
 	}

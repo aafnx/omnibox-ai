@@ -17,8 +17,8 @@ const html=fs.readFileSync('web/index.html','utf8'),source=fs.readFileSync('web/
 const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);assert.equal(new Set(ids).size,ids.length);
 const nodes=Object.fromEntries(ids.map(id=>[id,new Node(id)]));
 nodes['engine-template'].content={firstElementChild:new Node('engine-card')};
-const store=new Map(),requests=[];
-const context=vm.createContext({document:{documentElement:{dataset:{}},getElementById:id=>{assert.ok(nodes[id],`Missing UI element ${id}`);return nodes[id]},body:new Node('body'),createElement:()=>new Node(),querySelectorAll:()=>[],addEventListener:()=>{},hidden:false,activeElement:null},window:{matchMedia:()=>({matches:false,addEventListener:()=>{}})},localStorage:{getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)},navigator:{},Option:function(text,value){return{text,value}},fetch:async path=>{requests.push(path);return{ok:false,status:401,json:async()=>({error:'Login required'})}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,Map,Set,Date,Number,Promise,console});
+const store=new Map(),requests=[],bodies=[];
+const context=vm.createContext({document:{documentElement:{dataset:{}},getElementById:id=>{assert.ok(nodes[id],`Missing UI element ${id}`);return nodes[id]},body:new Node('body'),createElement:()=>new Node(),querySelectorAll:()=>[],addEventListener:()=>{},hidden:false,activeElement:null},window:{matchMedia:()=>({matches:false,addEventListener:()=>{}})},localStorage:{getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)},navigator:{},Option:function(text,value){return{text,value}},fetch:async (path,options)=>{requests.push(path);bodies.push(options&&options.body);return{ok:false,status:401,json:async()=>({error:'Login required'})}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,Map,Set,Date,Number,Promise,console});
 function run(code){return vm.runInContext(code,context);}
 (async()=>{
   run(source);await new Promise(setImmediate);
@@ -109,11 +109,16 @@ function run(code){return vm.runInContext(code,context);}
   assert.ok(downloadBox.children[1].textContent.startsWith('1.00 из 4.00 ГБ (25%) · 50.0 МБ/с · осталось 2 мин'),downloadBox.children[1].textContent);
   assert.equal(downloadBox.children[2].textContent,'Отменить');assert.equal(startRow.children.find(n=>n.className==='operation-progress').children.length,2);
   // API settings: queue fields, no engine choice; /v1 serves the running engine.
-  run("gateway={enabled:true,base_url:'https://llm.fnx.red/v1',require_key:true,has_key:true,queue_depth:4,queue_timeout_seconds:60};renderGatewayForm()");
+  run("gateway={enabled:true,base_url:'https://llm.fnx.red/v1',require_key:true,has_key:true,queue_depth:4,queue_timeout_seconds:60,public_origin:'https://llm.fnx.red',trusted_proxies:['192.168.1.10','192.168.1.11']};renderGatewayForm()");
   assert.equal(nodes['api-queue-depth'].value,4);assert.equal(nodes['api-queue-timeout'].value,60);
+  // The NAS proxy is edited with the API settings and sent as a list of addresses.
+  assert.equal(nodes['api-public-origin'].value,'https://llm.fnx.red');assert.equal(nodes['api-trusted-proxies'].value,'192.168.1.10, 192.168.1.11');
+  nodes['api-trusted-proxies'].value=' 192.168.1.10 ,, ';const savedBefore=requests.length;
+  nodes['api-settings-form'].listeners.submit[0]({preventDefault:()=>{}});await new Promise(r=>setTimeout(r,0));
+  const saved=JSON.parse(bodies[savedBefore]);assert.equal(requests[savedBefore],'/api/gateway');assert.deepEqual(saved.trusted_proxies,['192.168.1.10']);assert.equal(saved.public_origin,'https://llm.fnx.red');
   // Password change: mismatched repeat is refused before the request and the fields are cleared.
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue settings and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});
