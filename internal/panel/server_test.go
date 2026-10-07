@@ -344,3 +344,32 @@ func TestActivityContentAndApiHandler(t *testing.T) {
 		t.Fatalf("/v1 on a foreign host: %d", w.Code)
 	}
 }
+
+func TestStorageRoutes(t *testing.T) {
+	var got map[string]any
+	s, _ := New(Options{
+		Config:  func() *config.Config { return testConfig(t, nil) },
+		Storage: func() any { return map[string]any{"logs_bytes": 1} },
+		StorageAction: func(body map[string]any) (any, error) {
+			if body["action"] != "save" {
+				return nil, errors.New("Неизвестное действие с журналами.")
+			}
+			got = body
+			return map[string]any{"logs_bytes": 2}, nil
+		},
+	})
+	cookie, csrf := login(t, s, nil)
+	auth := func(r *http.Request) { r.AddCookie(cookie); r.Header.Set("X-Omnibox-CSRF", csrf) }
+	if w := call(s, "GET", "/api/storage", "", auth); w.Code != 200 || decode(t, w)["logs_bytes"] != float64(1) {
+		t.Fatalf("view: %d", w.Code)
+	}
+	if w := call(s, "POST", "/api/storage", `{"action":"save","request_log":"metadata"}`, auth); w.Code != 200 || got["request_log"] != "metadata" {
+		t.Fatalf("save: %d", w.Code)
+	}
+	if w := call(s, "POST", "/api/storage", `{"action":"wipe"}`, auth); w.Code != 400 {
+		t.Fatalf("unknown action: %d", w.Code)
+	}
+	if w := call(s, "POST", "/api/storage", `{"action":"save"}`, func(r *http.Request) { r.AddCookie(cookie) }); w.Code != 403 {
+		t.Fatalf("without CSRF: %d", w.Code)
+	}
+}

@@ -48,6 +48,9 @@ type Options struct {
 	// Activity is the /v1 request history; RequestContent returns one stored request by id.
 	Activity       func() any
 	RequestContent func(id string) (json.RawMessage, bool)
+	// Storage reports disk usage; StorageAction saves log settings or runs a cleanup.
+	Storage       func() any
+	StorageAction func(body map[string]any) (any, error)
 }
 
 type session struct {
@@ -110,7 +113,7 @@ func New(opt Options) (*Server, error) {
 
 // Routes of the PowerShell panel that later stages port; until then they answer 501.
 var pendingRoutes = map[string]bool{
-	"GET /api/storage": true, "GET /api/engines": true, "GET /api/engine-releases": true, "GET /api/gateway": true,
+	"GET /api/engines": true, "GET /api/engine-releases": true, "GET /api/gateway": true,
 	"GET /api/updates": true, "GET /api/catalog": true,
 }
 
@@ -189,6 +192,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.write(w, http.StatusOK, "application/json; charset=utf-8", line)
+	case route == "GET /api/storage" && s.opt.Storage != nil:
+		s.json(w, http.StatusOK, s.opt.Storage())
+	case route == "POST /api/storage" && s.opt.StorageAction != nil:
+		body, err := readJSON(r)
+		if err == nil {
+			var result any
+			if result, err = s.opt.StorageAction(body); err == nil {
+				s.json(w, http.StatusOK, result)
+				return
+			}
+		}
+		s.json(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 	case route == "POST /api/actions" && s.opt.Action != nil:
 		body, err := readJSON(r)
 		if err == nil {
