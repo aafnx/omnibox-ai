@@ -111,6 +111,10 @@ function run(code){return vm.runInContext(code,context);}
   // API settings: queue fields, no engine choice; /v1 serves the running engine.
   run("gateway={enabled:true,base_url:'https://llm.fnx.red/v1',require_key:true,has_key:true,queue_depth:4,queue_timeout_seconds:60,public_origin:'https://llm.fnx.red',trusted_proxies:['192.168.1.10','192.168.1.11']};renderGatewayForm()");
   assert.equal(nodes['api-queue-depth'].value,4);assert.equal(nodes['api-queue-timeout'].value,60);
+  // S1: working without a key is allowed but shown as a warning.
+  assert.equal(nodes['api-no-key-warning'].hidden,true);
+  run("gateway={...gateway,require_key:false};renderGatewayForm()");assert.equal(nodes['api-no-key-warning'].hidden,false);
+  run("gateway={...gateway,require_key:true};renderGatewayForm()");
   // The NAS proxy is edited with the API settings and sent as a list of addresses.
   assert.equal(nodes['api-public-origin'].value,'https://llm.fnx.red');assert.equal(nodes['api-trusted-proxies'].value,'192.168.1.10, 192.168.1.11');
   nodes['api-trusted-proxies'].value=' 192.168.1.10 ,, ';const savedBefore=requests.length;
@@ -120,5 +124,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, no-key warning and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

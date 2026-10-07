@@ -32,7 +32,10 @@ const (
 	maxAttempts     = 6
 	lockout         = 5 * time.Minute
 	maxTrackedIPs   = 512
-	maxJSONBody     = 16384
+	// Password checks at once: PBKDF2 is deliberately slow, so a flood of logins from many
+	// addresses is refused instead of taking every CPU core.
+	maxVerifying = 2
+	maxJSONBody  = 16384
 )
 
 // Options configure a panel server.
@@ -99,6 +102,7 @@ type Server struct {
 	assets   map[string]asset
 	mu       sync.Mutex
 	logMu    sync.Mutex
+	verify   chan struct{}
 	sessions map[string]*session
 	attempts map[string]*attempt
 }
@@ -108,7 +112,7 @@ func New(opt Options) (*Server, error) {
 	if opt.Now == nil {
 		opt.Now = time.Now
 	}
-	s := &Server{opt: opt, cookie: "omnibox_session", sessions: map[string]*session{}, attempts: map[string]*attempt{}}
+	s := &Server{opt: opt, cookie: "omnibox_session", sessions: map[string]*session{}, attempts: map[string]*attempt{}, verify: make(chan struct{}, maxVerifying)}
 	files := map[string][2]string{
 		"/":                {"index.html", "text/html; charset=utf-8"},
 		"/app.js":          {"app.js", "text/javascript; charset=utf-8"},
@@ -322,6 +326,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, t transport, cfg 
 	}
 	if a, ok := s.attempts[t.client]; ok && a.count >= maxAttempts {
 		s.mu.Unlock()
+		s.logf("вход: %s заблокирован после %d ошибок", t.client, maxAttempts)
 		s.json(w, http.StatusTooManyRequests, map[string]any{"error": "Слишком много попыток. Повтори через 5 минут."})
 		return
 	}
@@ -337,7 +342,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, t transport, cfg 
 		return
 	}
 	// PBKDF2 runs outside the lock: one slow login never blocks other requests.
+	select {
+	case s.verify <- struct{}{}:
+	default:
+		s.json(w, http.StatusTooManyRequests, map[string]any{"error": "Панель проверяет другие попытки входа. Повтори через несколько секунд."})
+		return
+	}
 	valid := VerifyPassword(password, cfg.Panel.Password)
+	<-s.verify
 	s.mu.Lock()
 	if !valid {
 		a, ok := s.attempts[t.client]
@@ -352,10 +364,12 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, t transport, cfg 
 		}
 		a.count++
 		s.mu.Unlock()
+		s.logf("вход: неверный пароль с %s (%s)", t.client, map[bool]string{true: "через NAS", false: "напрямую"}[t.secure])
 		s.json(w, http.StatusUnauthorized, map[string]any{"error": "Неверный пароль."})
 		return
 	}
 	delete(s.attempts, t.client)
+	s.logf("вход: успешно с %s (%s)", t.client, map[bool]string{true: "через NAS", false: "напрямую"}[t.secure])
 	for k, v := range s.sessions {
 		if v.expires.Before(now) {
 			delete(s.sessions, k)

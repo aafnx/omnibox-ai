@@ -104,14 +104,25 @@ func requestTransport(r *http.Request, p *config.Panel) (transport, error) {
 		return t, errors.New("X-Forwarded-Host не совпадает с public_origin.")
 	}
 	t.secure, t.scheme, t.authority = true, "https", origin.Host
-	// The proxy must overwrite this header with ONE address, never append an untrusted chain.
-	if ip := net.ParseIP(r.Header.Get("X-Forwarded-For")); ip != nil {
-		if v4 := ip.To4(); v4 != nil {
-			ip = v4
-		}
+	if ip := forwardedClient(r.Header.Values("X-Forwarded-For")); ip != nil {
 		t.client = ip.String()
 	}
 	return t, nil
+}
+
+// forwardedClient takes the address the NAS itself saw: the last entry. Earlier entries come
+// from the client and could be anything; trusting the first would let one client pick another's
+// login counter, and ignoring a chain would put every client behind the NAS into one counter.
+func forwardedClient(values []string) net.IP {
+	if len(values) == 0 {
+		return nil
+	}
+	parts := strings.Split(values[len(values)-1], ",")
+	ip := net.ParseIP(strings.TrimSpace(parts[len(parts)-1]))
+	if v4 := ip.To4(); v4 != nil {
+		return v4
+	}
+	return ip
 }
 
 // fromTrustedProxy reports whether the request comes straight from one of the NAS addresses.
