@@ -93,6 +93,9 @@ try{
  Assert ((Get-Service 'ollama').Status -eq 'Stopped') 'Ollama unexpectedly started'
  Assert (Test-Path (Join-Path $destination 'src/Service.Host.exe')) 'Runtime not built'
  Assert ($global:FlowCalls.Contains('firewall:omnibox-ai-panel')) 'Firewall boundary not reached'
+ $sessionFile=Join-Path $destination 'panel-sessions.dpapi'
+ [IO.File]::WriteAllBytes($sessionFile, [byte[]](1,7,3,9,11))
+ $sessionHash=(Get-FileHash $sessionFile).Hash
  $previousPanel=Get-Content (Join-Path $destination 'panel.json') -Raw|ConvertFrom-Json -AsHashtable
  $previousGateway=Get-Content (Join-Path $destination 'gateway.json') -Raw|ConvertFrom-Json -AsHashtable
  # A running fake panel has PID 0; the process provider supplies no real host.
@@ -105,6 +108,7 @@ try{
  $gateway=Get-Content (Join-Path $destination 'gateway.json') -Raw|ConvertFrom-Json -AsHashtable
  Assert ('custom.example' -in $panel.allowed_hosts) 'Upgrade dropped allowed host'
  Assert ($panel.credential.hash -ceq $previousPanel.credential.hash) 'Upgrade changed password'
+ Assert ((Get-FileHash $sessionFile).Hash -eq $sessionHash) 'Upgrade changed persisted panel sessions'
  Assert ($gateway.key_hash -ceq $previousGateway.key_hash) 'Upgrade changed API key'
  Assert ($gateway.base_url -ceq $previousGateway.base_url) 'Upgrade changed endpoint'
  Assert ((Get-Service 'omnibox-ai').Status -eq 'Running') 'Upgraded panel not started'

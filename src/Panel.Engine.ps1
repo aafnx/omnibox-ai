@@ -248,7 +248,9 @@ function Invoke-AiModelRequest {
 }
 
 function Get-AiGpuData {
-    $savedExit = $global:LASTEXITCODE
+    # A new ThreadJob has no LASTEXITCODE until it runs its first native command.
+    $exitVariable = Get-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+    $savedExit = if ($null -ne $exitVariable) { $exitVariable.Value } else { $null }
     try {
         $exe = Get-Command nvidia-smi -CommandType Application -ErrorAction SilentlyContinue | Select-Object -First 1
         if ($null -eq $exe) { return @() }
@@ -262,7 +264,10 @@ function Get-AiGpuData {
                 $row
             }
         })
-    } finally { $global:LASTEXITCODE = $savedExit }
+    } finally {
+        if ($null -ne $exitVariable) { $global:LASTEXITCODE = $savedExit }
+        else { Remove-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue }
+    }
 }
 
 function Get-AiDashboard {

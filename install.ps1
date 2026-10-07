@@ -145,7 +145,7 @@ foreach ($name in $setup.config.backends.Keys) {
     $serviceProfiles[$backend.service] = $backend.service_config
     $externalFiles += @($backend.service_config, ($backend.service_config + '.ai-previous'), ($backend.service_config + '.ai-state.json'))
 }
-$snapshotFiles = @($files) + @('config.json', 'panel.json', 'gateway.json', 'storage.json', 'panel-service.xml', '.omnibox-ai-install', 'src/Service.Host.exe', 'panel-service.exe')
+$snapshotFiles = @($files) + @('config.json', 'panel.json', 'panel-sessions.dpapi', 'gateway.json', 'storage.json', 'panel-service.xml', '.omnibox-ai-install', 'src/Service.Host.exe', 'panel-service.exe')
 try { $transaction = New-AiInstallTransaction -Directory $destination -Files $snapshotFiles -ServiceProfiles $serviceProfiles -ExternalFiles $externalFiles -PanelWasRunning $panelWasRunning -Version $version }
 catch { if ($panelWasRunning) { try { Start-Service 'omnibox-ai' -ErrorAction Stop } catch { } }; throw "Резервная копия не создана; установка не начата: $($_.Exception.Message)" }
 $global:OmniBoxInstallResult.snapshot = $transaction.snapshot
