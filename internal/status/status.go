@@ -93,6 +93,8 @@ type Dashboard struct {
 	Operations any `json:"operations"`
 	// LastUpdate is the result of the last update started from the panel.
 	LastUpdate any `json:"last_update,omitempty"`
+	// Network lists the adapters with their MAC addresses, for Wake-on-LAN.
+	Network any `json:"network,omitempty"`
 }
 
 // Build computes the dashboard; engines are checked in parallel with short probes.

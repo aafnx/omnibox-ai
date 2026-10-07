@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"slices"
 	"sort"
 	"sync"
@@ -62,6 +63,9 @@ const keepFinished = 20
 // ErrBusy means an operation of the same kind still runs.
 var ErrBusy = errors.New("Операция этого типа ещё выполняется. Дождитесь результата.")
 
+// SleepDelay is the pause before the computer sleeps, so the answer still reaches the panel.
+var SleepDelay = 3 * time.Second
+
 // ErrGenerating means the engines are busy with a generation.
 var ErrGenerating = errors.New("Модель занята генерацией или другой операцией. Дождитесь завершения либо остановите сервер.")
 
@@ -99,10 +103,15 @@ func (o *Operations) Start(r Request) (string, error) {
 		if op.category == cat && op.State == "running" {
 			return "", ErrBusy
 		}
+		// Sleep would cut a download, an engine install or an update in the middle.
+		if r.Action == "sleep" && op.State == "running" {
+			return "", fmt.Errorf("Сначала дождитесь завершения операции «%s».", op.Action)
+		}
 	}
 	// engine-update is not guarded: its download may take minutes, and it takes the gate itself
 	// right before a running engine restarts.
-	guarded := o.Gate != nil && slices.Contains([]string{"start", "stop", "restart", "stopall", "apply", "restore", "load", "unload", "engine-remove", "preset-apply"}, r.Action)
+	// Sleep is guarded too: a running generation refuses it instead of being cut off.
+	guarded := o.Gate != nil && slices.Contains([]string{"start", "stop", "restart", "stopall", "apply", "restore", "load", "unload", "engine-remove", "preset-apply", "sleep"}, r.Action)
 	if guarded && !o.Gate.BeginControl(slices.Contains([]string{"stop", "stopall", "unload", "engine-remove"}, r.Action)) {
 		return "", ErrGenerating
 	}

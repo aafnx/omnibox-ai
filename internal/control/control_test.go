@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -350,6 +351,43 @@ func TestSelfUpdateTokenStaysInMemory(t *testing.T) {
 	}
 	if b, _ := json.Marshal(ops.List()); got != "ghp_secret@0.20.0" || strings.Contains(string(b), "ghp_secret") || !strings.Contains(string(b), id) {
 		t.Fatalf("%q %s", got, b)
+	}
+}
+
+func TestSleepWaitsForGenerationsAndOperations(t *testing.T) {
+	old := SleepDelay
+	SleepDelay = time.Millisecond
+	defer func() { SleepDelay = old }()
+	slept := make(chan struct{}, 1)
+	release := make(chan struct{})
+	c := &Controller{Sleep: func() error { slept <- struct{}{}; return nil },
+		Test: func(context.Context) (string, error) { <-release; return "ok", nil }}
+	g := &gate{busy: true}
+	ops := &Operations{Run: c.Do, Gate: g}
+	if _, err := ops.Start(Request{Action: "sleep"}); !errors.Is(err, ErrGenerating) {
+		t.Fatalf("sleep during a generation: %v", err)
+	}
+	g.busy = false
+	if _, err := ops.Start(Request{Action: "model-test"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ops.Start(Request{Action: "sleep"}); err == nil || !strings.Contains(err.Error(), "model-test") {
+		t.Fatalf("sleep during another operation: %v", err)
+	}
+	close(release)
+	for range 200 {
+		if ops.List()[0].State != "running" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if _, err := ops.Start(Request{Action: "sleep"}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-slept:
+	case <-time.After(2 * time.Second):
+		t.Fatal("the computer did not go to sleep")
 	}
 }
 

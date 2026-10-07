@@ -4,7 +4,7 @@
 
 > Первая версия на Go: один файл `omnibox` для Windows и Linux. Последняя PowerShell-версия — ветка `powershell-0.17.1`.
 
-Документация: [установка и обновление](docs/install.md), [подключение клиентов и NAS](docs/api.md), [команда `ai`](docs/ai.md).
+Документация: [установка и обновление](docs/install.md), [подключение клиентов и NAS](docs/api.md), [команда `ai`](docs/ai.md), [сон и пробуждение](docs/sleep.md).
 
 ## Что делает
 

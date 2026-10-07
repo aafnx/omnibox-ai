@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/engine"
@@ -32,7 +33,7 @@ type Request struct {
 }
 
 // Actions the panel may request.
-var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart", "self-update", "preset-save", "preset-delete", "preset-apply", "model-test"}
+var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart", "self-update", "preset-save", "preset-delete", "preset-apply", "model-test", "sleep"}
 
 // ParseRequest validates a panel operation body; unknown fields are refused.
 func ParseRequest(body map[string]any) (Request, error) {
@@ -120,6 +121,19 @@ func scalar(v any) (string, error) {
 
 // Do runs a panel operation and returns the message shown to the owner.
 func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
+	if r.Action == "sleep" {
+		if c.Sleep == nil {
+			return "", errors.New("Сон недоступен в этом режиме.")
+		}
+		// A moment later, so the panel gets the answer before the network goes down.
+		go func() {
+			time.Sleep(SleepDelay)
+			if err := c.Sleep(); err != nil {
+				c.say("Не удалось перевести ПК в сон: %v", err)
+			}
+		}()
+		return "ПК засыпает. Разбудить его можно кнопкой в Home Assistant (Wake-on-LAN) или кнопкой питания.", nil
+	}
 	// The model test goes through the /v1 queue like a client request.
 	if r.Action == "model-test" {
 		if c.Test == nil {

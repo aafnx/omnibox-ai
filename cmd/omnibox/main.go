@@ -179,6 +179,7 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 	updates := &panelUpdate{Services: services, Data: *data, Program: programDirOf(exe), Current: omnibox.Version,
 		NewUpdater: func(token string) *selfupdate.Updater { return &selfupdate.Updater{Token: token} }}
 	controller.SelfUpdate = updates.Start
+	controller.Sleep = platform.Sleep
 	controller.Test = func(ctx context.Context) (string, error) {
 		r, err := api.Test(ctx)
 		if err != nil {
@@ -198,6 +199,7 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 			if r := lastUpdate(*data); r != nil {
 				d.LastUpdate = r
 			}
+			d.Network = platform.Adapters()
 			return d
 		},
 		Action: func(body map[string]any) (any, error) {
