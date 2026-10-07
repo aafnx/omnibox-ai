@@ -1,3 +1,0 @@
-function Search-AiModelCatalog {param([string]$Query) Start-Sleep -Milliseconds 250;@{models=@(@{id='fixture/model';name='fixture/model';url='https://huggingface.co/fixture/model';downloads=1;gated=$false});query=$Query}}
-function Get-AiCatalogFiles {param([string]$Repository) @{repository=$Repository;url="https://huggingface.co/$Repository";files=@(@{name='model-Q4_K_M.gguf';bytes=1000;sha256='';url="https://huggingface.co/$Repository/resolve/main/model-Q4_K_M.gguf";filename='fixture-model.gguf';split=$false;prism_only=$false})}}
-Export-ModuleMember -Function Search-AiModelCatalog,Get-AiCatalogFiles

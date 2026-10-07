@@ -1,18 +1,11 @@
+# Local data of a test run or a development install
 config.json
-panel.json
-gateway.json
-storage.json
 logs/
-*.ai-previous
-*.ai-state.json
-.omnibox-ai-install
-backups/
+run/
 *.log
-*.zip
 *.gguf
+# Build output
+/omnibox
 *.exe
-*.dll
+*.zip
 .test-output/
-__pycache__/
-
-updates/
