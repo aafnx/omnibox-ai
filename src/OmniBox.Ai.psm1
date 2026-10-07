@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'File.Read.psm1')
 
 $script:AiVersion = (Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'VERSION') -Raw).Trim()
 
@@ -7,7 +8,7 @@ function Read-AiConfig {
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
         throw "Нет конфигурации: $Path. Запусти install.ps1 или создай config.json из config.example.json."
     }
-    $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable
+    $config = Read-AiSharedText $Path | ConvertFrom-Json -AsHashtable
     if ($config.schema_version -ne 1) { throw 'Неподдерживаемая schema_version; ожидается 1.' }
     if ($config.backends -isnot [System.Collections.IDictionary] -or $config.backends.Count -eq 0) {
         throw 'backends должен содержать хотя бы один сервер.'
@@ -90,12 +91,13 @@ function Read-AiServiceXml {
     $settings = [Xml.XmlReaderSettings]::new()
     $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
     $settings.XmlResolver = $null
-    $reader = [Xml.XmlReader]::Create($path, $settings)
+    $source = [IO.StringReader]::new((Read-AiSharedText $path))
+    $reader = [Xml.XmlReader]::Create($source, $settings)
     try {
         $xml = [Xml.XmlDocument]::new()
         $xml.PreserveWhitespace = $true
         $xml.Load($reader)
-    } finally { $reader.Dispose() }
+    } finally { $reader.Dispose(); $source.Dispose() }
     $ids = @($xml.SelectNodes('/service/id'))
     if ($ids.Count -ne 1 -or $ids[0].InnerText -cne $Backend.service) {
         throw "XML не принадлежит службе '$($Backend.service)'; изменения отменены."
@@ -225,7 +227,7 @@ function Read-AiRecoveryState {
     $previousExists = [IO.File]::Exists("$path.ai-previous")
     if (-not $stateExists -and -not $previousExists) { return $null }
     if (-not $stateExists -or -not $previousExists) { throw 'История отката неполная. Проверь файлы .ai-state.json и .ai-previous рядом с XML.' }
-    $state = Get-Content -LiteralPath "$path.ai-state.json" -Raw | ConvertFrom-Json -AsHashtable
+    $state = Read-AiSharedText "$path.ai-state.json" | ConvertFrom-Json -AsHashtable
     if ($state.schema_version -ne 1 -or $state.pending -isnot [bool] -or
         $state.current_sha256 -notmatch '^[a-f0-9]{64}$' -or $state.previous_sha256 -notmatch '^[a-f0-9]{64}$') {
         throw 'Некорректная история отката; XML не изменён.'

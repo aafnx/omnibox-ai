@@ -832,6 +832,44 @@ try {
         Assert-True (-not (Test-Path (Join-Path $dir 'bad-model.gguf')))
         Assert-Equal @(Get-ChildItem -LiteralPath $dir -Filter '*.part').Count 0
     }
+    Test 'concurrent production config and XML readers allow atomic replacement' {
+        $f = New-WebModelFixture; $m = New-TestModule
+        $state = @{ ready = [Threading.ManualResetEventSlim]::new($false); stop = [Threading.ManualResetEventSlim]::new($false) }
+        $job = Start-ThreadJob -ArgumentList $modulePath, $f.path, $state -ScriptBlock {
+            param($ModulePath, $ConfigPath, $State)
+            $ErrorActionPreference = 'Stop'
+            $engine = Import-Module $ModulePath -PassThru
+            & $engine {
+                param($ConfigPath, $State)
+                $count = 0
+                while (-not $State.stop.IsSet) {
+                    $config = Read-AiConfig $ConfigPath
+                    $null = Read-AiServiceXml $config.backends.bonsai
+                    $count++
+                    $State.ready.Set()
+                }
+                return $count
+            } $ConfigPath $State
+        }
+        try {
+            Assert-True ($state.ready.Wait(10000)) 'Reader did not start'
+            $configBytes = [IO.File]::ReadAllBytes($f.path)
+            $xmlBytes = [IO.File]::ReadAllBytes($f.bonsai)
+            for ($i = 0; $i -lt 200; $i++) {
+                & $m { param($Path, $Bytes) Write-AiAtomicBytes $Path $Bytes } $f.path $configBytes
+                & $m { param($Path, $Bytes) Write-AiAtomicBytes $Path $Bytes } $f.bonsai $xmlBytes
+            }
+            $state.stop.Set()
+            $count = $job | Wait-Job | Receive-Job -ErrorAction Stop
+            Assert-True ($count -gt 0)
+        } finally {
+            $state.stop.Set()
+            $job | Wait-Job | Out-Null
+            Remove-Job $job -Force
+            $state.ready.Dispose(); $state.stop.Dispose()
+        }
+    }
+
     Test 'production dashboard and telemetry work in a fresh thread without LASTEXITCODE' {
         $f = New-WebModelFixture
         $job = Start-ThreadJob -ArgumentList $modulePath, $f.path -ScriptBlock {
@@ -1074,9 +1112,9 @@ try {
         $m=New-TestModule;$dir=Join-Path $testRoot 'panel-recovery'
         & $m {$script:services['omnibox-ai']=[pscustomobject]@{Status='Running';StartType='Automatic'}}
         $sessionPath = Join-Path $dir 'panel-sessions.dpapi'
-        $oldCredential = & $m {param($Root)(Read-AiPanelConfig (Join-Path $Root 'panel.json')).credential} $dir
-        $sessionKey = Get-AiPanelSessionKey (New-AiPanelNonce)
-        Write-AiPanelSessions $sessionPath $oldCredential @{ $sessionKey = @{ csrf = New-AiPanelNonce; expires = [DateTime]::UtcNow.AddHours(1); secure = $true } }
+        $oldCredential = (Get-Content (Join-Path $dir 'panel.json') -Raw | ConvertFrom-Json -AsHashtable).credential
+        $sessionKey = Get-AiPanelSessionKey ([Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant())
+        Write-AiPanelSessions $sessionPath $oldCredential @{ $sessionKey = @{ csrf = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant(); expires = [DateTime]::UtcNow.AddHours(1); secure = $true } }
         Assert-Equal (Read-AiPanelSessions $sessionPath $oldCredential).Count 1
         & $m {param($Root)Set-AiPanelPassword $Root 'new recovery password'} $dir
         $c=& $m {param($Root)Read-AiPanelConfig (Join-Path $Root 'panel.json')} $dir

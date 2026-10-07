@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'File.Read.psm1')
 
 $script:AiVersion = (Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'VERSION') -Raw).Trim()
 Import-Module (Join-Path $PSScriptRoot 'Panel.Requests.psm1')
@@ -86,7 +87,7 @@ function Start-OmniBoxPanel {
     [OmniBox.InferenceStats]::Configure((Join-Path $Root 'logs/requests'))
     # Panel start (normally Windows boot) is the only automatic cleanup point: no timers.
     [OmniBox.InferenceStats]::SetContentLogging((Read-AiStorageSettings $Root).request_log -eq 'content')
-    try { $null = Invoke-AiStorageCleanup $Root (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable) } catch { Write-Host "Очистка журналов пропущена: $($_.Exception.Message)" }
+    try { $null = Invoke-AiStorageCleanup $Root (Read-AiSharedText $configPath | ConvertFrom-Json -AsHashtable) } catch { Write-Host "Очистка журналов пропущена: $($_.Exception.Message)" }
     $listener = [Net.HttpListener]::new()
     foreach ($hostName in $panel.allowed_hosts) { $listener.Prefixes.Add("http://${hostName}:$($panel.port)/") }
     if ($gateway.enabled -and $gatewayPort -ne $panel.port) { foreach ($hostName in $apiHosts) { $listener.Prefixes.Add("http://${hostName}:$gatewayPort/") } }
@@ -99,7 +100,7 @@ function Start-OmniBoxPanel {
     $attempts = @{}; $operations = @{}; $catalog = @{}; $releaseJobs = @{}
     # Disk usage, drives and model sizes: computed only when the owner opens the view.
     $storageView = {
-        $usage = Get-AiStorageUsage $Root (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable)
+        $usage = Get-AiStorageUsage $Root (Read-AiSharedText $configPath | ConvertFrom-Json -AsHashtable)
         $disk = Get-AiDiskOverview $configPath
         $usage.drives = @($disk.drives); $usage.models = @($disk.models)
         $usage
@@ -213,7 +214,7 @@ function Start-OmniBoxPanel {
                         $body = Read-AiHttpJson $request
                         $c = Read-AiGatewayConfig $gatewayPath
                         if (-not $c.enabled) { throw 'Сетевой API ещё не установлен. Повтори установщик с включённым OpenAI API.' }
-                        $backends = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
+                        $backends = Read-AiSharedText $configPath | ConvertFrom-Json -AsHashtable
                         $changed = Update-AiGatewaySettings $c $body @($backends.backends.Keys)
                         Write-AiGatewayConfig $gatewayPath $changed.config
                         [OmniBox.InferenceStats]::InvalidateRuntime()
@@ -227,7 +228,7 @@ function Start-OmniBoxPanel {
                     'GET /api/storage' { Send-AiHttpResponse $context 200 (& $storageView) }
                     'POST /api/storage' {
                         $body = Read-AiHttpJson $request
-                        $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
+                        $config = Read-AiSharedText $configPath | ConvertFrom-Json -AsHashtable
                         $result = $null
                         if ($body.action -eq 'save') {
                             $changes = @{}; foreach ($key in @($body.Keys | Where-Object { $_ -ne 'action' })) { $changes[$key] = $body[$key] }
@@ -264,7 +265,7 @@ function Start-OmniBoxPanel {
                         Send-AiHttpResponse $context 200 @{state='done';releases=@($result.data)}
                     }
                     'GET /api/logs' {
-                        $config = Get-Content $configPath -Raw | ConvertFrom-Json -AsHashtable
+                        $config = Read-AiSharedText $configPath | ConvertFrom-Json -AsHashtable
                         $name = $request.QueryString['backend']
                         if ($name -and -not $config.backends.Contains($name)) { throw 'Неизвестный сервер.' }
                         $logs=@();$lines=@()

@@ -291,7 +291,7 @@ function Get-AiDashboard {
         }
         $selectedModel=if($b.type -eq 'prism' -and $null -ne $settings){$settings.alias}elseif($b.Contains('active_model')){$b.active_model}else{''}
         if($b.type -eq 'prism' -and $pending -and $status.Service -eq 'Running'){
-            try{$previous=[xml](Get-Content -LiteralPath ($b.service_config+'.ai-previous') -Raw);$selectedModel=Get-AiArgumentValue @(Get-AiPrismArguments $previous) @('--alias') ([IO.Path]::GetFileNameWithoutExtension($status.Model))}catch{}
+            try{$previous=[xml](Read-AiSharedText ($b.service_config+'.ai-previous'));$selectedModel=Get-AiArgumentValue @(Get-AiPrismArguments $previous) @('--alias') ([IO.Path]::GetFileNameWithoutExtension($status.Model))}catch{}
         }
         $residency=@{mode='unknown';ram_bytes=$null;vram_bytes=$null;gpu_layers=$null;total_layers=$null;cpu_moe_layers=$null}
         $idle=@{expires_at=$null;estimated=$false;busy=$false;state='stopped'}
@@ -309,7 +309,7 @@ function Get-AiDashboard {
             }elseif(-not $status.Sleeping){
                 $runtimePath=$b.service_config+'.runtime.json'
                 try{
-                    $runtime=Get-Content -LiteralPath $runtimePath -Raw|ConvertFrom-Json -AsHashtable
+                    $runtime=Read-AiSharedText $runtimePath|ConvertFrom-Json -AsHashtable
                     if($runtime.running){
                         if($settings.placement -eq 'cpu' -and -not $pending){$residency.mode='ram'}
                         if($null -ne $runtime.gpu_layers -and $null -ne $runtime.total_layers){$residency.gpu_layers=$runtime.gpu_layers;$residency.total_layers=$runtime.total_layers;$residency.mode=if($runtime.gpu_layers -eq 0){'ram'}elseif($runtime.gpu_layers -ge $runtime.total_layers){'vram'}else{'hybrid'}}
@@ -341,7 +341,7 @@ function Get-AiGatewayRuntime {
         $props=Invoke-AiProbe $b '/props'
         if($props.PSObject.Properties['default_generation_settings'] -and [int]$props.default_generation_settings.n_ctx -gt 0){$context=[int]$props.default_generation_settings.n_ctx}
         $history=Read-AiRecoveryState $b
-        if($null -ne $history -and $history.pending){$previous=[xml](Get-Content -LiteralPath ($b.service_config+'.ai-previous') -Raw);$model=Get-AiArgumentValue @(Get-AiPrismArguments $previous) @('--alias') ([IO.Path]::GetFileNameWithoutExtension($props.model_path))}
+        if($null -ne $history -and $history.pending){$previous=[xml](Read-AiSharedText ($b.service_config+'.ai-previous'));$model=Get-AiArgumentValue @(Get-AiPrismArguments $previous) @('--alias') ([IO.Path]::GetFileNameWithoutExtension($props.model_path))}
     }
     if($b.type -eq 'ollama'){
         $ps=Invoke-AiProbe $b '/api/ps';$loaded=@($ps.models)

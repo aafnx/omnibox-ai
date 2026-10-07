@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'File.Read.psm1')
 
 function New-AiApiKey {
     $key = 'obai-' + [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant()
@@ -14,7 +15,7 @@ function Test-AiClientBaseUrl {
 function Read-AiGatewayConfig {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return @{schema_version=1;enabled=$false;port=11435;base_url='';backend='bonsai';require_key=$false;key_hash=''} }
-    $c = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable
+    $c = Read-AiSharedText $Path | ConvertFrom-Json -AsHashtable
     if ($c.schema_version -ne 1 -or $c.enabled -isnot [bool] -or $c.require_key -isnot [bool] -or $c.port -isnot [long] -and $c.port -isnot [int] -or $c.port -lt 1024 -or $c.port -gt 65535 -or $c.backend -notmatch '^[a-zA-Z0-9_.-]+$') { throw 'Некорректная gateway.json.' }
     if (-not (Test-AiClientBaseUrl $c.base_url)) { throw 'OpenAI Base URL: HTTP/HTTPS-адрес с /v1, без пароля/параметров.' }
     if ($c.key_hash -isnot [string] -or $c.key_hash -and $c.key_hash -notmatch '^[a-f0-9]{64}$' -or $c.require_key -and -not $c.key_hash) { throw 'Некорректный hash API key.' }

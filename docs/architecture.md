@@ -12,6 +12,7 @@
 | `Panel.Server.psm1` | HTTP, сессии, CSRF, очередь операций через ThreadJob |
 | `Panel.Requests.psm1` | Проверки runtime и статус вне HTTP-потока, общий кеш по запросу, ограниченные ThreadJob |
 | `Panel.Engine.ps1` | Настройки движков, каталог моделей, загрузка/выгрузка и скачивание |
+| `File.Read.psm1` | Чтение снимка файла с FileShare.Delete: статус не мешает атомарной замене настроек/XML |
 | `Panel.Sessions.psm1` | DPAPI LocalMachine, хэши cookie, сохранение входа и абсолютный срок истечения |
 | `Panel.Security.psm1` | PBKDF2, случайные session/CSRF tokens, валидация сетевой конфигурации |
 | `Panel.Install.psm1` | Мастер сети/пароля, Нативная служба панели, ACL, Firewall |
