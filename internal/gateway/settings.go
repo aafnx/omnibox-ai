@@ -18,12 +18,16 @@ type View struct {
 	HasKey              bool   `json:"has_key"`
 	QueueDepth          int    `json:"queue_depth"`
 	QueueTimeoutSeconds int    `json:"queue_timeout_seconds"`
+	// The NAS reverse proxy: its HTTPS address and the addresses it connects from.
+	PublicOrigin   string   `json:"public_origin"`
+	TrustedProxies []string `json:"trusted_proxies"`
 }
 
 // SettingsView returns the API settings without secrets.
 func SettingsView(c *config.Config) View {
 	return View{Enabled: c.API.Enabled, PublicURL: c.API.PublicURL, RequireKey: c.API.RequireKey, HasKey: c.API.KeyHash != "",
-		QueueDepth: c.API.QueueDepth, QueueTimeoutSeconds: c.API.QueueTimeout()}
+		QueueDepth: c.API.QueueDepth, QueueTimeoutSeconds: c.API.QueueTimeout(),
+		PublicOrigin: c.Panel.PublicOrigin, TrustedProxies: append([]string{}, c.Panel.TrustedProxies...)}
 }
 
 // NewKey returns a new API key and its SHA256 hash; only the hash is stored.
@@ -35,7 +39,7 @@ func NewKey() (key, hash string) {
 	return key, hex.EncodeToString(sum[:])
 }
 
-// UpdateSettings applies the panel form: "save" changes the address, key mode and queue;
+// UpdateSettings applies the panel form: "save" changes the address, key mode, queue and NAS;
 // "generate" replaces the key, which revokes the previous one at once. It returns the new key
 // only for "generate", to be shown once.
 func UpdateSettings(store *config.Store, body map[string]any) (string, error) {
@@ -75,6 +79,30 @@ func UpdateSettings(store *config.Store, body map[string]any) (string, error) {
 					return errors.New("Адрес API для клиентов: HTTP/HTTPS с /v1, без пароля и параметров.")
 				}
 				c.API.PublicURL = s
+			case "public_origin":
+				s, ok := value.(string)
+				if s = strings.TrimSpace(s); !ok {
+					return errors.New("public_origin: строка.")
+				}
+				if s != "" && !strings.Contains(s, "://") {
+					s = "https://" + s
+				}
+				c.Panel.PublicOrigin = s
+			case "trusted_proxies":
+				list, ok := value.([]any)
+				if !ok {
+					return errors.New("trusted_proxies: список IP-адресов.")
+				}
+				c.Panel.TrustedProxies = nil
+				for _, item := range list {
+					ip, ok := item.(string)
+					if !ok {
+						return errors.New("trusted_proxies: список IP-адресов.")
+					}
+					if ip = strings.TrimSpace(ip); ip != "" {
+						c.Panel.TrustedProxies = append(c.Panel.TrustedProxies, ip)
+					}
+				}
 			case "queue_depth", "queue_timeout_seconds":
 				n, ok := value.(float64)
 				if !ok || n != float64(int(n)) {

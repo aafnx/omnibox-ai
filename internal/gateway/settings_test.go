@@ -73,3 +73,30 @@ func TestSaveValidatesSettings(t *testing.T) {
 		t.Fatal("a refused change was applied")
 	}
 }
+
+func TestSaveChangesTheNASProxy(t *testing.T) {
+	store := settingsStore(t)
+	if _, err := UpdateSettings(store, map[string]any{"action": "save", "public_origin": "LLM.fnx.red", "trusted_proxies": []any{" 192.168.1.10 "}}); err != nil {
+		t.Fatal(err)
+	}
+	v := SettingsView(store.Get())
+	if v.PublicOrigin != "https://llm.fnx.red" || len(v.TrustedProxies) != 1 || v.TrustedProxies[0] != "192.168.1.10" {
+		t.Fatalf("%+v", v)
+	}
+	for _, bad := range []map[string]any{
+		{"action": "save", "public_origin": "", "trusted_proxies": []any{"192.168.1.10"}},
+		{"action": "save", "trusted_proxies": []any{"192.168.1.0/24"}},
+		{"action": "save", "public_origin": "http://llm.fnx.red"},
+		{"action": "save", "trusted_proxies": "192.168.1.10"},
+	} {
+		if _, err := UpdateSettings(store, bad); err == nil {
+			t.Fatalf("%v accepted", bad)
+		}
+	}
+	if _, err := UpdateSettings(store, map[string]any{"action": "save", "public_origin": "", "trusted_proxies": []any{}}); err != nil {
+		t.Fatal(err)
+	}
+	if c := store.Get(); c.Panel.PublicOrigin != "" || len(c.Panel.TrustedProxies) != 0 {
+		t.Fatalf("NAS not removed: %+v", c.Panel)
+	}
+}

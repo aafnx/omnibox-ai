@@ -195,6 +195,7 @@ function renderGatewayForm() {
   if(!snapshot||!gateway)return;
   $('api-queue-depth').value=gateway.queue_depth;$('api-queue-timeout').value=gateway.queue_timeout_seconds;
   $('api-base-url').value=gateway.base_url;$('api-require-key').checked=gateway.require_key;
+  $('api-public-origin').value=gateway.public_origin||'';$('api-trusted-proxies').value=(gateway.trusted_proxies||[]).join(', ');
   $('api-state').textContent=!gateway.enabled?'Сетевой API не включён. Повторите установщик и выберите OpenAI API.':`API доступен на порту панели ${panelPort} по пути /v1 и обслуживает запущенный движок. ${gateway.require_key?'Используйте сохранённый ключ или сгенерируйте новый.':'Авторизация отключена: ключ не нужен.'}`;
   $('save-api').disabled=!gateway.enabled;$('generate-api-key').disabled=!gateway.enabled;
 }
@@ -351,7 +352,7 @@ $('request-content-close').addEventListener('click',()=>{$('request-content-box'
 $('storage-clean').addEventListener('click',async()=>{try{const u=await api('/api/storage',{action:'cleanup'});renderStorage(u);notice(`Удалено файлов: ${u.cleanup.removed}, освобождено ${formatMb(u.cleanup.freed_bytes)}.`);}catch(error){notice(error.message,true);}});
 $('mode-basic').addEventListener('click',()=>setSettingsMode('basic'));$('mode-pro').addEventListener('click',()=>setSettingsMode('pro'));
 $('api-settings-form').addEventListener('input',()=>gatewayDirty=true);
-$('api-settings-form').addEventListener('submit',e=>{e.preventDefault();saveGateway({action:'save',base_url:$('api-base-url').value.trim(),require_key:$('api-require-key').checked,queue_depth:Number($('api-queue-depth').value),queue_timeout_seconds:Number($('api-queue-timeout').value)}).catch(e=>notice(e.message,true));});
+$('api-settings-form').addEventListener('submit',e=>{e.preventDefault();saveGateway({action:'save',base_url:$('api-base-url').value.trim(),require_key:$('api-require-key').checked,queue_depth:Number($('api-queue-depth').value),queue_timeout_seconds:Number($('api-queue-timeout').value),public_origin:$('api-public-origin').value.trim(),trusted_proxies:$('api-trusted-proxies').value.split(',').map(s=>s.trim()).filter(Boolean)}).catch(e=>notice(e.message,true));});
 $('generate-api-key').addEventListener('click',()=>saveGateway({action:'generate'}).catch(e=>notice(e.message,true)));
 $('catalog-form').addEventListener('submit',e=>{e.preventDefault();searchCatalog($('catalog-query').value.trim());});
 document.querySelectorAll('[data-search]').forEach(button=>button.addEventListener('click',()=>{$('catalog-query').value=button.dataset.search;searchCatalog(button.dataset.search);}));
