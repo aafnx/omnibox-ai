@@ -312,3 +312,35 @@ func TestActionsNeedSessionAndCsrfAndPassStructuredFields(t *testing.T) {
 		t.Fatalf("non-object body: %d", w.Code)
 	}
 }
+
+func TestActivityContentAndApiHandler(t *testing.T) {
+	var apiHits int
+	s, _ := New(Options{
+		Config:   func() *config.Config { return testConfig(t, nil) },
+		Activity: func() any { return map[string]any{"requests": []any{}} },
+		RequestContent: func(id string) (json.RawMessage, bool) {
+			return json.RawMessage(`{"id":"` + id + `"}`), id == "0123456789abcdef0123456789abcdef"
+		},
+		API: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { apiHits++; w.WriteHeader(204) }),
+	})
+	cookie, _ := login(t, s, nil)
+	auth := func(r *http.Request) { r.AddCookie(cookie) }
+	if w := call(s, "GET", "/api/activity", "", auth); w.Code != 200 || !strings.Contains(w.Body.String(), "requests") {
+		t.Fatalf("activity: %d", w.Code)
+	}
+	if w := call(s, "GET", "/api/request-content?id=0123456789abcdef0123456789abcdef", "", auth); w.Code != 200 {
+		t.Fatalf("content: %d", w.Code)
+	}
+	if w := call(s, "GET", "/api/request-content?id=other", "", auth); w.Code != 400 {
+		t.Fatalf("missing content: %d", w.Code)
+	}
+	if w := call(s, "GET", "/api/activity", "", nil); w.Code != 401 {
+		t.Fatalf("activity without login: %d", w.Code)
+	}
+	if w := call(s, "GET", "/v1/models", "", func(r *http.Request) { r.Host = "llm.fnx.red" }); w.Code != 204 || apiHits != 1 {
+		t.Fatalf("/v1 handler: %d", w.Code)
+	}
+	if w := call(s, "GET", "/v1/models", "", func(r *http.Request) { r.Host = "evil.example" }); w.Code != 403 || apiHits != 1 {
+		t.Fatalf("/v1 on a foreign host: %d", w.Code)
+	}
+}

@@ -99,6 +99,18 @@ type API struct {
 	RequireKey bool   `json:"require_key"`
 	KeyHash    string `json:"key_hash,omitempty"` // SHA256 hex of the key; never the key
 	Engine     string `json:"engine"`
+	// QueueDepth is how many requests wait for the running generation; 0 answers 409 at once.
+	QueueDepth int `json:"queue_depth"`
+	// QueueTimeoutSeconds bounds the wait in the queue; 0 means the default of 60 s.
+	QueueTimeoutSeconds int `json:"queue_timeout_seconds,omitempty"`
+}
+
+// QueueTimeout is the queue wait in seconds.
+func (a API) QueueTimeout() int {
+	if a.QueueTimeoutSeconds == 0 {
+		return 60
+	}
+	return a.QueueTimeoutSeconds
 }
 
 // Storage controls log retention and the request journal.
@@ -113,7 +125,7 @@ func Default() *Config {
 	return &Config{
 		SchemaVersion: 1,
 		Panel:         Panel{Port: DefaultPanelPort},
-		API:           API{Engine: PrismML},
+		API:           API{Engine: PrismML, QueueDepth: 4},
 		Storage:       Storage{LogRetentionDays: 30, LogWarnMB: 200, RequestLog: "metadata"},
 		Engines:       map[string]*Engine{},
 	}
@@ -268,6 +280,12 @@ func (a *API) validate(c *Config) error {
 	}
 	if (a.KeyHash != "" && !sha256Hex.MatchString(a.KeyHash)) || (a.RequireKey && a.KeyHash == "") {
 		return errors.New("Некорректный hash API key.")
+	}
+	if a.QueueDepth < 0 || a.QueueDepth > 16 {
+		return errors.New("Очередь запросов: от 0 до 16.")
+	}
+	if a.QueueTimeoutSeconds < 0 || a.QueueTimeoutSeconds > 600 {
+		return errors.New("Ожидание в очереди: от 1 до 600 секунд.")
 	}
 	return nil
 }

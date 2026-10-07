@@ -20,6 +20,8 @@ import (
 	omnibox "github.com/aafnx/omnibox-ai"
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/control"
+	"github.com/aafnx/omnibox-ai/internal/engine"
+	"github.com/aafnx/omnibox-ai/internal/gateway"
 	"github.com/aafnx/omnibox-ai/internal/host"
 	"github.com/aafnx/omnibox-ai/internal/panel"
 	"github.com/aafnx/omnibox-ai/internal/platform"
@@ -98,10 +100,11 @@ func serve(args []string, stdout io.Writer) error {
 	cfg := store.Get()
 	current := store.Get
 	services := platform.NewServices()
-	builder := &status.Builder{Config: current, Services: services, DataDir: *data}
+	api := gateway.New(&gateway.Gateway{Config: current, Services: services, Dir: filepath.Join(*data, "logs", "requests")})
+	builder := &status.Builder{Config: current, Services: services, DataDir: *data, Activity: api}
 	sampler := &telemetry.Sampler{}
 	controller := &control.Controller{Store: store, Services: services}
-	operations := &control.Operations{Run: controller.Do}
+	operations := &control.Operations{Run: controller.Do, Gate: api}
 	handler, err := panel.New(panel.Options{
 		Config: current,
 		Status: func(ctx context.Context, gpu bool) any {
@@ -121,9 +124,13 @@ func serve(args []string, stdout io.Writer) error {
 			return map[string]any{"id": id}, nil
 		},
 		Telemetry: func(ctx context.Context, once bool) any {
+			observeSlots(ctx, current(), api)
 			return telemetryView(ctx, current(), services, sampler, once)
 		},
-		Logs: func(engine string) any { return status.Logs(*data, current(), engine) },
+		API:            api,
+		Activity:       func() any { return api.Snapshot() },
+		RequestContent: api.FindContent,
+		Logs:           func(engine string) any { return status.Logs(*data, current(), engine) },
 	})
 	if err != nil {
 		return err
@@ -161,4 +168,29 @@ func telemetryView(ctx context.Context, cfg *config.Config, services platform.Se
 		return map[string]any{"enabled": false, "timestamp": time.Now().UTC(), "reason": "Серверы остановлены; опрос ресурсов выключен."}
 	}
 	return map[string]any{"enabled": true, "sample": sampler.Get(ctx), "collecting": false}
+}
+
+// observeSlots reads llama-server's decoding progress while the panel watches a generation;
+// nothing is asked when no request runs.
+func observeSlots(ctx context.Context, cfg *config.Config, api *gateway.Gateway) {
+	e, ok := cfg.Engines[config.PrismML]
+	id := api.ActiveID(config.PrismML)
+	if !ok || id == "" {
+		return
+	}
+	var slots []struct {
+		IsProcessing bool `json:"is_processing"`
+		NCtx         int  `json:"n_ctx"`
+		NextToken    *struct {
+			NDecoded int64 `json:"n_decoded"`
+		} `json:"next_token"`
+	}
+	if engine.NewClient(e).Get(ctx, "/slots", &slots) != nil {
+		return
+	}
+	for _, slot := range slots {
+		if slot.IsProcessing && slot.NextToken != nil {
+			api.ObserveSlot(config.PrismML, id, slot.NextToken.NDecoded, slot.NCtx)
+		}
+	}
 }
