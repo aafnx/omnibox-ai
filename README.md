@@ -13,6 +13,25 @@
 
 Принципы: никакого фонового опроса в простое; запрос к API не запускает сервер и не загружает модель; после «Остановить» сервер остаётся остановленным; пароль, ключ API и настройки не теряются при обновлении.
 
+## Установка и обновление
+
+Одна команда и для новой установки, и для обновления; работает, когда в репозитории есть выпуск Go-версии. Мастер задаёт несколько вопросов — Enter принимает ответ по умолчанию; пароль панели и API key показываются один раз. Повторный запуск обновляет программу, сохраняя все настройки.
+
+Windows (PowerShell от имени администратора; подойдёт и встроенный Windows PowerShell):
+
+```powershell
+gh release download --repo aafnx/omnibox-ai --pattern install.ps1 --dir $env:TEMP --clobber
+powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\install.ps1
+```
+
+Linux:
+
+```sh
+gh release download --repo aafnx/omnibox-ai --pattern install.sh --dir /tmp --clobber && sudo sh /tmp/install.sh
+```
+
+Без `gh` скрипт спросит GitHub token с правом чтения репозитория; токен держится только в памяти. Скрипт проверяет SHA256 выпуска до запуска. Выпуск собирает workflow **Release** (вкладка Actions) из `main`: архивы для Windows и Linux, `SHA256SUMS` и оба скрипта.
+
 ## Устройство
 
 | Путь | Назначение |

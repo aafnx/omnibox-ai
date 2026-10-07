@@ -30,6 +30,13 @@ jobs:
           go vet ./...
           go test ./...
           CGO_ENABLED=0 go build -o "$RUNNER_TEMP/omnibox.exe" ./cmd/omnibox
+      - name: install.ps1 parses in Windows PowerShell 5.1
+        if: ${{ !cancelled() }}
+        shell: powershell
+        run: |
+          $errors = $null
+          [System.Management.Automation.Language.Parser]::ParseFile("$pwd\install.ps1", [ref]$null, [ref]$errors) | Out-Null
+          if ($errors.Count) { $errors | ForEach-Object { Write-Host $_ }; exit 1 }
 
   linux:
     name: Linux (Go tests, both builds, web UI)
@@ -53,3 +60,6 @@ jobs:
       - name: Web UI tests
         if: ${{ !cancelled() }}
         run: node tests/web_test.cjs
+      - name: install.sh syntax
+        if: ${{ !cancelled() }}
+        run: sh -n install.sh
