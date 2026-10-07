@@ -12,12 +12,15 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"syscall"
 	"time"
 
 	omnibox "github.com/aafnx/omnibox-ai"
 	"github.com/aafnx/omnibox-ai/internal/config"
+	"github.com/aafnx/omnibox-ai/internal/control"
+	"github.com/aafnx/omnibox-ai/internal/host"
 	"github.com/aafnx/omnibox-ai/internal/panel"
 	"github.com/aafnx/omnibox-ai/internal/platform"
 	"github.com/aafnx/omnibox-ai/internal/status"
@@ -43,6 +46,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 			return 1
 		}
 		return 0
+	case "engine":
+		if err := runEngine(args[1:]); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
 	case "help", "--help", "-h":
 		usage(stdout)
 		return 0
@@ -55,7 +64,25 @@ func run(args []string, stdout, stderr io.Writer) int {
 func usage(w io.Writer) {
 	fmt.Fprintln(w, `OmniBox AI
   omnibox version
-  omnibox serve [--data <каталог данных>]`)
+  omnibox serve [--data <каталог данных>]
+  omnibox engine <prismml|ollama> [--data <каталог данных>]`)
+}
+
+// runEngine is the engine service: it runs one engine with its process tree until stopped.
+func runEngine(args []string) error {
+	if len(args) == 0 || !slices.Contains(config.EngineNames, args[0]) {
+		return errors.New("Укажите движок: prismml или ollama.")
+	}
+	name := args[0]
+	fs := flag.NewFlagSet("engine", flag.ContinueOnError)
+	data := fs.String("data", platform.DataDir(), "каталог данных")
+	if err := fs.Parse(args[1:]); err != nil {
+		return err
+	}
+	return host.Serve(config.ServiceName(name), func(ctx context.Context, running func()) error {
+		h := &host.Host{DataDir: *data, Engine: name, Running: running}
+		return h.Run(ctx)
+	})
 }
 
 func serve(args []string, stdout io.Writer) error {
@@ -64,17 +91,35 @@ func serve(args []string, stdout io.Writer) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	cfg, err := config.Load(filepath.Join(*data, "config.json"))
+	store, err := config.Open(filepath.Join(*data, "config.json"))
 	if err != nil {
 		return err
 	}
-	current := func() *config.Config { return cfg }
+	cfg := store.Get()
+	current := store.Get
 	services := platform.NewServices()
 	builder := &status.Builder{Config: current, Services: services, DataDir: *data}
 	sampler := &telemetry.Sampler{}
+	controller := &control.Controller{Store: store, Services: services}
+	operations := &control.Operations{Run: controller.Do}
 	handler, err := panel.New(panel.Options{
 		Config: current,
-		Status: func(ctx context.Context, gpu bool) any { return builder.Build(ctx, gpu) },
+		Status: func(ctx context.Context, gpu bool) any {
+			d := builder.Build(ctx, gpu)
+			d.Operations = operations.List()
+			return d
+		},
+		Action: func(body map[string]any) (any, error) {
+			r, err := control.ParseRequest(body)
+			if err != nil {
+				return nil, err
+			}
+			id, err := operations.Start(r)
+			if err != nil {
+				return nil, err
+			}
+			return map[string]any{"id": id}, nil
+		},
 		Telemetry: func(ctx context.Context, once bool) any {
 			return telemetryView(ctx, current(), services, sampler, once)
 		},

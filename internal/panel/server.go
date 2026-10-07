@@ -41,6 +41,8 @@ type Options struct {
 	Telemetry func(ctx context.Context, once bool) any
 	// Logs returns the engines' recent log lines; engine "" means all.
 	Logs func(engine string) any
+	// Action starts a background engine operation from structured fields and returns its id.
+	Action func(body map[string]any) (any, error)
 }
 
 type session struct {
@@ -170,6 +172,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.json(w, http.StatusOK, map[string]any{"logs": s.opt.Logs(name)})
+	case route == "POST /api/actions" && s.opt.Action != nil:
+		body, err := readJSON(r)
+		if err == nil {
+			var result any
+			if result, err = s.opt.Action(body); err == nil {
+				s.json(w, http.StatusAccepted, result)
+				return
+			}
+		}
+		s.json(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 	case route == "POST /api/logout":
 		s.mu.Lock()
 		delete(s.sessions, key)

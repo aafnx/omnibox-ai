@@ -3,6 +3,7 @@ package panel
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -230,7 +231,7 @@ func TestRoutesNotPortedYetAndApiHost(t *testing.T) {
 	s := newServer(t, testConfig(t, nil))
 	cookie, csrf := login(t, s, nil)
 	auth := func(r *http.Request) { r.AddCookie(cookie); r.Header.Set("X-Omnibox-CSRF", csrf) }
-	if w := call(s, "POST", "/api/actions", `{"action":"stopall"}`, auth); w.Code != 501 {
+	if w := call(s, "POST", "/api/storage", `{"log_retention_days":30}`, auth); w.Code != 501 {
 		t.Fatalf("pending control route: %d", w.Code)
 	}
 	if w := call(s, "GET", "/api/unknown", "", auth); w.Code != 404 {
@@ -281,5 +282,33 @@ func TestStatusTelemetryAndLogsRoutes(t *testing.T) {
 	}
 	if w := call(s, "GET", "/api/status", "", nil); w.Code != 401 {
 		t.Fatalf("status without login: %d", w.Code)
+	}
+}
+
+func TestActionsNeedSessionAndCsrfAndPassStructuredFields(t *testing.T) {
+	var got map[string]any
+	s, _ := New(Options{
+		Config: func() *config.Config { return testConfig(t, nil) },
+		Action: func(body map[string]any) (any, error) {
+			if body["action"] == "exec" {
+				return nil, errors.New("Неизвестная операция панели.")
+			}
+			got = body
+			return map[string]any{"id": "op1"}, nil
+		},
+	})
+	cookie, csrf := login(t, s, nil)
+	if w := call(s, "POST", "/api/actions", `{"action":"stopall"}`, func(r *http.Request) { r.AddCookie(cookie) }); w.Code != 403 || got != nil {
+		t.Fatalf("action without CSRF: %d", w.Code)
+	}
+	auth := func(r *http.Request) { r.AddCookie(cookie); r.Header.Set("X-Omnibox-CSRF", csrf) }
+	if w := call(s, "POST", "/api/actions", `{"action":"start","backend":"prismml"}`, auth); w.Code != 202 || decode(t, w)["id"] != "op1" || got["backend"] != "prismml" {
+		t.Fatalf("action: %d %v", w.Code, got)
+	}
+	if w := call(s, "POST", "/api/actions", `{"action":"exec"}`, auth); w.Code != 400 || !strings.Contains(w.Body.String(), "Неизвестная операция") {
+		t.Fatalf("refused action: %d %s", w.Code, w.Body.String())
+	}
+	if w := call(s, "POST", "/api/actions", `[1]`, auth); w.Code != 400 {
+		t.Fatalf("non-object body: %d", w.Code)
 	}
 }
