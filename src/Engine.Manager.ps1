@@ -235,9 +235,17 @@ $script:AiGenerationWaitSeconds = 120
 function Enter-AiGenerationGuard {
     if (-not ('OmniBox.InferenceStats' -as [type])) { return $false }
     $watch = [Diagnostics.Stopwatch]::StartNew()
-    while (-not [OmniBox.InferenceStats]::BeginControl($false)) {
-        if ($watch.Elapsed.TotalSeconds -ge $script:AiGenerationWaitSeconds) { throw 'Модель занята генерацией или другой операцией. Новая версия скачана; повторите обновление после завершения.' }
+    while (-not [OmniBox.InferenceStats]::ReserveControl()) {
+        if ($watch.Elapsed.TotalSeconds -ge $script:AiGenerationWaitSeconds) { throw 'Выполняется другая операция управления. Новая версия скачана; повторите обновление после её завершения.' }
         Start-Sleep -Milliseconds 500
+    }
+    # New requests are refused from here on, so a steady stream cannot outlast the wait.
+    while ([OmniBox.InferenceStats]::IsGenerating) {
+        if ($watch.Elapsed.TotalSeconds -ge $script:AiGenerationWaitSeconds) {
+            [OmniBox.InferenceStats]::EndControl()
+            throw 'Модель занята генерацией. Новая версия скачана; повторите обновление после завершения запроса.'
+        }
+        Start-Sleep -Milliseconds 200
     }
     return $true
 }
@@ -554,13 +562,15 @@ function Get-AiDiskOverview {
     $places = @(@{ role = 'OmniBox AI'; path = Get-AiInstallRoot $ConfigPath }) + @($models | Where-Object { $_.path } | ForEach-Object { @{ role = "модели $($_.engine)"; path = $_.path } })
     $drives = @()
     $all = @(Get-AiFixedDrives)
+    # The deepest mount point containing the path is the drive that stores it.
+    $ownerOf = { param($Path) $full = [IO.Path]::GetFullPath($Path); @($all | Where-Object { $full.StartsWith($_.root, [StringComparison]::OrdinalIgnoreCase) } | Sort-Object { $_.root.Length } -Descending | Select-Object -First 1) }
+    # The download form shows the free space of the drive that holds the selected engine's models.
+    foreach ($model in $models) { $owner = @(if ($model.path) { & $ownerOf $model.path }); $model.drive = if ($owner.Count) { $owner[0].name } else { $null } }
     foreach ($drive in $all) {
         $root = $drive.root
         $roles = @()
         foreach ($place in $places) {
-            $full = [IO.Path]::GetFullPath($place.path)
-            # The deepest mount point containing the path is the drive that stores it.
-            $owner = @($all | Where-Object { $full.StartsWith($_.root, [StringComparison]::OrdinalIgnoreCase) } | Sort-Object { $_.root.Length } -Descending | Select-Object -First 1)
+            $owner = @(& $ownerOf $place.path)
             if ($owner.Count -and $owner[0].root -eq $root) { $roles += $place.role }
         }
         $used = $drive.total - $drive.free

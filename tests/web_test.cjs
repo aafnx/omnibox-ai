@@ -58,11 +58,16 @@ function run(code){return vm.runInContext(code,context);}
   assert.equal(JSON.stringify(engineCalls),JSON.stringify([{action:'engine-update',backend:'bonsai',version:'b1'},{action:'engine-install',engine:'ollama',version:''},{action:'engine-remove',backend:'bonsai'}]));
   context.__realAction=realAction;run('action=globalThis.__realAction');
   // Drives and model sizes: one row per drive, warning for a nearly full model drive.
-  run("renderDrives({models:[{engine:'PrismML',bytes:29*1024**3,models:3},{engine:'Ollama',bytes:45*1024**3,models:4}],drives:[{name:'C:',label:'System',total:1000*1024**3,free:400*1024**3,used:600*1024**3,roles:['OmniBox AI'],low:false},{name:'D:',label:'',total:2000*1024**3,free:15*1024**3,used:1985*1024**3,roles:['модели PrismML'],low:true}]})");
+  run("renderDrives({models:[{name:'bonsai',engine:'PrismML',bytes:29*1024**3,models:3,drive:'D:'},{name:'ollama',engine:'Ollama',bytes:45*1024**3,models:4,drive:'C:'}],drives:[{name:'C:',label:'System',total:1000*1024**3,free:400*1024**3,used:600*1024**3,roles:['OmniBox AI'],low:false},{name:'D:',label:'',total:2000*1024**3,free:15*1024**3,used:1985*1024**3,roles:['модели PrismML'],low:true}]})");
   assert.equal(nodes['storage-models'].textContent,'Модели: PrismML 29.0 ГБ (3) · Ollama 45.0 ГБ (4)');
   const [driveC,driveD]=nodes['storage-drives'].children;assert.equal(driveC.className,'drive');assert.equal(driveD.className,'drive low');
   assert.equal(driveC.children[1].value,60);assert.ok(driveD.children[0].children[1].textContent.includes('из 1.95 ТБ'));assert.ok(driveD.children[2].textContent.includes('мало свободного места'));
   assert.equal(nodes['model-disk'].hidden,false);assert.ok(nodes['model-disk'].textContent.startsWith('Свободно на диске моделей D:: 15.0 ГБ'));
+  // The download form uses the drive of the selected engine's models, even when another engine's drive has more room.
+  run("renderDrives({models:[{name:'ollama',engine:'Ollama',bytes:45*1024**3,models:4,drive:'C:'},{name:'bonsai',engine:'PrismML',bytes:29*1024**3,models:3,drive:'D:'}],drives:[{name:'C:',label:'',total:1000*1024**3,free:400*1024**3,used:600*1024**3,roles:['модели Ollama'],low:false},{name:'D:',label:'',total:100*1024**3,free:5*1024**3,used:95*1024**3,roles:['модели PrismML'],low:true}]})");
+  assert.ok(nodes['model-disk'].textContent.startsWith('Свободно на диске моделей D:: 5.0 ГБ · модели PrismML'),nodes['model-disk'].textContent);
+  run("selectedBackend='ollama';renderModelDisk()");assert.ok(nodes['model-disk'].textContent.startsWith('Свободно на диске моделей C:: 400.0 ГБ · модели Ollama'));
+  run("selectedBackend='missing';renderModelDisk()");assert.equal(nodes['model-disk'].hidden,true);run("selectedBackend='bonsai';renderModelDisk()");
   run("renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'model.gguf');assert.ok(nodes['kpi-model-caption'].textContent.startsWith('PrismML · '));
   // The prism engine is shown as PrismML whatever its historical config key.
   assert.equal(nodes.engines.children[0].querySelector('h2').textContent,'PrismML');assert.equal(run("engineName('unknown')"),'unknown');

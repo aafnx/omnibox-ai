@@ -152,6 +152,16 @@ namespace OmniBox {
             }
         }
         public static void EndControl() { lock (Sync) { Control = false; } }
+        // Closes admission of new generations at once and lets the current one finish;
+        // the caller waits for IsGenerating to turn false before acting.
+        public static bool ReserveControl() {
+            lock (Sync) {
+                if (Control) return false;
+                Control = true;
+                return true;
+            }
+        }
+        public static bool IsGenerating { get { lock (Sync) { return Current != null; } } }
         public static void EndModelSession(string backend) {
             lock (Sync) { foreach (string k in ModelSessions.Keys.Where(k => k.StartsWith(backend + "\n", StringComparison.Ordinal)).ToArray()) ModelSessions.Remove(k); }
         }
