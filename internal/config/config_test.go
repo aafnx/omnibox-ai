@@ -12,9 +12,9 @@ func validConfig() *Config {
 	c.Panel.Hosts = []string{"192.168.1.77", "omnibox", "localhost"}
 	b64 := base64.StdEncoding.EncodeToString(make([]byte, 32))
 	c.Panel.Password = Password{Salt: b64, Hash: b64, Iterations: 210000}
-	c.API = API{Enabled: true, PublicURL: "http://192.168.1.77:18090/v1", RequireKey: true, KeyHash: strings.Repeat("a", 64), Engine: PrismML}
-	c.Engines[PrismML] = &Engine{Port: 18080, Launch: Launch{Executable: `C:\Program Files\OmniBox AI\engines\prismml\b1\llama-server.exe`, Settings: map[string]string{"context": "32768"}}}
-	c.Engines[Ollama] = &Engine{Port: 11434, Launch: Launch{Executable: "/opt/omnibox/engines/ollama/v1/ollama", Settings: map[string]string{"keep_alive": "30m"}}}
+	c.API = API{Enabled: true, PublicURL: "http://192.168.1.77:8800/v1", RequireKey: true, KeyHash: strings.Repeat("a", 64), Engine: PrismML}
+	c.Engines[PrismML] = &Engine{Port: 8801, Launch: Launch{Executable: `C:\Program Files\OmniBox AI\engines\prismml\b1\llama-server.exe`, Settings: map[string]string{"context": "32768"}}}
+	c.Engines[Ollama] = &Engine{Port: 8802, Launch: Launch{Executable: "/opt/omnibox/engines/ollama/v1/ollama", Settings: map[string]string{"keep_alive": "30m"}}}
 	return c
 }
 
@@ -28,7 +28,7 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if loaded.Engines[PrismML].Settings["context"] != "32768" || loaded.API.KeyHash != c.API.KeyHash || loaded.Engines[Ollama].BaseURL() != "http://127.0.0.1:11434" {
+	if loaded.Engines[PrismML].Settings["context"] != "32768" || loaded.API.KeyHash != c.API.KeyHash || loaded.Engines[Ollama].BaseURL() != "http://127.0.0.1:8802" {
 		t.Fatalf("%+v", loaded)
 	}
 	if _, err := Load(filepath.Join(t.TempDir(), "missing.json")); err == nil || !strings.Contains(err.Error(), "Нет настроек") {
@@ -53,8 +53,8 @@ func TestValidateRejectsBadValues(t *testing.T) {
 		"key required":  func(c *Config) { c.API.KeyHash = "" },
 		"api engine":    func(c *Config) { c.API.Engine = "vllm" },
 		"engine name":   func(c *Config) { c.Engines["vllm"] = &Engine{Port: 8000} },
-		"engine port":   func(c *Config) { c.Engines[Ollama].Port = 18080 },
-		"panel port":    func(c *Config) { c.Engines[Ollama].Port = 18090 },
+		"engine port":   func(c *Config) { c.Engines[Ollama].Port = 8801 },
+		"panel port":    func(c *Config) { c.Engines[Ollama].Port = 8800 },
 		"relative exe":  func(c *Config) { c.Engines[PrismML].Executable = `engines\llama-server.exe` },
 		"bad setting":   func(c *Config) { c.Engines[PrismML].Settings["gpu_layers"] = "lots" },
 		"unknown key":   func(c *Config) { c.Engines[Ollama].Settings["gpu_layers"] = "1" },

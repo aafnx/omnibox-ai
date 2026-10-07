@@ -43,6 +43,20 @@ func ServiceName(engine string) string { return "omnibox-" + engine }
 // PanelService is the service of the panel itself.
 const PanelService = "omnibox"
 
+// Default ports: the panel and /v1 share one port for the NAS; engines listen on loopback next to it.
+const (
+	DefaultPanelPort = 8800
+	DefaultModelName = "omnibox"
+)
+
+// DefaultEnginePort is where a newly installed engine listens on loopback.
+func DefaultEnginePort(engine string) int {
+	if engine == Ollama {
+		return 8802
+	}
+	return 8801
+}
+
 // Config is config.json.
 type Config struct {
 	SchemaVersion int                `json:"schema_version"`
@@ -86,6 +100,9 @@ type API struct {
 	RequireKey bool   `json:"require_key"`
 	KeyHash    string `json:"key_hash,omitempty"` // SHA256 hex of the key; never the key
 	Engine     string `json:"engine"`
+	// ModelName is a stable model name for clients: requests with it go to whatever model the
+	// panel has loaded, so a client keeps working after the owner switches engine or model.
+	ModelName string `json:"model_name,omitempty"`
 }
 
 // Storage controls log retention and the request journal.
@@ -99,8 +116,8 @@ type Storage struct {
 func Default() *Config {
 	return &Config{
 		SchemaVersion: 1,
-		Panel:         Panel{Port: 18090},
-		API:           API{Engine: PrismML},
+		Panel:         Panel{Port: DefaultPanelPort},
+		API:           API{Engine: PrismML, ModelName: DefaultModelName},
 		Storage:       Storage{LogRetentionDays: 30, LogWarnMB: 200, RequestLog: "metadata"},
 		Engines:       map[string]*Engine{},
 	}
@@ -255,6 +272,9 @@ func (a *API) validate(c *Config) error {
 	}
 	if (a.KeyHash != "" && !sha256Hex.MatchString(a.KeyHash)) || (a.RequireKey && a.KeyHash == "") {
 		return errors.New("Некорректный hash API key.")
+	}
+	if a.ModelName != "" && !ValidOllamaModel(a.ModelName) {
+		return errors.New("Постоянное имя модели для клиентов: латиница, цифры, точка, дефис, двоеточие.")
 	}
 	return nil
 }
