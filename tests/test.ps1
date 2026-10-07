@@ -1456,6 +1456,7 @@ try {
         $t = $disk.drives | Where-Object name -eq 'T:'; $r = $disk.drives | Where-Object name -eq 'R:'
         Assert-True (@($t.roles) -contains 'OmniBox AI'); Assert-True (@($t.roles) -contains 'модели PrismML'); Assert-True (@($t.roles) -contains 'модели Ollama')
         Assert-Equal $t.used 95GB; Assert-True $t.low; Assert-Equal @($r.roles).Count 0; Assert-True (-not $r.low)
+        Assert-Equal $prism.drive 'T:'; Assert-Equal $ollama.drive 'T:'
         $null = Invoke-Ai @('storage') $e.path
     }
     Test 'engine version switch waits for the active generation and never restarts under it' {
@@ -1531,6 +1532,37 @@ try {
         Assert-Equal (Get-Content -LiteralPath $e.path -Raw) $configBefore; Assert-Equal (Get-Content -LiteralPath $gateway -Raw) $gatewayBefore
         Assert-True ($null -ne (& $e.m { $script:services['bonsai'] }))
         Assert-Equal @(Get-ChildItem -LiteralPath (Join-Path $e.root 'backups') -Directory -ErrorAction SilentlyContinue | Where-Object Name -like 'engine-remove-*').Count 0
+    }
+    Test 'engine version switch refuses new generations while it waits for the current one' {
+        $e = New-EngineFixture
+        if (-not ('OmniBox.OpenAiProxy' -as [type])) { Add-Type -Path @((Join-Path $repo 'src/Inference.Stats.cs'), (Join-Path $repo 'src/OpenAi.Proxy.cs')) }
+        [OmniBox.InferenceStats]::Configure((Join-Path $e.root 'requests'))
+        & $e.m { $script:services.bonsai.Status = 'Running'; $script:AiGenerationWaitSeconds = 2; $script:sleeps = 0
+            $script:drainCancel = [Threading.CancellationTokenSource]::new(); $script:secondRequest = $null
+            $script:firstRequest = [OmniBox.InferenceStats]::Begin('bonsai', 'bonsai-2-27b', '/v1/chat/completions', 196608, $null, $script:drainCancel)
+            # While the update waits, the first request ends and a client immediately sends the next one.
+            function script:Start-Sleep { param([int]$Milliseconds)
+                $script:sleeps++
+                if ($script:sleeps -eq 1) { [OmniBox.InferenceStats]::Finish($script:firstRequest, 200, $true)
+                    $script:secondRequest = [OmniBox.InferenceStats]::Begin('bonsai', 'bonsai-2-27b', '/v1/chat/completions', 196608, $null, $script:drainCancel) }
+                Microsoft.PowerShell.Utility\Start-Sleep -Milliseconds 10 } }
+        try {
+            $null = & $e.m { param($p) Set-AiEngineVersion $p 'bonsai' 'b2' } $e.path
+            Assert-True ($null -eq (& $e.m { $script:secondRequest })) 'A new generation was admitted while the update waited'
+            Assert-True ((Get-Calls $e.m) -contains 'start:bonsai')
+        } finally { & $e.m { if ($null -ne $script:secondRequest) { [OmniBox.InferenceStats]::Finish($script:secondRequest, 200, $true) }; $script:drainCancel.Dispose() } }
+        Assert-True ([OmniBox.InferenceStats]::BeginControl($false)); [OmniBox.InferenceStats]::EndControl()
+    }
+    Test 'a timed-out wait for a generation reopens admission' {
+        if (-not ('OmniBox.OpenAiProxy' -as [type])) { Add-Type -Path @((Join-Path $repo 'src/Inference.Stats.cs'), (Join-Path $repo 'src/OpenAi.Proxy.cs')) }
+        $m = New-TestModule
+        [OmniBox.InferenceStats]::Configure((Join-Path $testRoot ('requests-' + [Guid]::NewGuid().ToString('N'))))
+        $cancel = [Threading.CancellationTokenSource]::new()
+        $request = [OmniBox.InferenceStats]::Begin('bonsai', 'm', '/v1/chat/completions', 0, $null, $cancel)
+        try {
+            Assert-Throws { & $m { $script:AiGenerationWaitSeconds = 0; Enter-AiGenerationGuard } } '*занята генерацией*'
+        } finally { [OmniBox.InferenceStats]::Finish($request, 200, $true); $cancel.Dispose() }
+        Assert-True ([OmniBox.InferenceStats]::BeginControl($false)) 'Control stayed reserved after the timeout'; [OmniBox.InferenceStats]::EndControl()
     }
     Test 'engine version switch of a stopped engine blocks generations started by a parallel start' {
         $e = New-EngineFixture

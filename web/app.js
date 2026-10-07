@@ -4,7 +4,7 @@ let csrf = '', snapshot = null, activeTab = 'overview', settingsDirty = false, s
 let formRevision = 0;
 const submittedForms = new Map();
 let gateway = null, gatewayDirty = false, panelPort = 18090;
-let activity=null, refreshBusy=false;
+let activity=null, refreshBusy=false, diskUsage=null;
 const pendingActions=new Set();
 const themeMedia=window.matchMedia('(prefers-color-scheme: dark)');
 const themes=['light','dark','system'];
@@ -161,6 +161,7 @@ function renderSettings() {
   $('loaded-model').textContent=b.sleeping?'Модель спит; новый запрос может её загрузить.':b.loaded_model==='-'||b.loaded_model==='(none)'?'Модель не загружена.':b.loaded_model;
   $('load-model').disabled=!(b.models||[]).length;$('delete-model').disabled=!(b.models||[]).length; $('unload-model').disabled=b.service!=='Running';
   const prism=b.type==='prism';$('pull-label').hidden=prism;['url-label','filename-label','sha-label'].forEach(id=>$(id).hidden=!prism);
+  renderModelDisk();
   $('download-hint').textContent=prism?'Скачайте GGUF по прямой ссылке Hugging Face. Формат Bonsai PQ2 поддерживает только PrismML.':'Укажите имя и тег из библиотеки Ollama. Сначала запустите сервер Ollama.';
 }
 // Basic mode keeps the everyday fields; advanced adds GPU, cache and sampling parameters.
@@ -300,8 +301,12 @@ function renderDrives(u){
     const roles=document.createElement('small');roles.className='muted';roles.textContent=[(d.roles||[]).join(', '),d.low?'мало свободного места':''].filter(Boolean).join(' · ');
     item.append(head,bar,roles);list.append(item);
   });
-  const prism=models.find(m=>m.engine==='PrismML');const drive=(u.drives||[]).find(d=>(d.roles||[]).some(r=>r.startsWith('модели')));
-  $('model-disk').hidden=!drive;if(drive)$('model-disk').textContent=`Свободно на диске моделей ${drive.name}: ${formatGb(drive.free)}${prism?` · модели PrismML занимают ${formatGb(prism.bytes)}`:''}.`;
+  diskUsage=u;renderModelDisk();
+}
+// Free space for the download form: the drive of the selected engine's model directory, not of any engine.
+function renderModelDisk(){
+  const place=(diskUsage?.models||[]).find(m=>m.name===selectedBackend);const drive=place&&(diskUsage.drives||[]).find(d=>d.name===place.drive);
+  $('model-disk').hidden=!drive;if(drive)$('model-disk').textContent=`Свободно на диске моделей ${drive.name}: ${formatGb(drive.free)} · модели ${place.engine} занимают ${formatGb(place.bytes)}.`;
 }
 function renderStorage(u){
   requestLog=u.request_log||'metadata';renderDrives(u);
