@@ -373,3 +373,33 @@ func TestStorageRoutes(t *testing.T) {
 		t.Fatalf("without CSRF: %d", w.Code)
 	}
 }
+
+func TestEngineRoutes(t *testing.T) {
+	var asked string
+	s, _ := New(Options{
+		Config:  func() *config.Config { return testConfig(t, nil) },
+		Engines: func() any { return []any{map[string]any{"name": "prismml"}} },
+		Releases: func(_ context.Context, engine string) (any, error) {
+			asked = engine
+			if engine == "ollama" {
+				return nil, errors.New("GitHub недоступен")
+			}
+			return []any{map[string]any{"tag": "b2"}}, nil
+		},
+	})
+	cookie, _ := login(t, s, nil)
+	auth := func(r *http.Request) { r.AddCookie(cookie) }
+	if w := call(s, "GET", "/api/engines", "", auth); w.Code != 200 || !strings.Contains(w.Body.String(), "prismml") {
+		t.Fatalf("engines: %d", w.Code)
+	}
+	if w := call(s, "GET", "/api/engine-releases?engine=prismml", "", auth); w.Code != 200 || asked != "prismml" || !strings.Contains(w.Body.String(), "b2") {
+		t.Fatalf("releases: %d", w.Code)
+	}
+	if w := call(s, "GET", "/api/engine-releases?engine=ollama", "", auth); w.Code != 502 {
+		t.Fatalf("GitHub failure: %d", w.Code)
+	}
+	asked = ""
+	if w := call(s, "GET", "/api/engine-releases?engine=../x", "", auth); w.Code != 400 || asked != "" {
+		t.Fatalf("unknown engine: %d", w.Code)
+	}
+}

@@ -21,6 +21,7 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/control"
 	"github.com/aafnx/omnibox-ai/internal/engine"
+	"github.com/aafnx/omnibox-ai/internal/enginemgr"
 	"github.com/aafnx/omnibox-ai/internal/gateway"
 	"github.com/aafnx/omnibox-ai/internal/host"
 	"github.com/aafnx/omnibox-ai/internal/panel"
@@ -106,7 +107,12 @@ func serve(args []string, stdout io.Writer) error {
 	api := gateway.New(&gateway.Gateway{Config: current, Services: services, Dir: filepath.Join(*data, "logs", "requests")})
 	builder := &status.Builder{Config: current, Services: services, DataDir: *data, Activity: api}
 	sampler := &telemetry.Sampler{}
-	controller := &control.Controller{Store: store, Services: services}
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	manager := &enginemgr.Manager{DataDir: *data}
+	controller := &control.Controller{Store: store, Services: services, Manager: manager, DataDir: *data, Executable: exe, Gate: api}
 	operations := &control.Operations{Run: controller.Do, Gate: api}
 	handler, err := panel.New(panel.Options{
 		Config: current,
@@ -129,6 +135,14 @@ func serve(args []string, stdout io.Writer) error {
 		Telemetry: func(ctx context.Context, once bool) any {
 			observeSlots(ctx, current(), api)
 			return telemetryView(ctx, current(), services, sampler, once)
+		},
+		Engines: func() any { return controller.Engines() },
+		Releases: func(ctx context.Context, engine string) (any, error) {
+			releases, err := manager.Releases(ctx, engine)
+			if len(releases) > 20 {
+				releases = releases[:20]
+			}
+			return releases, err
 		},
 		Storage: func() any { return storage.GetUsage(*data, current()) },
 		StorageAction: func(body map[string]any) (any, error) {

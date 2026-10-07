@@ -51,6 +51,9 @@ type Options struct {
 	// Storage reports disk usage; StorageAction saves log settings or runs a cleanup.
 	Storage       func() any
 	StorageAction func(body map[string]any) (any, error)
+	// Engines lists installed engine versions; Releases asks GitHub for one engine's versions.
+	Engines  func() any
+	Releases func(ctx context.Context, engine string) (any, error)
 }
 
 type session struct {
@@ -113,7 +116,7 @@ func New(opt Options) (*Server, error) {
 
 // Routes of the PowerShell panel that later stages port; until then they answer 501.
 var pendingRoutes = map[string]bool{
-	"GET /api/engines": true, "GET /api/engine-releases": true, "GET /api/gateway": true,
+	"GET /api/gateway": true,
 	"GET /api/updates": true, "GET /api/catalog": true,
 }
 
@@ -192,6 +195,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.write(w, http.StatusOK, "application/json; charset=utf-8", line)
+	case route == "GET /api/engines" && s.opt.Engines != nil:
+		s.json(w, http.StatusOK, map[string]any{"engines": s.opt.Engines()})
+	case route == "GET /api/engine-releases" && s.opt.Releases != nil:
+		name := r.URL.Query().Get("engine")
+		if name != config.PrismML && name != config.Ollama {
+			s.json(w, http.StatusBadRequest, map[string]any{"error": "Нужен engine: prismml или ollama."})
+			return
+		}
+		// GitHub is asked only when the owner opens the version list.
+		releases, err := s.opt.Releases(r.Context(), name)
+		if err != nil {
+			s.json(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+			return
+		}
+		s.json(w, http.StatusOK, map[string]any{"releases": releases})
 	case route == "GET /api/storage" && s.opt.Storage != nil:
 		s.json(w, http.StatusOK, s.opt.Storage())
 	case route == "POST /api/storage" && s.opt.StorageAction != nil:

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/aafnx/omnibox-ai/internal/config"
@@ -79,6 +80,13 @@ func ParseRequest(body map[string]any) (Request, error) {
 	if !slices.Contains(Actions, r.Action) {
 		return r, errors.New("Неизвестная операция панели.")
 	}
+	if strings.HasPrefix(r.Action, "engine-") {
+		if !slices.Contains(config.EngineNames, r.EngineID) {
+			return r, errors.New("Нужен engine: prismml или ollama.")
+		}
+		// The operation list shows which engine the operation changes.
+		r.Engine = r.EngineID
+	}
 	return r, nil
 }
 
@@ -105,8 +113,15 @@ func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
 	if name == "" {
 		name = cfg.API.Engine
 	}
-	if r.Action == "stopall" {
+	switch r.Action {
+	case "stopall":
 		return "Все движки остановлены.", c.Locked(c.StopAll)
+	case "engine-install":
+		return c.InstallEngine(ctx, r.EngineID, r.Version)
+	case "engine-update":
+		return c.SetVersion(ctx, r.EngineID, r.Version)
+	case "engine-remove":
+		return c.RemoveEngine(r.EngineID)
 	}
 	if _, ok := cfg.Engines[name]; !ok {
 		return "", fmt.Errorf("Неизвестный движок: %s", name)
@@ -149,6 +164,8 @@ func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
 		return c.ollamaLoad(ctx, name, r)
 	case "pull":
 		return c.pull(ctx, name, r.Model)
+	case "model-delete":
+		return c.DeleteModel(ctx, name, r.Model)
 	}
 	return "", fmt.Errorf("Операция %s ещё не перенесена в Go-версию.", r.Action)
 }

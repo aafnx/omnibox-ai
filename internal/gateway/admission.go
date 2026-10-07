@@ -146,6 +146,26 @@ func (g *Gateway) BeginControl(cancel bool) bool {
 	return true
 }
 
+// Reserve closes admission for a panel operation that must wait for the running generation
+// (a version switch); queued requests fail at once.
+func (g *Gateway) Reserve() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.control {
+		return false
+	}
+	g.control = true
+	g.bump()
+	return true
+}
+
+// Generating tells whether a generation still runs.
+func (g *Gateway) Generating() bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.current != nil
+}
+
 // EndControl reopens admission after a panel operation.
 func (g *Gateway) EndControl() {
 	g.mu.Lock()
