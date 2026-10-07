@@ -16,7 +16,7 @@ themes.forEach(t=>$(`theme-${t}`).addEventListener('click',()=>{theme=t;applyThe
 function placeThemeSwitch(inDashboard){const target=inDashboard?$('topbar-actions'):document.body;if(target)target.append($('theme-switch'));}
 themeMedia.addEventListener('change',()=>{if(theme==='system')applyTheme(theme);});
 const fields = {placement:'placement',context:'context',idle_minutes:'idle',alias:'alias',gpu_layers:'gpu-layers',n_cpu_moe:'n-cpu-moe',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch',kv_offload:'kv-offload',threads:'threads',load_mode:'load-mode',reasoning:'reasoning',reasoning_effort:'reasoning-effort',reasoning_budget:'reasoning-budget',temperature:'temperature',top_k:'top-k',top_p:'top-p',min_p:'min-p',repeat_penalty:'repeat-penalty',presence_penalty:'presence-penalty',frequency_penalty:'frequency-penalty',max_tokens:'max-tokens',seed:'seed'};
-const labels = {'engine-install':'Установка движка','engine-update':'Обновление движка','engine-remove':'Удаление движка','model-delete':'Удаление модели',start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление','auto-restart':'Автоперезапуск','self-update':'Обновление программы','preset-save':'Сохранение пресета','preset-delete':'Удаление пресета','preset-apply':'Применение пресета',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
+const labels = {'engine-install':'Установка движка','engine-update':'Обновление движка','engine-remove':'Удаление движка','model-delete':'Удаление модели',start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление','auto-restart':'Автоперезапуск','self-update':'Обновление программы','preset-save':'Сохранение пресета','preset-delete':'Удаление пресета','preset-apply':'Применение пресета','model-test':'Тест модели',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
 async function api(path, body) {
   const response = await fetch(path, {method:body === undefined?'GET':'POST',credentials:'same-origin',headers:body === undefined?{}:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:body === undefined?undefined:JSON.stringify(body)});
   const data = await response.json();
@@ -168,7 +168,7 @@ function renderSettings() {
   renderPresets(b);
   $('auto-restart').checked=!!b.auto_restart;$('restart-status').textContent=restartText(b);
   $('loaded-model').textContent=b.sleeping?'Модель спит; новый запрос может её загрузить.':b.loaded_model==='-'||b.loaded_model==='(none)'?'Модель не загружена.':b.loaded_model;
-  $('load-model').disabled=!(b.models||[]).length;$('delete-model').disabled=!(b.models||[]).length; $('unload-model').disabled=b.service!=='Running';
+  $('load-model').disabled=!(b.models||[]).length;$('delete-model').disabled=!(b.models||[]).length; $('unload-model').disabled=b.service!=='Running';$('test-model').disabled=b.service!=='Running';
   const prism=b.type==='prismml';$('pull-label').hidden=prism;['url-label','filename-label','sha-label'].forEach(id=>$(id).hidden=!prism);
   renderModelDisk();
   $('download-hint').textContent=prism?'Скачайте GGUF по прямой ссылке Hugging Face. Формат Bonsai PQ2 поддерживает только PrismML.':'Укажите имя и тег из библиотеки Ollama. Сначала запустите сервер Ollama.';
@@ -354,6 +354,7 @@ $('model-backend').addEventListener('change',e=>chooseBackend(e.target.value));
 $('settings-form').addEventListener('input',()=>{settingsDirty=true;formRevision++;});$('settings-form').addEventListener('change',()=>{settingsDirty=true;formRevision++;});
 $('settings-form').addEventListener('submit',e=>{e.preventDefault();action({action:'save',backend:selectedBackend,settings:collectSettings()}).catch(error=>notice(error.message,true));});
 $('apply').addEventListener('click',()=>{if($('settings-form').reportValidity())action({action:'apply',backend:selectedBackend,settings:collectSettings()}).catch(e=>notice(e.message,true));});
+$('test-model').addEventListener('click',()=>action({action:'model-test'}).catch(e=>notice(e.message,true)));
 $('preset-choice').addEventListener('change',()=>{const b=backend();if(b)renderPresets(b);});
 $('preset-apply').addEventListener('click',()=>action({action:'preset-apply',backend:selectedBackend,model:$('preset-choice').value}).catch(e=>notice(e.message,true)));
 $('preset-delete').addEventListener('click',()=>action({action:'preset-delete',backend:selectedBackend,model:$('preset-choice').value}).catch(e=>notice(e.message,true)));

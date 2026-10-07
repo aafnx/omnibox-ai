@@ -32,7 +32,7 @@ type Request struct {
 }
 
 // Actions the panel may request.
-var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart", "self-update", "preset-save", "preset-delete", "preset-apply"}
+var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart", "self-update", "preset-save", "preset-delete", "preset-apply", "model-test"}
 
 // ParseRequest validates a panel operation body; unknown fields are refused.
 func ParseRequest(body map[string]any) (Request, error) {
@@ -120,6 +120,13 @@ func scalar(v any) (string, error) {
 
 // Do runs a panel operation and returns the message shown to the owner.
 func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
+	// The model test goes through the /v1 queue like a client request.
+	if r.Action == "model-test" {
+		if c.Test == nil {
+			return "", errors.New("Тест модели недоступен в этом режиме.")
+		}
+		return c.Test(ctx)
+	}
 	// The program update does not touch the engines' settings.
 	if r.Action == "self-update" {
 		if c.SelfUpdate == nil {
