@@ -3,7 +3,7 @@ const $ = id => document.getElementById(id);
 let csrf = '', snapshot = null, activeTab = 'overview', settingsDirty = false, selectedBackend = '', pollTimer = null, loggedIn = false;
 let formRevision = 0;
 const submittedForms = new Map();
-let gateway = null, gatewayDirty = false, panelPort = 18090;
+let gateway = null, gatewayDirty = false, panelPort = 8800;
 let activity=null, refreshBusy=false, diskUsage=null;
 const pendingActions=new Set();
 const themeMedia=window.matchMedia('(prefers-color-scheme: dark)');
@@ -25,13 +25,13 @@ async function api(path, body) {
 }
 function notice(message, error=false) { $('notice').hidden=false; $('notice').textContent=message; $('notice').classList.toggle('error',error); }
 function showLogin() { placeThemeSwitch(false); $('new-api-key').hidden=true;$('key-copy').replaceChildren();gatewayDirty=false;loggedIn=false; clearTimeout(pollTimer); $('login').hidden=false; $('dashboard').hidden=true; csrf=''; }
-async function showDashboard() { const session=await api('/api/session'); csrf=session.csrf; panelPort=session.port; loggedIn=true; $('login').hidden=true; $('dashboard').hidden=false; placeThemeSwitch(true); await refresh(true); schedulePoll(); refreshStorage(true).catch(()=>{}); if(localStorage.getItem('omnibox-update-pending')==='1')switchTab('updates'); }
-function monitoringActive(){return activity?.active||snapshot?.backends.some(b=>b.service==='StartPending'||(b.service==='Running'&&b.sleeping!==true&&(b.type==='prism'||!['(none)','-',undefined,null].includes(b.loaded_model))));}
+async function showDashboard() { const session=await api('/api/session'); csrf=session.csrf; panelPort=session.port; loggedIn=true; $('login').hidden=true; $('dashboard').hidden=false; placeThemeSwitch(true); await refresh(true); schedulePoll(); refreshStorage(true).catch(()=>{}); }
+function monitoringActive(){return activity?.active||snapshot?.backends.some(b=>b.service==='StartPending'||(b.service==='Running'&&b.sleeping!==true&&(b.type==='prismml'||!['(none)','-',undefined,null].includes(b.loaded_model))));}
 function schedulePoll() { clearTimeout(pollTimer); if(!loggedIn)return; pollTimer=setTimeout(async()=>{ if(!document.hidden) { try { await refresh(false); } catch(e) { notice(e.message,true); } } schedulePoll(); },document.hidden?10000:(monitoringActive()||snapshot?.operations?.some(o=>o.state==='running')||pendingActions.size?3000:10000)); }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&loggedIn)refresh(false,true).catch(e=>notice(e.message,true));});
 function backend() { return snapshot?.backends.find(b=>b.name===selectedBackend); }
 function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; $('catalog-results').replaceChildren(); $('catalog-status').textContent=''; renderSettings(); }
-function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='models')refreshStorage(false).catch(()=>{});if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates'){refreshUpdateStatus().catch(e=>notice(e.message,true));refreshEngines().catch(e=>notice(e.message,true));} }
+function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='models')refreshStorage(false).catch(()=>{});if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates'){renderUpdateInfo();refreshEngines().catch(e=>notice(e.message,true));} }
 async function refresh(gpu,snapshotRequested=gpu) {
   if(refreshBusy)return;refreshBusy=true;
   try{
@@ -52,7 +52,7 @@ async function refresh(gpu,snapshotRequested=gpu) {
 }
 // Third summary card: what is in memory now; one engine and one model at a time.
 // Engines are named by runtime; the config key (e.g. the historical "bonsai") stays internal.
-function engineName(name){const b=snapshot?.backends?.find(x=>x.name===name);return b?.type==='prism'?'PrismML':b?.type==='ollama'?'Ollama':name;}
+function engineName(name){const b=snapshot?.backends?.find(x=>x.name===name);return b?.type==='prismml'?'PrismML':b?.type==='ollama'?'Ollama':name;}
 function renderModelSummary(){
   const running=snapshot.backends.find(b=>b.service==='Running'||b.service==='StartPending');
   const model=running&&!['-','(none)',undefined,null,''].includes(running.loaded_model)?running.loaded_model:'';
@@ -66,7 +66,7 @@ function renderEngines() {
   snapshot.backends.forEach(b=>{
     const card=$('engine-template').content.firstElementChild.cloneNode(true);
     card.querySelector('h2').textContent=engineName(b.name);
-    card.querySelector('.engine-type').textContent=b.type==='prism'?'PrismML llama-server · GGUF':'Ollama · библиотека моделей';
+    card.querySelector('.engine-type').textContent=b.type==='prismml'?'PrismML llama-server · GGUF':'Ollama · библиотека моделей';
     const badge=card.querySelector('.badge'); badge.textContent=badgeText(b); badge.classList.toggle('running',b.service==='Running'); badge.classList.toggle('sleeping',!!b.sleeping);
     card.querySelector('.engine-model').textContent=b.loaded_model==='-'||b.loaded_model==='(none)'?'Не загружена':b.loaded_model;
     card.querySelector('.engine-context').textContent=b.active_context?`${Number(b.active_context).toLocaleString('ru-RU')} активный`:`${b.settings?.context||'—'} настроенный`;
@@ -87,6 +87,13 @@ function renderEngines() {
   });
 }
 const completed = new Set();
+// Download progress: done of total, speed and time left.
+function transferText(op){
+  const gb=n=>(n/1024**3).toFixed(2);const percent=Math.floor(100*(op.bytes_done||0)/op.bytes_total);
+  let text=`${gb(op.bytes_done||0)} из ${gb(op.bytes_total)} ГБ (${percent}%)`;
+  if(op.bytes_per_second>0){const left=(op.bytes_total-(op.bytes_done||0))/op.bytes_per_second;text+=` · ${(op.bytes_per_second/1024**2).toFixed(1)} МБ/с · осталось ${left>=3600?Math.floor(left/3600)+' ч '+Math.floor(left%3600/60)+' мин':Math.ceil(left/60)+' мин'}`;}
+  return text;
+}
 function renderOperations(operations) {
   $('operations').replaceChildren();
   let notified = false;
@@ -96,7 +103,7 @@ function renderOperations(operations) {
     const icon=document.createElement('span');icon.className=`op-icon ${op.state}`;icon.textContent=op.state==='running'?'↻':op.state==='done'?'✓':'!';
     const title=document.createElement('span');title.textContent=`${labels[op.action]||op.action}${op.backend?' · '+engineName(op.backend):''}`;
     const message=document.createElement('span');message.className='operation-message';message.textContent=op.message;
-    row.append(icon,title,message);if(op.state==='running'){const box=document.createElement('div');box.className='operation-progress';const progress=document.createElement('progress');const text=document.createElement('span');text.textContent=`${Math.floor(op.elapsed_seconds||0)} с · ${labels[op.action]||op.action}…`;box.append(progress,text);row.append(box);}$('operations').append(row);
+    row.append(icon,title,message);if(op.state==='running'){const box=document.createElement('div');box.className='operation-progress';const progress=document.createElement('progress');const text=document.createElement('span');text.textContent=`${Math.floor(op.elapsed_seconds||0)} с · ${labels[op.action]||op.action}…`;if(op.bytes_total){progress.max=op.bytes_total;progress.value=op.bytes_done||0;text.textContent=`${transferText(op)} · ${labels[op.action]||op.action}`;}else if(op.bytes_done){text.textContent=`${(op.bytes_done/1024**3).toFixed(2)} ГБ · ${labels[op.action]||op.action}`;}box.append(progress,text);if(['download','pull'].includes(op.action)){const cancel=document.createElement('button');cancel.type='button';cancel.className='text-button small';cancel.textContent='Отменить';cancel.addEventListener('click',()=>api('/api/actions',{action:'cancel',id:op.id}).then(()=>notice('Скачивание отменяется.')).catch(e=>notice(e.message,true)));box.append(cancel);}row.append(box);}$('operations').append(row);
     if(op.state!=='running'&&!completed.has(op.id)){completed.add(op.id);if(String(op.action).startsWith('engine-')&&activeTab==='updates')refreshEngines().catch(()=>{});if(!notified){notice(op.message,op.state==='failed');notified=true;}if(op.state==='done'&&op.backend===selectedBackend&&submittedForms.get(op.id)===formRevision)settingsDirty=false;submittedForms.delete(op.id);}
   });
 }
@@ -138,7 +145,7 @@ function renderActivity() {
   const box=$('live-session');box.replaceChildren();
   if(!running&&!activity.active){const p=document.createElement('p');p.className='muted';p.textContent='Серверы остановлены.';box.append(p);return;}
   const grid=document.createElement('div');grid.className='live-grid';
-  const values=[['Движок',engineName(activity.active?.backend||running?.name)||'—'],['Выбранная модель',activity.active?.model||running?.selected_model||running?.loaded_model||'Не выбрана'],['Состояние',activity.active?'Запрос выполняется':running?.sleeping?'Модель спит':running?.api==='Ready'?'Ожидает запрос':'Запускается'],['Input',fmt(r?.input_tokens)],['Output',fmt(r?.output_tokens)],['Всего в запросе',fmt(r?.total_tokens)]];
+  const values=[['Движок',engineName(activity.active?.backend||running?.name)||'—'],['Выбранная модель',activity.active?.model||running?.selected_model||running?.loaded_model||'Не выбрана'],['Состояние',activity.active?(activity.active.state==='queued'?'Запрос в очереди':'Запрос выполняется')+(activity.queued?` · в очереди: ${activity.queued}`:''):running?.sleeping?'Модель спит':running?.api==='Ready'?'Ожидает запрос':'Запускается'],['Input',fmt(r?.input_tokens)],['Output',fmt(r?.output_tokens)],['Всего в запросе',fmt(r?.total_tokens)]];
   values.forEach(([label,value])=>{const item=document.createElement('div');item.className='live-item';const caption=document.createElement('span');caption.className='card-label';caption.textContent=label;const strong=document.createElement('strong');strong.textContent=value;item.append(caption,strong);grid.append(item);});box.append(grid);
   if(r){const p=document.createElement('p');p.className='muted footnote';const session=activity.sessions?.find(s=>s.id===r.session_id);p.textContent=`${activity.active?'Текущий':'Последний'} запрос · сеанс ${r.session_id.slice(0,8)}${session?' · завершено запросов: '+session.requests+' · токенов: '+fmt(session.total_tokens):''}`;box.append(p);}
   const limit=activity.active?.context_limit||running?.active_context||Number(running?.settings?.context)||r?.context_limit||0;
@@ -149,24 +156,24 @@ function renderSettings() {
   const b=backend();if(!b)return; const s=b.settings||{};
   $('model-service').textContent=badgeText(b);
   const models=$('model-choice'); const old=models.value; models.replaceChildren(); (b.models||[]).forEach(m=>models.add(new Option(`${m.name} · ${m.quant?m.quant+' · ':''}${m.parts>1?`частей: ${m.parts} · `:''}${(m.bytes/1024**3).toFixed(1)} ГБ`,m.id)));
-  if(b.type==='prism'&&s.model)models.value=s.model; else if((b.models||[]).some(m=>m.id===old))models.value=old;
+  if(b.type==='prismml'&&s.model)models.value=s.model; else if((b.models||[]).some(m=>m.id===old))models.value=old;
   models.disabled=b.type==='ollama'&&!(b.models||[]).length;
-  $('model-hint').textContent=b.type==='prism'?'GGUF из каталога модели на ПК.':'Для списка моделей Ollama должна быть запущена.';
+  $('model-hint').textContent=b.type==='prismml'?'GGUF из каталога модели на ПК.':'Для списка моделей Ollama должна быть запущена.';
   $('placement').querySelectorAll('option').forEach(o=>o.hidden=b.type==='ollama'&&['gpu','hybrid'].includes(o.value));
   $('placement-hint').textContent=b.type==='ollama'?'Ollama: RAM/CPU или автоматическое распределение. Полностью VRAM гарантировать нельзя.':'VRAM: попытка загрузить все слои на GPU; RAM + VRAM: число слоёв задаётся ниже. Для MoE-моделей больше VRAM выберите VRAM и задайте «Слои MoE в RAM». При нехватке памяти запуск откатится.';
   Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');
-  document.querySelectorAll('.prism-field').forEach(el=>el.hidden=b.type!=='prism');applySettingsMode();syncKvOffload();
+  document.querySelectorAll('.prism-field').forEach(el=>el.hidden=b.type!=='prismml');applySettingsMode();syncKvOffload();
   $('settings-status').textContent=b.pending?'Есть сохранённые настройки. Они ещё не применены к работающему серверу.':b.type==='ollama'?'Серверные значения по умолчанию. Параметры внешнего клиента могут их переопределить.':'При ошибке запуска с новыми настройками выполняется откат.';
   $('restore').disabled=!b.can_restore;
   $('loaded-model').textContent=b.sleeping?'Модель спит; новый запрос может её загрузить.':b.loaded_model==='-'||b.loaded_model==='(none)'?'Модель не загружена.':b.loaded_model;
   $('load-model').disabled=!(b.models||[]).length;$('delete-model').disabled=!(b.models||[]).length; $('unload-model').disabled=b.service!=='Running';
-  const prism=b.type==='prism';$('pull-label').hidden=prism;['url-label','filename-label','sha-label'].forEach(id=>$(id).hidden=!prism);
+  const prism=b.type==='prismml';$('pull-label').hidden=prism;['url-label','filename-label','sha-label'].forEach(id=>$(id).hidden=!prism);
   renderModelDisk();
   $('download-hint').textContent=prism?'Скачайте GGUF по прямой ссылке Hugging Face. Формат Bonsai PQ2 поддерживает только PrismML.':'Укажите имя и тег из библиотеки Ollama. Сначала запустите сервер Ollama.';
 }
 // Basic mode keeps the everyday fields; advanced adds GPU, cache and sampling parameters.
 let settingsMode='basic';try{if(localStorage.getItem('omnibox-settings-mode')==='pro')settingsMode='pro';}catch{}
-function applySettingsMode(){const b=backend();const prism=b?.type==='prism';const pro=prism&&settingsMode==='pro';
+function applySettingsMode(){const b=backend();const prism=b?.type==='prismml';const pro=prism&&settingsMode==='pro';
   $('settings-mode').hidden=!prism;['basic','pro'].forEach(m=>{const btn=$(`mode-${m}`);btn.classList.toggle('active',settingsMode===m);btn.setAttribute('aria-pressed',String(settingsMode===m));});
   $('advanced').hidden=!pro;$('generation').hidden=!pro;$('mode-hint').hidden=!prism||pro;if(pro){$('advanced').open=true;$('generation').open=true;}}
 function setSettingsMode(mode){settingsMode=mode;try{localStorage.setItem('omnibox-settings-mode',mode);}catch{}applySettingsMode();}
@@ -174,10 +181,10 @@ function setSettingsMode(mode){settingsMode=mode;try{localStorage.setItem('omnib
 function syncKvOffload(fromPlacement){const cpu=$('placement').value==='cpu';if(cpu)$('kv-offload').value='off';else if(fromPlacement)$('kv-offload').value='on';$('kv-offload').disabled=cpu;}
 function collectSettings() {
   const b=backend(), settings={context:$('context').value.trim(),idle_minutes:$('idle').value,placement:$('placement').value};
-  if(b.type==='prism'){for(const [key,id] of Object.entries(fields))settings[key]=$(id).value.trim(); if($('model-choice').value)settings.model=$('model-choice').value;}
+  if(b.type==='prismml'){for(const [key,id] of Object.entries(fields))settings[key]=$(id).value.trim(); if($('model-choice').value)settings.model=$('model-choice').value;}
   return settings;
 }
-async function action(body) { if(updateStatus?.phase==='installing')throw new Error('Дождитесь завершения обновления приложения.'); const revision=formRevision;const key=body.backend||'*';pendingActions.add(key);renderEngines();try{const op=await api('/api/actions',body);if(body.settings||body.action==='restore')submittedForms.set(op.id,revision);notice('Операция принята. Результат появится в обзоре.');await refresh(false);schedulePoll();return op;}finally{pendingActions.delete(key);renderEngines();} }
+async function action(body) { const revision=formRevision;const key=body.backend||'*';pendingActions.add(key);renderEngines();try{const op=await api('/api/actions',body);if(body.settings||body.action==='restore')submittedForms.set(op.id,revision);notice('Операция принята. Результат появится в обзоре.');await refresh(false);schedulePoll();return op;}finally{pendingActions.delete(key);renderEngines();} }
 function copyRow(label,value) {
   const row=document.createElement('div');row.className='connect-row'; const caption=document.createElement('span');caption.className='card-label';caption.textContent=label;
   const field=document.createElement('div');field.className='copy-field';const code=document.createElement('code');code.textContent=value; const button=document.createElement('button');button.textContent='Копировать';button.type='button';
@@ -186,18 +193,19 @@ function copyRow(label,value) {
 }
 function renderGatewayForm() {
   if(!snapshot||!gateway)return;
-  $('api-backend').replaceChildren();snapshot.backends.forEach(b=>$('api-backend').add(new Option(engineName(b.name),b.name)));$('api-backend').value=gateway.backend;
+  $('api-queue-depth').value=gateway.queue_depth;$('api-queue-timeout').value=gateway.queue_timeout_seconds;
   $('api-base-url').value=gateway.base_url;$('api-require-key').checked=gateway.require_key;
-  $('api-state').textContent=!gateway.enabled?'Сетевой API не включён. Повторите установщик и выберите OpenAI API.':`API доступен на порту панели ${panelPort} по пути /v1. Настроенный порт API: ${gateway.port}. ${gateway.require_key?'Используйте сохранённый ключ или сгенерируйте новый.':'Авторизация отключена: ключ не нужен.'}`;
+  $('api-state').textContent=!gateway.enabled?'Сетевой API не включён. Повторите установщик и выберите OpenAI API.':`API доступен на порту панели ${panelPort} по пути /v1 и обслуживает запущенный движок. ${gateway.require_key?'Используйте сохранённый ключ или сгенерируйте новый.':'Авторизация отключена: ключ не нужен.'}`;
   $('save-api').disabled=!gateway.enabled;$('generate-api-key').disabled=!gateway.enabled;
 }
 function renderConnections() {
   if(!snapshot||!gateway)return;$('connections').replaceChildren();if(!gateway.enabled)return;
-  const b=snapshot.backends.find(b=>b.name===gateway.backend);if(!b)return;
-  const card=document.createElement('article');card.className='connect-card';const heading=document.createElement('h2');heading.textContent=`OpenAI API · ${b.name}`;card.append(heading);
+  // /v1 serves whichever engine runs; only one runs at a time.
+  const b=snapshot.backends.find(b=>b.service==='Running')||snapshot.backends.find(b=>b.name===snapshot.default_backend)||snapshot.backends[0];if(!b)return;
+  const card=document.createElement('article');card.className='connect-card';const heading=document.createElement('h2');heading.textContent=`OpenAI API · ${engineName(b.name)}`;card.append(heading);
   const endpointRow=copyRow('OpenAI Base URL — вставьте в Jan или Pi',gateway.base_url);endpointRow.classList.add('endpoint-primary');card.append(endpointRow);
-  const help=document.createElement('p');help.className='muted';help.textContent=`${badgeText(b)}. Сервер должен быть запущен; запрос к остановленному серверу его не включает.`;card.append(help);
-  const model=b.selected_model||(b.type==='prism'?b.settings?.alias:'')||'';
+  const help=document.createElement('p');help.className='muted';help.textContent=`${badgeText(b)}. API обслуживает запущенный движок; запрос к остановленному серверу его не включает.`;card.append(help);
+  const model=b.selected_model||(b.type==='prismml'?b.settings?.alias:'')||'';
   card.append(copyRow('Model / имя модели',model||'Выберите модель и нажмите Загрузить'));
   if(!gateway.require_key)card.append(copyRow('API key — отключён; local только если клиент требует значение','local'));
   else{const p=document.createElement('p');p.className='muted';p.textContent='API key: используйте ключ из Bitwarden. При утрате сгенерируйте новый выше. Пароль панели сюда не подходит.';card.append(p);}
@@ -212,7 +220,7 @@ async function saveGateway(body) {
 let catalogBusy=false;
 async function catalogRequest(mode,value) {
   if(catalogBusy)throw new Error('Дождитесь текущего поиска.');catalogBusy=true;$('catalog-search-button').disabled=true;$('catalog-status').textContent='Получаем данные Hugging Face…';
-  try{const job=await api('/api/catalog',{mode,value});for(let i=0;i<45;i++){await new Promise(resolve=>setTimeout(resolve,750));const result=await api(`/api/catalog?id=${encodeURIComponent(job.id)}`);if(result.state==='failed')throw new Error(result.error);if(result.state==='done'){$('catalog-status').textContent='';return result.data;}}throw new Error('Поиск не ответил вовремя. Попробуйте позже.');}
+  try{const data=await api(`/api/catalog?${mode==='search'?'q':'repo'}=${encodeURIComponent(value)}`);$('catalog-status').textContent='';return data;}
   finally{catalogBusy=false;$('catalog-search-button').disabled=false;}
 }
 function sourceLink(label,url) {const a=document.createElement('a');a.textContent=label;a.href=url;a.target='_blank';a.rel='noopener noreferrer';return a;}
@@ -223,7 +231,7 @@ async function searchCatalog(query) {
 }
 async function showCatalogFiles(repository) {
   try{const data=await catalogRequest('files',repository);$('catalog-results').replaceChildren();$('catalog-results').append(sourceLink(`${repository} · описание и лицензия ↗`,data.url));if(!data.files.length)$('catalog-status').textContent='Подходящие текстовые GGUF не найдены.';
-  data.files.forEach(f=>{const row=document.createElement('article');row.className='catalog-file';const title=document.createElement('strong');title.textContent=f.name;const meta=document.createElement('span');meta.className='muted';meta.textContent=`${f.bytes?(f.bytes/1024**3).toFixed(2)+' ГБ':'Размер не указан'}${f.prism_only?' · нужен PrismML':''}${f.split?' · многотомный файл':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent='Скачать на ПК';const b=backend();const tag=`hf.co/${repository}:${f.name}`;button.disabled=f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200));button.addEventListener('click',()=>{const b=backend();if(!b||f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200))){notice('Этот файл не поддерживается выбранным движком.',true);return;}const body=b.type==='prism'?{action:'download',backend:selectedBackend,url:f.url,filename:f.filename,sha256:f.sha256}:{action:'pull',backend:selectedBackend,model:tag};action(body).catch(e=>notice(e.message,true));});row.append(title,meta,button);$('catalog-results').append(row);});
+  data.files.forEach(f=>{const row=document.createElement('article');row.className='catalog-file';const title=document.createElement('strong');title.textContent=f.name;const meta=document.createElement('span');meta.className='muted';meta.textContent=`${f.bytes?(f.bytes/1024**3).toFixed(2)+' ГБ':'Размер не указан'}${f.prism_only?' · нужен PrismML':''}${f.split?' · многотомный файл':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent='Скачать на ПК';const b=backend();const tag=`hf.co/${repository}:${f.name}`;button.disabled=f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200));button.addEventListener('click',()=>{const b=backend();if(!b||f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200))){notice('Этот файл не поддерживается выбранным движком.',true);return;}const body=b.type==='prismml'?{action:'download',backend:selectedBackend,url:f.url,filename:f.filename,sha256:f.sha256,size:f.bytes?String(f.bytes):''}:{action:'pull',backend:selectedBackend,model:tag};action(body).catch(e=>notice(e.message,true));});row.append(title,meta,button);$('catalog-results').append(row);});
   }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
 }
 // Engine versions come from GitHub only when the owner asks; installs run as panel operations.
@@ -236,15 +244,15 @@ function engineStatusText(e){
 function renderEngineManager(engines){
   const root=$('engine-manager');root.replaceChildren();
   engines.forEach(e=>{
-    const box=document.createElement('div');box.className='engine-manage';box.dataset.engine=e.cli;
+    const box=document.createElement('div');box.className='engine-manage';box.dataset.engine=e.name;
     const head=document.createElement('div');head.className='engine-manage-head';const title=document.createElement('h3');title.textContent=e.label;const badge=document.createElement('span');badge.className='badge';badge.textContent=engineStatusText(e);head.append(title,badge);
-    const info=document.createElement('p');info.className='muted';info.textContent=e.installed?(e.managed?`Служба ${e.service}. Скачанные версии: ${(e.versions||[]).join(', ')||'—'}.`:`Служба ${e.service}. Файл: ${e.executable||'не найден'}. Обновление перенесёт движок в каталог OmniBox; прежние файлы останутся на месте.`):(e.restorable?'Будут восстановлены прежние служба, настройки и каталог моделей. ':'Будут созданы служба Windows (ручной запуск) и профиль. Модели скачиваются отдельно. ');
+    const info=document.createElement('p');info.className='muted';info.textContent=e.installed?(e.managed?`Служба omnibox-${e.name}. Скачанные версии: ${(e.versions||[]).join(', ')||'—'}.${e.pending?' Новая версия применится при следующем запуске.':''}`:`Служба omnibox-${e.name}. Движок установлен вне OmniBox; обновление перенесёт его в каталог OmniBox, прежние файлы останутся на месте.`):'Будут скачаны файлы с GitHub и создана служба с ручным запуском. Модели скачиваются отдельно.';
     const row=document.createElement('div');row.className='button-row';
     const select=document.createElement('select');select.className='engine-version';select.setAttribute('aria-label',`Версия ${e.label}`);
-    const releases=engineReleases[e.cli]||[];select.hidden=!releases.length;
+    const releases=engineReleases[e.name]||[];select.hidden=!releases.length;
     releases.forEach(r=>select.add(new Option(`${r.tag} · ${String(r.published).slice(0,10)}${r.size?` · ${(r.size/1024**3).toFixed(1)} ГБ`:''}${r.prerelease?' · предварительная':''}${r.tag===e.version?' · установлена':''}`,r.tag)));
     const button=(text,cls,handler)=>{const b=document.createElement('button');b.type='button';b.className=cls;b.textContent=text;b.addEventListener('click',()=>handler().catch(err=>notice(err.message,true)));return b;};
-    const versions=button(releases.length?'Обновить список':'Показать версии','secondary small',()=>loadEngineReleases(e.cli));
+    const versions=button(releases.length?'Обновить список':'Показать версии','secondary small',()=>loadEngineReleases(e.name));
     const latest=button(e.installed?'Обновить до последней':'Установить последнюю','primary small',()=>engineAction(e,''));
     const chosen=button('Установить выбранную','secondary small',()=>engineAction(e,select.value));chosen.hidden=!releases.length;
     row.append(select,chosen,versions,latest);
@@ -255,21 +263,18 @@ function renderEngineManager(engines){
 async function refreshEngines(){const data=await api('/api/engines');renderEngineManager(data.engines);return data.engines;}
 async function loadEngineReleases(cli){
   notice('Загружаем список версий с GitHub…');
-  const {id}=await api('/api/engine-releases',{engine:cli});
-  for(let i=0;i<60;i++){await new Promise(r=>setTimeout(r,1000));const r=await api(`/api/engine-releases?id=${id}`);
-    if(r.state==='done'){engineReleases[cli]=r.releases;await refreshEngines();notice(r.releases.length?'Версии загружены.':'Подходящих сборок для Windows не найдено.');return;}
-    if(r.state==='failed')throw new Error(r.error);}
-  throw new Error('GitHub не ответил за минуту.');
+  const r=await api(`/api/engine-releases?engine=${encodeURIComponent(cli)}`);
+  engineReleases[cli]=r.releases||[];await refreshEngines();notice(engineReleases[cli].length?'Версии загружены.':'Подходящих сборок для этой системы не найдено.');
 }
 async function engineAction(e,version){
   const target=version||'последней версии';
   if(e.installed&&!window.confirm(`Перевести ${e.label} на ${target}? Работающий движок перезапустится; при ошибке вернётся прежняя версия.`))return;
-  if(!e.installed&&!window.confirm(`Установить ${e.label} (${target})? Будут скачаны файлы с GitHub и создана служба Windows.`))return;
-  await action(e.installed?{action:'engine-update',backend:e.name,version}:{action:'engine-install',engine:e.cli,version});
+  if(!e.installed&&!window.confirm(`Установить ${e.label} (${target})? Будут скачаны файлы с GitHub и создана служба.`))return;
+  await action(e.installed?{action:'engine-update',engine:e.name,version}:{action:'engine-install',engine:e.name,version});
 }
 async function removeEngine(e){
   if(!window.confirm(`Удалить ${e.label}? Служба и скачанные OmniBox файлы движка будут удалены, модели останутся на диске.`))return;
-  await action({action:'engine-remove',backend:e.name});
+  await action({action:'engine-remove',engine:e.name});
 }
 // Disk usage is computed only on login and on the Logs tab, never on the status poll.
 let storageDirty=false,requestLog='metadata';
@@ -310,7 +315,7 @@ function renderModelDisk(){
 }
 function renderStorage(u){
   requestLog=u.request_log||'metadata';renderDrives(u);
-  $('storage-summary').textContent=`Журналы: ${formatMb(u.logs_bytes)} (файлов: ${u.log_files}${u.content_bytes?`, содержимое запросов: ${formatMb(u.content_bytes)}`:''}) · резервные копии: ${formatMb(u.backups_bytes)} · обновления: ${formatMb(u.updates_bytes)}${u.engines_bytes?` · движки: ${formatMb(u.engines_bytes)}`:''}${u.temp_bytes?` · временные файлы: ${formatMb(u.temp_bytes)}`:''}`;
+  $('storage-summary').textContent=`Журналы: ${formatMb(u.logs_bytes)} (файлов: ${u.log_files}${u.content_bytes?`, содержимое запросов: ${formatMb(u.content_bytes)}`:''})${u.engines_bytes?` · движки: ${formatMb(u.engines_bytes)}`:''}${u.temp_bytes?` · временные файлы: ${formatMb(u.temp_bytes)}`:''}`;
   $('storage-warning').hidden=!u.logs_over_limit;$('storage-warning').textContent=`Журналы занимают больше ${u.log_warn_mb} МБ. Сократите срок хранения или удалите устаревшие.`;
   if(!storageDirty){const select=$('log-retention');if(![...select.options].some(o=>o.value===String(u.log_retention_days)))select.add(new Option(`${u.log_retention_days} дн.`,String(u.log_retention_days)));select.value=String(u.log_retention_days);$('log-warn').value=u.log_warn_mb;$('request-log').value=requestLog;}
   if(activity&&snapshot)renderActivity();
@@ -332,12 +337,12 @@ $('settings-form').addEventListener('input',()=>{settingsDirty=true;formRevision
 $('settings-form').addEventListener('submit',e=>{e.preventDefault();action({action:'save',backend:selectedBackend,settings:collectSettings()}).catch(error=>notice(error.message,true));});
 $('apply').addEventListener('click',()=>{if($('settings-form').reportValidity())action({action:'apply',backend:selectedBackend,settings:collectSettings()}).catch(e=>notice(e.message,true));});
 $('restore').addEventListener('click',()=>action({action:'restore',backend:selectedBackend}).catch(e=>notice(e.message,true)));
-$('load-model').addEventListener('click',()=>{const b=backend();const body={action:'load',backend:selectedBackend};if(b.type==='prism'){if(!$('settings-form').reportValidity())return;body.settings=collectSettings();}else {body.model=$('model-choice').value;if(settingsDirty){if(!$('settings-form').reportValidity())return;body.settings=collectSettings();}}action(body).catch(e=>notice(e.message,true));});
+$('load-model').addEventListener('click',()=>{const b=backend();const body={action:'load',backend:selectedBackend};if(b.type==='prismml'){if(!$('settings-form').reportValidity())return;body.settings=collectSettings();}else {body.model=$('model-choice').value;if(settingsDirty){if(!$('settings-form').reportValidity())return;body.settings=collectSettings();}}action(body).catch(e=>notice(e.message,true));});
 $('delete-model').addEventListener('click',()=>{const b=backend();const select=$('model-choice');const label=select.options[select.selectedIndex]?.text||select.value;if(!select.value)return;
-  if(!window.confirm(b.type==='prism'?`Удалить модель ${label}? Файл будет удалён с диска.`:`Удалить модель ${label} из Ollama?`))return;
+  if(!window.confirm(b.type==='prismml'?`Удалить модель ${label}? Файл будет удалён с диска.`:`Удалить модель ${label} из Ollama?`))return;
   action({action:'model-delete',backend:selectedBackend,model:select.value}).catch(e=>notice(e.message,true));});
 $('unload-model').addEventListener('click',()=>action({action:'unload',backend:selectedBackend,model:$('model-choice').value}).catch(e=>notice(e.message,true)));
-$('download-form').addEventListener('submit',e=>{e.preventDefault();const b=backend();const body=b.type==='prism'?{action:'download',backend:selectedBackend,url:$('download-url').value.trim(),filename:$('download-filename').value.trim(),sha256:$('download-sha').value.trim()}:{action:'pull',backend:selectedBackend,model:$('pull-name').value.trim()};action(body).catch(error=>notice(error.message,true));});
+$('download-form').addEventListener('submit',e=>{e.preventDefault();const b=backend();const body=b.type==='prismml'?{action:'download',backend:selectedBackend,url:$('download-url').value.trim(),filename:$('download-filename').value.trim(),sha256:$('download-sha').value.trim()}:{action:'pull',backend:selectedBackend,model:$('pull-name').value.trim()};action(body).catch(error=>notice(error.message,true));});
 $('refresh-logs').addEventListener('click',()=>refreshLogs().catch(e=>notice(e.message,true)));
 $('placement').addEventListener('change',()=>syncKvOffload(true));
 $('storage-form').addEventListener('input',()=>storageDirty=true);
@@ -346,7 +351,7 @@ $('request-content-close').addEventListener('click',()=>{$('request-content-box'
 $('storage-clean').addEventListener('click',async()=>{try{const u=await api('/api/storage',{action:'cleanup'});renderStorage(u);notice(`Удалено файлов: ${u.cleanup.removed}, освобождено ${formatMb(u.cleanup.freed_bytes)}.`);}catch(error){notice(error.message,true);}});
 $('mode-basic').addEventListener('click',()=>setSettingsMode('basic'));$('mode-pro').addEventListener('click',()=>setSettingsMode('pro'));
 $('api-settings-form').addEventListener('input',()=>gatewayDirty=true);
-$('api-settings-form').addEventListener('submit',e=>{e.preventDefault();saveGateway({action:'save',backend:$('api-backend').value,base_url:$('api-base-url').value.trim(),require_key:$('api-require-key').checked}).catch(e=>notice(e.message,true));});
+$('api-settings-form').addEventListener('submit',e=>{e.preventDefault();saveGateway({action:'save',base_url:$('api-base-url').value.trim(),require_key:$('api-require-key').checked,queue_depth:Number($('api-queue-depth').value),queue_timeout_seconds:Number($('api-queue-timeout').value)}).catch(e=>notice(e.message,true));});
 $('generate-api-key').addEventListener('click',()=>saveGateway({action:'generate'}).catch(e=>notice(e.message,true)));
 $('catalog-form').addEventListener('submit',e=>{e.preventDefault();searchCatalog($('catalog-query').value.trim());});
 document.querySelectorAll('[data-search]').forEach(button=>button.addEventListener('click',()=>{$('catalog-query').value=button.dataset.search;searchCatalog(button.dataset.search);}));
@@ -369,42 +374,17 @@ function residencyText(r){
 }
 setInterval(()=>{if(loggedIn&&!document.hidden&&snapshot)document.querySelectorAll('.engine-idle').forEach(el=>{const b=snapshot.backends.find(b=>b.name===el.dataset.backend);if(b)el.textContent=idleText(b);});},1000);
 
-let updateStatus=null,updateTimer=null,updateBusy=false;
-function renderUpdateStatus(data){
- updateStatus=data;
- const busy=['checking','login','installing'].includes(data.phase);
- $('update-version').textContent=`Установлена ${data.current}${data.latest?' · доступна '+data.latest:''}`;
- $('update-message').textContent=data.message;
- $('update-progress').hidden=!busy;
- $('update-check').disabled=busy||updateBusy;
- $('update-login').disabled=busy||updateBusy||!data.gh_available;
- $('update-gh-install').hidden=data.gh_available;
- $('update-forget').disabled=busy||!data.authenticated;
- $('update-token-submit').disabled=busy||updateBusy;
- $('update-apply').hidden=data.phase!=='ready';$('update-apply').disabled=updateBusy;
- $('update-cancel').hidden=!['checking','login'].includes(data.phase);
- $('update-auth').textContent=data.authenticated?'Вход gh подключён к панели. Доступ хранится в зашифрованном хранилище Windows.':'Сохранённого входа панели нет. Войдите через gh по коду или используйте разовый токен.';
- $('update-device').hidden=!data.code;
- if(data.code&&$('update-code').dataset.code!==data.code)$('update-code').replaceChildren(copyRow('Одноразовый код GitHub',data.code));else if(!data.code)$('update-code').replaceChildren();$('update-code').dataset.code=data.code||'';
- if(data.phase==='installing')localStorage.setItem('omnibox-update-pending','1');
- if(['done','failed'].includes(data.phase))localStorage.setItem('omnibox-update-pending','0');
+// The program is installed and updated by the same one command; settings, password and key stay.
+const updateCommands=[['Windows (PowerShell от имени администратора)','gh release download --repo aafnx/omnibox-ai --pattern install.ps1 --dir $env:TEMP --clobber; powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\\install.ps1'],['Linux','gh release download --repo aafnx/omnibox-ai --pattern install.sh --dir /tmp --clobber && sudo sh /tmp/install.sh']];
+function renderUpdateInfo(){
+ $('update-version').textContent=snapshot?`Установлена версия ${snapshot.version}.`:'—';
+ $('update-commands').replaceChildren(...updateCommands.map(([label,command])=>copyRow(label,command)));
 }
-function scheduleUpdatePoll(){
- clearTimeout(updateTimer);
- if(!loggedIn)return;
- if(activeTab!=='updates'&&!['checking','login','installing'].includes(updateStatus?.phase))return;
- updateTimer=setTimeout(async()=>{if(!document.hidden){try{await refreshUpdateStatus();}catch(e){if(localStorage.getItem('omnibox-update-pending')==='1')$('update-message').textContent='Панель перезапускается. Ожидаем подключения…';else notice(e.message,true);}}scheduleUpdatePoll();},2000);
-}
-async function refreshUpdateStatus(){renderUpdateStatus(await api('/api/updates'));scheduleUpdatePoll();}
-async function updateAction(body){
- if(updateBusy)return;updateBusy=true;
- try{renderUpdateStatus(await api('/api/updates',body));scheduleUpdatePoll();}
- finally{if(body.token)body.token='';updateBusy=false;if(updateStatus)renderUpdateStatus(updateStatus);}
-}
-for(const [id,action] of [['update-check','check'],['update-login','login'],['update-forget','forget'],['update-cancel','cancel'],['update-apply','apply']]){
- $(id).addEventListener('click',()=>updateAction({action}).catch(e=>notice(e.message,true)));
-}
-$('update-token-form').addEventListener('submit',e=>{
- e.preventDefault();const token=$('update-token').value.trim();$('update-token').value='';
- updateAction({action:'token',token}).catch(e=>notice(e.message,true));
+$('password-form').addEventListener('submit',async e=>{
+ e.preventDefault();const current=$('password-current').value,next=$('password-new').value,repeat=$('password-repeat').value;
+ // The fields are cleared whatever the result: passwords never stay in the page.
+ $('password-current').value='';$('password-new').value='';$('password-repeat').value='';
+ if(next!==repeat){notice('Новый пароль и повтор не совпадают.',true);return;}
+ try{await api('/api/password',{current,password:next});notice('Пароль панели изменён. Другие сеансы входа завершены.');}catch(error){notice(error.message,true);}
 });
+

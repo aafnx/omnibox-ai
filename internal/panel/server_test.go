@@ -227,12 +227,12 @@ func TestReverseProxySessionIsSecureAndNotReusedOverHTTP(t *testing.T) {
 	}
 }
 
-func TestRoutesNotPortedYetAndApiHost(t *testing.T) {
+func TestUnknownRoutesAndApiHost(t *testing.T) {
 	s := newServer(t, testConfig(t, nil))
 	cookie, csrf := login(t, s, nil)
 	auth := func(r *http.Request) { r.AddCookie(cookie); r.Header.Set("X-Omnibox-CSRF", csrf) }
-	if w := call(s, "POST", "/api/storage", `{"log_retention_days":30}`, auth); w.Code != 501 {
-		t.Fatalf("pending control route: %d", w.Code)
+	if w := call(s, "POST", "/api/updates", `{"action":"apply"}`, auth); w.Code != 404 {
+		t.Fatalf("unknown action route: %d", w.Code)
 	}
 	if w := call(s, "GET", "/api/unknown", "", auth); w.Code != 404 {
 		t.Fatalf("unknown route: %d", w.Code)
