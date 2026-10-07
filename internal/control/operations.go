@@ -71,6 +71,8 @@ func category(action string) string {
 		return "download"
 	case len(action) > 7 && action[:7] == "engine-":
 		return "engine"
+	case action == "self-update":
+		return "update"
 	}
 	return "control"
 }

@@ -292,6 +292,37 @@ func TestAutoRestartIsAnExplicitSetting(t *testing.T) {
 	}
 }
 
+func TestSelfUpdateTokenStaysInMemory(t *testing.T) {
+	if _, err := ParseRequest(map[string]any{"action": "start", "backend": "prismml", "token": "ghp_x"}); err == nil {
+		t.Fatal("a token accepted for another operation")
+	}
+	r, err := ParseRequest(map[string]any{"action": "self-update", "token": " ghp_secret ", "version": "0.20.0"})
+	if err != nil || r.Token != "ghp_secret" {
+		t.Fatalf("%+v %v", r, err)
+	}
+	if b, _ := json.Marshal(r); strings.Contains(string(b), "ghp_secret") {
+		t.Fatalf("the token is serialized: %s", b)
+	}
+	var got string
+	ops := &Operations{Run: (&Controller{SelfUpdate: func(_ context.Context, token, version string) (string, error) {
+		got = token + "@" + version
+		return "ok", nil
+	}}).Do}
+	id, err := ops.Start(r)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 200 {
+		if list := ops.List(); len(list) == 1 && list[0].State == "done" {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if b, _ := json.Marshal(ops.List()); got != "ghp_secret@0.20.0" || strings.Contains(string(b), "ghp_secret") || !strings.Contains(string(b), id) {
+		t.Fatalf("%q %s", got, b)
+	}
+}
+
 func TestParseRequestRejectsUnknownFieldsAndActions(t *testing.T) {
 	if _, err := ParseRequest(map[string]any{"action": "start", "command": "calc.exe"}); err == nil {
 		t.Fatal("unknown field accepted")

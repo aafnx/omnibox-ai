@@ -89,6 +89,8 @@ type Dashboard struct {
 	GPU      []telemetry.GPU `json:"gpu"`
 	// Operations are the panel's background operations; the service fills them in.
 	Operations any `json:"operations"`
+	// LastUpdate is the result of the last update started from the panel.
+	LastUpdate any `json:"last_update,omitempty"`
 }
 
 // Build computes the dashboard; engines are checked in parallel with short probes.

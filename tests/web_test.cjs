@@ -103,6 +103,14 @@ function run(code){return vm.runInContext(code,context);}
   // Updates: the panel shows the version and the one command that installs and updates.
   run("renderUpdateInfo()");assert.equal(nodes['update-version'].textContent,'Установлена версия 0.18.0.');assert.equal(nodes['update-commands'].children.length,3);
   assert.equal(nodes['update-commands'].children[0].children[1].children[0].textContent,'ai update');assert.ok(nodes['update-commands'].children[1].children[1].children[0].textContent.includes('install.ps1'));
+  // Self-update from the panel: the token is sent once and cleared from the page; the result of
+  // the last update is shown after the panel comes back.
+  nodes['update-token'].value=' ghp_secret ';nodes['update-target'].value='';const updateBefore=requests.length;
+  nodes['self-update-form'].listeners.submit[0]({preventDefault:()=>{}});await new Promise(r=>setTimeout(r,0));
+  assert.equal(nodes['update-token'].value,'');assert.equal(requests[updateBefore],'/api/actions');
+  assert.deepEqual(JSON.parse(bodies[updateBefore]),{action:'self-update',token:'ghp_secret'});
+  run("snapshot={...snapshot,last_update:{ok:false,from:'0.19.0',version:'0.20.0',message:'Панель не ответила. Изменения отменены.',time:'2026-10-07T12:00:00Z'}};renderUpdateInfo()");
+  assert.equal(nodes['last-update'].hidden,false);assert.ok(nodes['last-update'].textContent.includes('не удалось (0.19.0 → 0.20.0)'),nodes['last-update'].textContent);
   // Downloads show progress and can be canceled; other operations cannot.
   run("renderOperations([{id:'d1',action:'download',backend:'prismml',state:'running',elapsed_seconds:5,message:'',bytes_done:1024**3,bytes_total:4*1024**3,bytes_per_second:50*1024**2},{id:'s1',action:'start',backend:'prismml',state:'running',elapsed_seconds:2,message:''}])");
   const [downloadRow,startRow]=nodes.operations.children;const downloadBox=downloadRow.children.find(n=>n.className==='operation-progress');
@@ -128,5 +136,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, no-key warning, auto-restart status and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, no-key warning, auto-restart status, self-update and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});
