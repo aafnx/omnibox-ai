@@ -44,4 +44,4 @@ OmniBox AI отдаёт OpenAI-совместимый API по пути `/v1` н
 | Пользовательский заголовок | только `X-Forwarded-Proto: https`, `X-Forwarded-Host: llm.fnx.red`, `X-Forwarded-For: $remote_addr`; заголовки `Upgrade`, `Connection` и `Authorization` удалите |
 | Дополнительно | соединение 60 с, отправка и чтение 1800 с, HTTP 1.1 |
 
-При установке укажите HTTPS-адрес `https://llm.fnx.red` и IP NAS `192.168.1.10`: заголовки `X-Forwarded-*` принимаются только от него. Потоковые ответы приходят с `X-Accel-Buffering: no`, поэтому NAS не копит токены.
+При установке укажите HTTPS-адрес `https://llm.fnx.red` и IP NAS `192.168.1.10`: заголовки `X-Forwarded-*` и имя `llm.fnx.red` в заголовке `Host` (NAS передаёт его без изменений) принимаются только от него. Потоковые ответы приходят с `X-Accel-Buffering: no`, поэтому NAS не копит токены.

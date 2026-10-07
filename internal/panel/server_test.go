@@ -201,6 +201,7 @@ func TestReverseProxySessionIsSecureAndNotReusedOverHTTP(t *testing.T) {
 	}))
 	viaProxy := func(r *http.Request) {
 		r.RemoteAddr = "192.168.1.10:40000"
+		r.Host = "llm.fnx.red" // Synology keeps the browser's Host
 		r.Header.Set("X-Forwarded-Proto", "https")
 		r.Header.Set("X-Forwarded-Host", "llm.fnx.red")
 		r.Header.Set("X-Forwarded-For", "10.8.0.5")
@@ -220,9 +221,19 @@ func TestReverseProxySessionIsSecureAndNotReusedOverHTTP(t *testing.T) {
 	if w := call(s, "POST", "/api/login", `{"password":"x"}`, downgrade); w.Code != 400 {
 		t.Fatalf("downgraded proto: %d", w.Code)
 	}
-	// Headers from an untrusted address never make a request secure.
+	if w := call(s, "GET", "/", "", viaProxy); w.Code != 200 {
+		t.Fatalf("panel through the proxy: %d", w.Code)
+	}
+	if w := call(s, "GET", "/v1/models", "", viaProxy); w.Code != 503 {
+		t.Fatalf("/v1 through the proxy: %d", w.Code)
+	}
+	// The public name is answered only from the NAS; headers from another address never make a
+	// request secure.
 	untrusted := func(r *http.Request) { viaProxy(r); r.RemoteAddr = "192.168.1.99:1" }
-	if w := call(s, "GET", "/api/session", "", func(r *http.Request) { untrusted(r); r.AddCookie(cookie) }); w.Code != 401 {
+	if w := call(s, "GET", "/", "", untrusted); w.Code != 403 {
+		t.Fatalf("public name from an untrusted address: %d", w.Code)
+	}
+	if w := call(s, "GET", "/api/session", "", func(r *http.Request) { untrusted(r); r.Host = "omnibox:18091"; r.AddCookie(cookie) }); w.Code != 401 {
 		t.Fatalf("untrusted forwarding: %d", w.Code)
 	}
 }

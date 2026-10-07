@@ -130,7 +130,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	cfg := s.opt.Config()
 	path := r.URL.Path
 	isAPI := cfg.API.Enabled && (path == "/v1" || strings.HasPrefix(path, "/v1/"))
-	if !hostAllowed(cfg, r.Host, isAPI) {
+	if !hostAllowed(cfg, r, isAPI) {
 		s.json(w, http.StatusForbidden, map[string]any{"error": "Host запрещён."})
 		return
 	}
@@ -267,14 +267,21 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // hostAllowed answers only the configured names; /v1 also answers the clients' API host.
-func hostAllowed(cfg *config.Config, hostport string, api bool) bool {
-	host := hostport
-	if h, _, err := net.SplitHostPort(hostport); err == nil {
+// The NAS proxy keeps the browser's Host (llm.fnx.red), so public_origin is accepted from the
+// trusted proxy addresses only.
+func hostAllowed(cfg *config.Config, r *http.Request, api bool) bool {
+	host := r.Host
+	if h, _, err := net.SplitHostPort(host); err == nil {
 		host = h
 	}
 	hosts := cfg.Panel.Hosts
 	if api && cfg.API.PublicURL != "" {
 		if u, err := url.Parse(cfg.API.PublicURL); err == nil {
+			hosts = append(append([]string{}, hosts...), u.Hostname())
+		}
+	}
+	if cfg.Panel.PublicOrigin != "" && fromTrustedProxy(r, &cfg.Panel) {
+		if u, err := url.Parse(cfg.Panel.PublicOrigin); err == nil {
 			hosts = append(append([]string{}, hosts...), u.Hostname())
 		}
 	}
