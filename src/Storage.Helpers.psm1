@@ -182,6 +182,8 @@ function Remove-AiOldBackups {
     $groups = @(
         @(Get-ChildItem -LiteralPath $directory -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^\d{8}-\d{6}-[0-9a-f]{8}$' }),
         @(Get-ChildItem -LiteralPath $directory -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^services-[0-9a-f-]{32,36}$' }),
+        # Settings kept by an engine removal whose rollback failed.
+        @(Get-ChildItem -LiteralPath $directory -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^engine-remove-\d{8}-\d{6}-[0-9a-f]{8}$' }),
         @(Get-AiMatchingFiles (Join-Path $directory 'profiles') '^profile-.+\.ps1$')
     )
     foreach ($group in $groups) {

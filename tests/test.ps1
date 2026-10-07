@@ -1189,12 +1189,13 @@ try {
         Import-Module (Join-Path $repo 'src/Storage.Helpers.psm1') -Force
         $names=@();for($i=1;$i -le 5;$i++){$name="2026100$i-120000-0000000$i";$names+=$name;$d=New-Item -ItemType Directory -Path (Join-Path $backups $name) -Force;$d.LastWriteTimeUtc=[DateTime]::UtcNow.AddDays(-10+$i)}
         for($i=1;$i -le 4;$i++){$d=New-Item -ItemType Directory -Path (Join-Path $backups ("services-"+[Guid]::NewGuid())) -Force;$d.LastWriteTimeUtc=[DateTime]::UtcNow.AddDays(-10+$i)}
+        for($i=1;$i -le 4;$i++){$d=New-Item -ItemType Directory -Path (Join-Path $backups ("engine-remove-2026100$i-120000-0000000$i")) -Force;$d.LastWriteTimeUtc=[DateTime]::UtcNow.AddDays(-10+$i)}
         $null=New-Item -ItemType Directory -Path (Join-Path $backups 'manual-copy') -Force
         @{snapshot=(Join-Path $backups $names[0])}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $root '.omnibox-ai-transaction.json')
-        Assert-Equal (Remove-AiOldBackups $root 3 @((Join-Path $backups $names[1]))) 1
+        Assert-Equal (Remove-AiOldBackups $root 3 @((Join-Path $backups $names[1]))) 2
         $left=@(Get-ChildItem -LiteralPath $backups -Directory|ForEach-Object Name)
         foreach($name in $names){Assert-True ($left -contains $name) $name}
-        Assert-Equal @($left|Where-Object{$_ -like 'services-*'}).Count 3;Assert-True ($left -contains 'manual-copy')
+        Assert-Equal @($left|Where-Object{$_ -like 'services-*'}).Count 3;Assert-Equal @($left|Where-Object{$_ -like 'engine-remove-*'}).Count 3;Assert-True ($left -contains 'manual-copy')
         Remove-Item -LiteralPath (Join-Path $root '.omnibox-ai-transaction.json') -Force
         $null=Remove-AiOldBackups $root 3 @()
         Assert-Equal @(Get-ChildItem -LiteralPath $backups -Directory|Where-Object Name -match '^\d{8}').Count 3
@@ -1528,6 +1529,40 @@ try {
         & $e.m { function script:Remove-AiEngineService { param($Name) throw 'access denied' } }
         Assert-Throws { & $e.m { param($p) Uninstall-AiEngine $p 'bonsai' } $e.path } '*Настройки восстановлены*'
         Assert-Equal (Get-Content -LiteralPath $e.path -Raw) $configBefore; Assert-Equal (Get-Content -LiteralPath $gateway -Raw) $gatewayBefore
+        Assert-True ($null -ne (& $e.m { $script:services['bonsai'] }))
+        Assert-Equal @(Get-ChildItem -LiteralPath (Join-Path $e.root 'backups') -Directory -ErrorAction SilentlyContinue | Where-Object Name -like 'engine-remove-*').Count 0
+    }
+    Test 'engine version switch of a stopped engine blocks generations started by a parallel start' {
+        $e = New-EngineFixture
+        if (-not ('OmniBox.OpenAiProxy' -as [type])) { Add-Type -Path @((Join-Path $repo 'src/Inference.Stats.cs'), (Join-Path $repo 'src/OpenAi.Proxy.cs')) }
+        [OmniBox.InferenceStats]::Configure((Join-Path $e.root 'requests'))
+        & $e.m { $script:services.bonsai.Status = 'Stopped'; $script:raceCancel = [Threading.CancellationTokenSource]::new(); $script:raceRequest = $null; $script:raceStarted = $false
+            # Another command starts the engine and a client sends a request before the update takes the lock.
+            function script:Invoke-AiLocked { param([scriptblock]$Action)
+                if (-not $script:raceStarted) { $script:raceStarted = $true; $script:services.bonsai.Status = 'Running'
+                    $script:raceRequest = [OmniBox.InferenceStats]::Begin('bonsai', 'bonsai-2-27b', '/v1/chat/completions', 196608, $null, $script:raceCancel) }
+                & $Action } }
+        try {
+            $null = & $e.m { param($p) Set-AiEngineVersion $p 'bonsai' 'b2' } $e.path
+            Assert-True ($null -eq (& $e.m { $script:raceRequest })) 'A generation began while the engine was switching versions'
+            Assert-True ((Get-Calls $e.m) -contains 'start:bonsai')
+        } finally { & $e.m { if ($null -ne $script:raceRequest) { [OmniBox.InferenceStats]::Finish($script:raceRequest, 200, $true) }; $script:raceCancel.Dispose() } }
+        Assert-True ([OmniBox.InferenceStats]::BeginControl($false)); [OmniBox.InferenceStats]::EndControl()
+    }
+    Test 'failed rollback of an engine removal is reported and keeps copies of the settings' {
+        $e = New-EngineFixture
+        $configBefore = [IO.File]::ReadAllBytes($e.path)
+        & $e.m { $script:serviceRemoveFailed = $false
+            function script:Remove-AiEngineService { param($Name) $script:serviceRemoveFailed = $true; throw 'access denied' }
+            $script:realAtomic = (Get-Command Write-AiAtomicBytes).ScriptBlock
+            function script:Write-AiAtomicBytes { param($Path, $Bytes) if ($script:serviceRemoveFailed) { throw 'disk is read-only' }; & $script:realAtomic $Path $Bytes } }
+        $message = ''
+        try { $null = & $e.m { param($p) Uninstall-AiEngine $p 'bonsai' } $e.path } catch { $message = $_.Exception.Message }
+        Assert-True ($message -like '*Восстановить настройки не удалось*disk is read-only*') $message
+        Assert-True ($message -notlike '*Настройки восстановлены*') $message
+        $saved = @(Get-ChildItem -LiteralPath (Join-Path $e.root 'backups') -Directory | Where-Object Name -like 'engine-remove-*')
+        Assert-Equal $saved.Count 1; Assert-True ($message.Contains($saved[0].FullName)) $message
+        Assert-Equal ([Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path $saved[0].FullName 'config.json')))) ([Convert]::ToBase64String($configBefore))
         Assert-True ($null -ne (& $e.m { $script:services['bonsai'] }))
     }
     Test 'Ollama CPU placement disables GPU discovery and automatic placement restores prior masks' {

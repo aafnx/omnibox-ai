@@ -236,7 +236,7 @@ function Enter-AiGenerationGuard {
     if (-not ('OmniBox.InferenceStats' -as [type])) { return $false }
     $watch = [Diagnostics.Stopwatch]::StartNew()
     while (-not [OmniBox.InferenceStats]::BeginControl($false)) {
-        if ($watch.Elapsed.TotalSeconds -ge $script:AiGenerationWaitSeconds) { throw 'Модель занята генерацией. Новая версия скачана; повторите обновление после завершения запроса.' }
+        if ($watch.Elapsed.TotalSeconds -ge $script:AiGenerationWaitSeconds) { throw 'Модель занята генерацией или другой операцией. Новая версия скачана; повторите обновление после завершения.' }
         Start-Sleep -Milliseconds 500
     }
     return $true
@@ -276,9 +276,10 @@ function Set-AiEngineVersion {
     $backend = Get-AiBackend $config $Name
     $runtime = Install-AiEngineRuntime $ConfigPath $backend.type $Tag
     $label = Get-AiEngineName $config $Name
-    $service = Get-AiService $backend.service
     # Taken after the long download and before the lock, so a waiting generation never holds the lock.
-    $guarded = $null -ne $service -and [string]$service.Status -in @('Running', 'StartPending') -and (Enter-AiGenerationGuard)
+    # Taken whatever the service state: a parallel start may bring the engine up before the lock, and
+    # while the guard is held no generation can begin, so the restart below never cuts one off.
+    $guarded = Enter-AiGenerationGuard
     try {
         $message = Invoke-AiLocked {
             $config = Read-AiConfig $ConfigPath
@@ -414,8 +415,12 @@ function Uninstall-AiEngine {
         }
         # Settings are written first and restored if the service cannot be removed, so the
         # installation never ends with a registered engine that has no service or the reverse.
-        $originals = @{}
+        $originals = [ordered]@{}
         foreach ($path in @($ConfigPath, $gatewayPath)) { if (Test-Path -LiteralPath $path -PathType Leaf) { $originals[$path] = [IO.File]::ReadAllBytes($path) } }
+        # Copies on disk outlive a rollback that fails too, so the owner can still put the settings back.
+        $saved = Join-Path (Join-Path $root 'backups') ('engine-remove-' + [DateTime]::UtcNow.ToString('yyyyMMdd-HHmmss') + '-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
+        $null = New-Item -ItemType Directory -Path $saved -Force
+        foreach ($path in $originals.Keys) { [IO.File]::WriteAllBytes((Join-Path $saved (Split-Path $path -Leaf)), $originals[$path]) }
         try {
             # Remember the removed engine so a reinstall gets its profile, service name, models and logs back.
             if (-not $config.Contains('removed_engines') -or $config.removed_engines -isnot [Collections.IDictionary]) { $config.removed_engines = [ordered]@{} }
@@ -430,9 +435,13 @@ function Uninstall-AiEngine {
             if ($null -ne $service) { Remove-AiEngineService $backend.service }
         } catch {
             $cause = $_.Exception.Message
-            foreach ($path in $originals.Keys) { try { Write-AiAtomicBytes $path $originals[$path] } catch { } }
+            $failed = @()
+            foreach ($path in $originals.Keys) { try { Write-AiAtomicBytes $path $originals[$path] } catch { $failed += "$(Split-Path $path -Leaf): $($_.Exception.Message)" } }
+            if ($failed.Count) { throw "Удаление $label не выполнено: $cause. Восстановить настройки не удалось ($($failed -join '; ')). Прежние файлы сохранены в $saved; скопируйте их в $root. Движок остановлен." }
+            Remove-Item -LiteralPath $saved -Recurse -Force -ErrorAction SilentlyContinue
             throw "Удаление $label не выполнено: $cause. Настройки восстановлены, движок остановлен."
         }
+        Remove-Item -LiteralPath $saved -Recurse -Force -ErrorAction SilentlyContinue
         # Rollback history belongs to the removed service; the profile itself keeps settings for a reinstall.
         foreach ($suffix in @('.ai-previous', '.ai-state.json', '.runtime.json')) { $path = $backend.service_config + $suffix; if (Test-Path -LiteralPath $path -PathType Leaf) { Remove-Item -LiteralPath $path -Force -ErrorAction SilentlyContinue } }
     }
