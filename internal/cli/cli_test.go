@@ -21,7 +21,7 @@ func (f *fakeService) Do(method, path string, body any, out any) error {
 	var reply string
 	switch {
 	case path == "/status":
-		reply = `{"version":"0.18.0","computer":"pc","panel":"http://192.168.1.77:8800","api":"https://llm.fnx.red/v1","backends":[{"label":"PrismML","service":"Running","api":"Ready","loaded_model":"ornith-Q4_K_M.gguf","active_context":32768},{"label":"Ollama","service":"Stopped","selected_model":"qwen3:8b","pending":true}]}`
+		reply = `{"version":"0.18.0","computer":"pc","panel":"http://192.168.1.77:8800","api":"https://llm.fnx.red/v1","backends":[{"label":"PrismML","service":"Running","api":"Ready","loaded_model":"ornith-Q4_K_M.gguf","active_context":32768},{"label":"Ollama","service":"Stopped","selected_model":"qwen3:8b","pending":true,"restarts":2,"gave_up":"уже 2 перезапуска за 10 минут"}]}`
 	case path == "/actions":
 		reply = `{"id":"op1"}`
 	case strings.HasPrefix(path, "/operations/"):
@@ -56,7 +56,8 @@ func TestStatusAndStartWaitForTheOperation(t *testing.T) {
 	svc := &fakeService{}
 	out, code := runCLI(svc, "status")
 	if code != 0 || !strings.Contains(out, "PrismML: работает · API готов · модель ornith-Q4_K_M.gguf · контекст 32768") ||
-		!strings.Contains(out, "Ollama: остановлен · выбрана модель qwen3:8b · новые настройки") || !strings.Contains(out, "API для клиентов: https://llm.fnx.red/v1") {
+		!strings.Contains(out, "Ollama: остановлен · выбрана модель qwen3:8b · новые настройки") || !strings.Contains(out, "API для клиентов: https://llm.fnx.red/v1") ||
+		!strings.Contains(out, "автоперезапусков: 2 · автоперезапуск прекращён: уже 2 перезапуска") {
 		t.Fatalf("%d %s", code, out)
 	}
 	out, code = runCLI(svc, "start", "PrismML")
