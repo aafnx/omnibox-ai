@@ -231,8 +231,8 @@ func (p *Panel) validate() error {
 		return errors.New("Нужны адреса панели (hosts), от 1 до 20.")
 	}
 	for _, h := range p.Hosts {
-		if !hostPattern.MatchString(h) || len(h) > 253 {
-			return errors.New("hosts: IPv4 или DNS-имя без порта и пути.")
+		if err := ValidHost(h); err != nil {
+			return err
 		}
 	}
 	if _, _, err := p.Password.Decode(); err != nil {
@@ -250,11 +250,11 @@ func (p *Panel) validate() error {
 		}
 	}
 	if p.PublicOrigin != "" {
-		u, err := url.Parse(p.PublicOrigin)
-		if err != nil || u.Scheme != "https" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || !hostPattern.MatchString(u.Hostname()) {
-			return errors.New("public_origin: HTTPS-адрес без пути, например https://ai.example.com.")
+		origin, err := PublicOrigin(p.PublicOrigin)
+		if err != nil {
+			return err
 		}
-		p.PublicOrigin = "https://" + strings.ToLower(u.Host)
+		p.PublicOrigin = origin
 	}
 	if (p.PublicOrigin != "") != (len(p.TrustedProxies) > 0) {
 		return errors.New("Reverse proxy: укажите public_origin и IP NAS вместе или оставьте оба пустыми.")
@@ -288,6 +288,23 @@ func (a *API) validate(c *Config) error {
 		return errors.New("Ожидание в очереди: от 1 до 600 секунд.")
 	}
 	return nil
+}
+
+// ValidHost accepts a panel address: an IPv4 address or a DNS name, without port or path.
+func ValidHost(h string) error {
+	if !hostPattern.MatchString(h) || len(h) > 253 {
+		return errors.New("hosts: IPv4 или DNS-имя без порта и пути.")
+	}
+	return nil
+}
+
+// PublicOrigin checks the HTTPS address of the reverse proxy and returns it normalized.
+func PublicOrigin(raw string) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || !hostPattern.MatchString(u.Hostname()) {
+		return "", errors.New("public_origin: HTTPS-адрес без пути, например https://ai.example.com.")
+	}
+	return "https://" + strings.ToLower(u.Host), nil
 }
 
 // ClientBaseURL accepts the address clients use for the API: http(s), ends in /v1.

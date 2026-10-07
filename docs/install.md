@@ -20,7 +20,8 @@ OmniBox AI — один файл `omnibox` (`omnibox.exe` на Windows). Его 
    | Порт панели и API | 8800 |
    | Адреса панели | IPv4 этого ПК, имя компьютера, `localhost` |
    | Адрес API для клиентов | `http://<IPv4>:8800/v1` |
-   | HTTPS-адрес через NAS | без NAS (для NAS введите, например, `https://llm.fnx.red`, затем IP NAS) |
+   | HTTPS-адрес через NAS | `https://llm.fnx.red` (`-` — без NAS) |
+   | IP NAS | `192.168.1.10` |
    | Установить PrismML и Ollama | да, последние версии |
    | Каталог моделей | `C:\ProgramData\OmniBox AI\models` |
 
