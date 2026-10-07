@@ -10,12 +10,10 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"slices"
 	"strconv"
-	"syscall"
 	"time"
 
 	omnibox "github.com/aafnx/omnibox-ai"
@@ -128,7 +126,15 @@ func runEngine(args []string) error {
 	})
 }
 
+// serve is the panel service. On Windows it reports to the SCM like the engine services do;
+// without that the SCM would stop it 30 seconds after the start.
 func serve(args []string, stdout io.Writer) error {
+	return host.Serve(config.PanelService, func(ctx context.Context, running func()) error {
+		return serveContext(ctx, args, stdout, platform.NewServices(), running)
+	})
+}
+
+func serveContext(ctx context.Context, args []string, stdout io.Writer, services platform.Services, running func()) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	data := fs.String("data", platform.DataDir(), "каталог данных (config.json, журналы, модели)")
 	if err := fs.Parse(args); err != nil {
@@ -142,7 +148,6 @@ func serve(args []string, stdout io.Writer) error {
 	current := store.Get
 	// Housekeeping runs once per start, never on a timer.
 	storage.Cleanup(*data, cfg, time.Now())
-	services := platform.NewServices()
 	api := gateway.New(&gateway.Gateway{Config: current, Services: services, Dir: filepath.Join(*data, "logs", "requests")})
 	builder := &status.Builder{Config: current, Services: services, DataDir: *data, Activity: api}
 	sampler := &telemetry.Sampler{}
@@ -284,8 +289,7 @@ func serve(args []string, stdout io.Writer) error {
 		return err
 	}
 	fmt.Fprintf(stdout, "OmniBox AI %s: панель на порту %d\n", omnibox.Version, cfg.Panel.Port)
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
+	running()
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
