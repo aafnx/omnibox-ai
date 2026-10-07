@@ -64,7 +64,8 @@ func TestEnterThroughInstallUsesDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Panel.Port != 8800 || !slices.Equal(cfg.Panel.Hosts, []string{"192.168.1.77", "omnibox", "localhost"}) || cfg.API.PublicURL != "http://192.168.1.77:8800/v1" || !cfg.API.RequireKey || cfg.Panel.PublicOrigin != "" {
+	if cfg.Panel.Port != 8800 || !slices.Equal(cfg.Panel.Hosts, []string{"192.168.1.77", "omnibox", "localhost"}) || cfg.API.PublicURL != "http://192.168.1.77:8800/v1" || !cfg.API.RequireKey ||
+		cfg.Panel.PublicOrigin != "https://llm.fnx.red" || !slices.Equal(cfg.Panel.TrustedProxies, []string{"192.168.1.10"}) {
 		t.Fatalf("%+v", cfg)
 	}
 	m := shown.FindStringSubmatch(r.out.String())
@@ -103,6 +104,14 @@ func TestAnswersAreUsed(t *testing.T) {
 	}
 	if strings.Contains(r.out.String(), "скачивание последней версии") {
 		t.Fatal("engines installed although declined")
+	}
+
+	r = newRig(t, strings.Join([]string{"", "", "", "-", "n", ""}, "\n")+"\n")
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatalf("%v\n%s", err, r.out)
+	}
+	if cfg, _ := config.Load(r.configPath()); cfg.Panel.PublicOrigin != "" || len(cfg.Panel.TrustedProxies) != 0 {
+		t.Fatalf("NAS set although declined: %+v", cfg.Panel)
 	}
 }
 

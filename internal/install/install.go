@@ -303,6 +303,12 @@ type answers struct {
 	models         string
 }
 
+// The owner's NAS: Synology reverse proxy for https://llm.fnx.red. Answer "-" to install without it.
+const (
+	DefaultPublicOrigin = "https://llm.fnx.red"
+	DefaultNAS          = "192.168.1.10"
+)
+
 func (i *Installer) wizard() (answers, error) {
 	var a answers
 	addresses := DefaultAddresses()
@@ -353,8 +359,8 @@ func (i *Installer) wizard() (answers, error) {
 	}); err != nil {
 		return a, err
 	}
-	if a.publicOrigin, err = i.askValid("HTTPS-адрес через reverse proxy на NAS (Enter — без NAS)", "", func(s string) (string, error) {
-		if s == "" {
+	if a.publicOrigin, err = i.askValid("HTTPS-адрес через reverse proxy на NAS («-» — без NAS)", DefaultPublicOrigin, func(s string) (string, error) {
+		if s == "-" || strings.EqualFold(s, "нет") || strings.EqualFold(s, "no") {
 			return "", nil
 		}
 		if !strings.Contains(s, "://") {
@@ -365,7 +371,7 @@ func (i *Installer) wizard() (answers, error) {
 		return a, err
 	}
 	if a.publicOrigin != "" {
-		if _, err := i.askValid("IP NAS через запятую", "", func(s string) (string, error) {
+		if _, err := i.askValid("IP NAS через запятую", DefaultNAS, func(s string) (string, error) {
 			a.trustedProxies = nil
 			for _, ip := range strings.Split(s, ",") {
 				if ip = clean(ip); ip != "" {
