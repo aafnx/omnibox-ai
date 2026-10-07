@@ -11,9 +11,9 @@ function Read-AiSharedText {
             $reader = [IO.StreamReader]::new($stream)
             return $reader.ReadToEnd()
         } catch {
-            $error = $_.Exception
-            while ($null -ne $error.InnerException) { $error = $error.InnerException }
-            if (-not $IsWindows -or $error -isnot [IO.IOException] -or ($error.HResult -band 0xffff) -notin @(2, 3, 32, 33) -or $attempt -eq 9) { throw }
+            $cause = $_.Exception
+            while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
+            if (-not $IsWindows -or $cause -isnot [IO.IOException] -or ($cause.HResult -band 0xffff) -notin @(2, 3, 32, 33) -or $attempt -eq 9) { throw }
             [Threading.Thread]::Sleep(10)
         } finally {
             if ($null -ne $reader) { $reader.Dispose() }
