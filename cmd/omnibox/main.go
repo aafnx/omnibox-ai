@@ -275,6 +275,8 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 		API:            api,
 		Activity:       func() any { return api.Snapshot() },
 		RequestContent: api.FindContent,
+		SearchContent:  func(q, session string) any { return api.SearchContent(q, session) },
+		ExportSession:  api.ExportSession,
 		Logs:           func(engine string) any { return status.Logs(*data, current(), engine) },
 	})
 	if err != nil {

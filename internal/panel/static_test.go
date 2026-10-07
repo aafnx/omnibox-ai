@@ -65,3 +65,25 @@ func TestSystemFailuresAre500AndLogged(t *testing.T) {
 		t.Fatalf("panel log: %q", logged)
 	}
 }
+
+func TestContentSearchAndExportRoutes(t *testing.T) {
+	c := testConfig(t, nil)
+	s, _ := New(Options{Config: func() *config.Config { return c },
+		SearchContent: func(q, session string) any { return []string{q + "|" + session} },
+		ExportSession: func(session string) ([]byte, bool) { return []byte("{}\n"), session == "0123456789abcdef01234567" }})
+	cookie, _ := login(t, s, nil)
+	auth := func(r *http.Request) { r.AddCookie(cookie) }
+	if w := call(s, "GET", "/api/request-content?q=%D0%B1%D0%B0%D0%B9", "", auth); w.Code != 200 || !strings.Contains(w.Body.String(), "бай|") {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	w := call(s, "GET", "/api/request-content?session=0123456789abcdef01234567&export=1", "", auth)
+	if w.Code != 200 || !strings.Contains(w.Header().Get("Content-Disposition"), "omnibox-session-0123456789ab.jsonl") || w.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("%d %v", w.Code, w.Header())
+	}
+	if w := call(s, "GET", "/api/request-content?session=x&export=1", "", auth); w.Code != 400 {
+		t.Fatalf("%d", w.Code)
+	}
+	if w := call(s, "GET", "/api/request-content?session=0123456789abcdef01234567&export=1", "", nil); w.Code != 401 {
+		t.Fatalf("export without a session: %d", w.Code)
+	}
+}

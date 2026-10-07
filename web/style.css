@@ -336,3 +336,4 @@ body>.theme-switch{position:absolute;top:18px;right:20px;z-index:10}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 .preset-row{display:grid;gap:10px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)}
 .estimate-box{margin:6px 0 14px}
+.content-match{padding:10px 0;border-bottom:1px solid var(--border)}
