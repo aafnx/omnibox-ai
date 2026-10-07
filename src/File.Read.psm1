@@ -1,13 +1,14 @@
 Set-StrictMode -Version Latest
 
-$script:AiSharedReadTimeoutMs = 2000
+$script:AiSharedReadTimeoutMs = 5000
 
 function Read-AiSharedText {
     param([string]$Path)
     # Status reads the old snapshot without blocking an atomic writer.
-    # Windows can briefly hide or lock the path during ReplaceFile, and a scanner may hold the new file
-    # longer than a few retries; retry only these transient errors, by time rather than by count.
+    # Windows briefly locks or hides the path during ReplaceFile; retry only these transient errors,
+    # by time rather than by count.
     $watch = [Diagnostics.Stopwatch]::StartNew()
+    $missingSince = -1L
     $delay = 5
     while ($true) {
         $stream = $null; $reader = $null
@@ -20,13 +21,17 @@ function Read-AiSharedText {
             while ($null -ne $cause.InnerException) { $cause = $cause.InnerException }
             $code = $cause.HResult -band 0xffff
             # 5: a replaced file is delete-pending while an old reader still holds it.
+            # Measured on Windows runners: a file being replaced stays locked for up to half a second.
             $locked = ($cause -is [IO.IOException] -and $code -in @(32, 33)) -or ($cause -is [UnauthorizedAccessException] -and $code -eq 5)
-            # A path hidden by ReplaceFile reappears at once; a file that is really missing must fail fast.
             $hidden = $cause -is [IO.IOException] -and $code -in @(2, 3)
-            $limit = if ($locked) { $script:AiSharedReadTimeoutMs } elseif ($hidden) { 200 } else { 0 }
-            if (-not $IsWindows -or $watch.ElapsedMilliseconds -ge $limit) { throw }
+            # ReplaceFile hides the path only for a moment, often right after a lock; a file that stays
+            # missing for 200 ms is really missing and must fail fast.
+            if ($hidden) { if ($missingSince -lt 0) { $missingSince = $watch.ElapsedMilliseconds } } else { $missingSince = -1L }
+            $retry = $IsWindows -and ($locked -or $hidden) -and $watch.ElapsedMilliseconds -lt $script:AiSharedReadTimeoutMs -and
+                (-not $hidden -or $watch.ElapsedMilliseconds - $missingSince -lt 200)
+            if (-not $retry) { throw }
             [Threading.Thread]::Sleep($delay)
-            $delay = [Math]::Min($delay * 2, 100)
+            $delay = [Math]::Min($delay * 2, 50)
         } finally {
             if ($null -ne $reader) { $reader.Dispose() }
             elseif ($null -ne $stream) { $stream.Dispose() }
