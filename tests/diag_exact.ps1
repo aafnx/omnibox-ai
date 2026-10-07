@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $modulePath = Join-Path $repo 'src/OmniBox.Ai.psm1'
 $root = Join-Path ([IO.Path]::GetTempPath()) ('diag-exact-' + [Guid]::NewGuid().ToString('N')); $null = New-Item -ItemType Directory $root
-foreach ($round in 1..8) {
+foreach ($round in 1..20) {
     $config = Get-Content (Join-Path $repo 'config.example.json') -Raw | ConvertFrom-Json -AsHashtable
     $xmlPath = Join-Path $root ([Guid]::NewGuid().ToString('N') + '-bonsai.xml')
     '<service><id>bonsai</id><arguments>-m "C:\m\a.gguf" --port 18080 -c 196608</arguments><startmode>Manual</startmode><logpath>C:\ai\logs\bonsai</logpath></service>' | Set-Content -LiteralPath $xmlPath

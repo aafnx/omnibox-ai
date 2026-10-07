@@ -9,6 +9,7 @@ function Read-AiSharedText {
     # longer than a few retries; retry only these transient errors, by time rather than by count.
     $watch = [Diagnostics.Stopwatch]::StartNew()
     $delay = 5
+    $trail = [Collections.Generic.List[string]]::new()
     while ($true) {
         $stream = $null; $reader = $null
         try {
@@ -23,8 +24,9 @@ function Read-AiSharedText {
             $locked = ($cause -is [IO.IOException] -and $code -in @(32, 33)) -or ($cause -is [UnauthorizedAccessException] -and $code -eq 5)
             # A path hidden by ReplaceFile reappears at once; a file that is really missing must fail fast.
             $hidden = $cause -is [IO.IOException] -and $code -in @(2, 3)
+            $trail.Add(('{0:N0}ms:{1}' -f $watch.Elapsed.TotalMilliseconds, $code))
             $limit = if ($locked) { $script:AiSharedReadTimeoutMs } elseif ($hidden) { 200 } else { 0 }
-            if (-not $IsWindows -or $watch.ElapsedMilliseconds -ge $limit) { throw }
+            if (-not $IsWindows -or $watch.ElapsedMilliseconds -ge $limit) { throw [IO.IOException]::new("DIAG $($cause.Message) trail: $($trail -join ' ')") }
             [Threading.Thread]::Sleep($delay)
             $delay = [Math]::Min($delay * 2, 100)
         } finally {
