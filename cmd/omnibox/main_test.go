@@ -18,9 +18,9 @@ func TestVersionMatchesVersionFile(t *testing.T) {
 	}
 }
 
-func TestServeRequiresPreviewUntilControlIsPorted(t *testing.T) {
+func TestServeReportsMissingConfigAndUnknownCommands(t *testing.T) {
 	var out, errOut bytes.Buffer
-	if code := run([]string{"serve", "--root", t.TempDir()}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "--preview") {
+	if code := run([]string{"serve", "--data", t.TempDir()}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "Нет настроек") {
 		t.Fatalf("exit %d: %s", code, errOut.String())
 	}
 	if code := run([]string{"unknown"}, &out, &errOut); code != 2 {

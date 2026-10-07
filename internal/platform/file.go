@@ -77,3 +77,11 @@ func WriteAtomic(path string, data []byte, perm os.FileMode) error {
 	}
 	return replaceFile(name, path)
 }
+
+// DataDir is where config.json, secrets, logs, engines and models live by default.
+func DataDir() string {
+	if v := os.Getenv("OMNIBOX_DATA"); v != "" {
+		return v
+	}
+	return defaultDataDir()
+}

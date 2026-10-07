@@ -11,3 +11,5 @@ func replaceFile(source, target string) error { return os.Rename(source, target)
 
 // Readers never see transient lock errors on Unix: only a missing path is retried briefly.
 func transient(err error) bool { return os.IsNotExist(err) }
+
+func defaultDataDir() string { return "/var/lib/omnibox" }

@@ -19,24 +19,25 @@ const (
 	testHash     = "fNJiCucpCLQxt7lP81Db69so4Pq0/ZW8Qynri2pdgQY="
 )
 
-func testPanel(t *testing.T, change func(p map[string]any)) *config.Panel {
+func testConfig(t *testing.T, change func(c *config.Config)) *config.Config {
 	t.Helper()
-	p := map[string]any{"schema_version": 1, "port": 18090, "allowed_hosts": []any{"omnibox", "127.0.0.1"},
-		"credential": map[string]any{"salt": testSalt, "hash": testHash, "iterations": 210000}, "ssh_target": "user@omnibox"}
+	c := config.Default()
+	c.Panel.Hosts = []string{"omnibox", "127.0.0.1"}
+	c.Panel.Password = config.Password{Salt: testSalt, Hash: testHash, Iterations: 210000}
+	c.Panel.SSHTarget = "user@omnibox"
+	c.API = config.API{Enabled: true, PublicURL: "https://llm.fnx.red/v1", Engine: config.PrismML}
 	if change != nil {
-		change(p)
+		change(c)
 	}
-	data, _ := json.Marshal(p)
-	cfg, err := config.ParsePanel(data)
-	if err != nil {
+	if err := c.Validate(); err != nil {
 		t.Fatal(err)
 	}
-	return cfg
+	return c
 }
 
-func newServer(t *testing.T, p *config.Panel, preview bool) *Server {
+func newServer(t *testing.T, c *config.Config) *Server {
 	t.Helper()
-	s, err := New(Options{Panel: p, Gateway: &config.Gateway{Enabled: true, Port: 18090, BaseURL: "https://llm.fnx.red/v1"}, Preview: preview})
+	s, err := New(Options{Config: func() *config.Config { return c }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -81,17 +82,24 @@ func login(t *testing.T, s *Server, mutate func(r *http.Request)) (*http.Cookie,
 }
 
 func TestPasswordHashIsCompatibleWithPowerShellVersion(t *testing.T) {
-	p := testPanel(t, nil)
-	if !VerifyPassword(testPassword, p.Credential) {
+	p := testConfig(t, nil).Panel.Password
+	if !VerifyPassword(testPassword, p) {
 		t.Fatal("reference password rejected")
 	}
-	if VerifyPassword("wrong-password", p.Credential) || VerifyPassword("", p.Credential) || VerifyPassword(strings.Repeat("a", 257), p.Credential) {
+	if VerifyPassword("wrong-password", p) || VerifyPassword("", p) || VerifyPassword(strings.Repeat("a", 257), p) {
 		t.Fatal("wrong password accepted")
+	}
+	fresh, err := NewPassword("новый-пароль-панели")
+	if err != nil || !VerifyPassword("новый-пароль-панели", fresh) || VerifyPassword(testPassword, fresh) {
+		t.Fatalf("new password: %v", err)
+	}
+	if _, err := NewPassword("short"); err == nil {
+		t.Fatal("short password accepted")
 	}
 }
 
 func TestStaticFilesAndSecurityHeaders(t *testing.T) {
-	s := newServer(t, testPanel(t, nil), true)
+	s := newServer(t, testConfig(t, nil))
 	w := call(s, "GET", "/", "", nil)
 	if w.Code != 200 || !strings.Contains(w.Body.String(), "<html") || w.Header().Get("Content-Type") != "text/html; charset=utf-8" {
 		t.Fatalf("index: %d %q", w.Code, w.Header().Get("Content-Type"))
@@ -108,7 +116,7 @@ func TestStaticFilesAndSecurityHeaders(t *testing.T) {
 }
 
 func TestHostMethodAndSessionChecks(t *testing.T) {
-	s := newServer(t, testPanel(t, nil), true)
+	s := newServer(t, testConfig(t, nil))
 	if w := call(s, "GET", "/", "", func(r *http.Request) { r.Host = "evil.example:18091" }); w.Code != 403 {
 		t.Fatalf("foreign host: %d", w.Code)
 	}
@@ -130,7 +138,7 @@ func TestHostMethodAndSessionChecks(t *testing.T) {
 }
 
 func TestLoginSessionCsrfAndLogout(t *testing.T) {
-	s := newServer(t, testPanel(t, nil), false)
+	s := newServer(t, testConfig(t, nil))
 	cookie, csrf := login(t, s, nil)
 	if cookie.Name != "omnibox_session" || !cookie.HttpOnly || cookie.SameSite != http.SameSiteStrictMode || cookie.MaxAge != 28800 || cookie.Secure {
 		t.Fatalf("cookie: %+v", cookie)
@@ -154,7 +162,8 @@ func TestLoginSessionCsrfAndLogout(t *testing.T) {
 
 func TestLoginLockoutAfterSixFailures(t *testing.T) {
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
-	s, _ := New(Options{Panel: testPanel(t, nil), Now: func() time.Time { return now }})
+	c := testConfig(t, nil)
+	s, _ := New(Options{Config: func() *config.Config { return c }, Now: func() time.Time { return now }})
 	for i := 0; i < 6; i++ {
 		if w := call(s, "POST", "/api/login", `{"password":"wrong-password"}`, nil); w.Code != 401 {
 			t.Fatalf("attempt %d: %d", i, w.Code)
@@ -174,7 +183,8 @@ func TestLoginLockoutAfterSixFailures(t *testing.T) {
 
 func TestSessionExpiresAfterEightHours(t *testing.T) {
 	now := time.Date(2026, 10, 7, 12, 0, 0, 0, time.UTC)
-	s, _ := New(Options{Panel: testPanel(t, nil), Now: func() time.Time { return now }})
+	c := testConfig(t, nil)
+	s, _ := New(Options{Config: func() *config.Config { return c }, Now: func() time.Time { return now }})
 	cookie, _ := login(t, s, nil)
 	now = now.Add(8*time.Hour + time.Second)
 	if w := call(s, "GET", "/api/session", "", func(r *http.Request) { r.AddCookie(cookie) }); w.Code != 401 {
@@ -183,11 +193,10 @@ func TestSessionExpiresAfterEightHours(t *testing.T) {
 }
 
 func TestReverseProxySessionIsSecureAndNotReusedOverHTTP(t *testing.T) {
-	p := testPanel(t, func(p map[string]any) {
-		p["public_origin"] = "https://llm.fnx.red"
-		p["trusted_proxy_addresses"] = []any{"192.168.1.10"}
-	})
-	s := newServer(t, p, false)
+	s := newServer(t, testConfig(t, func(c *config.Config) {
+		c.Panel.PublicOrigin = "https://llm.fnx.red"
+		c.Panel.TrustedProxies = []string{"192.168.1.10"}
+	}))
 	viaProxy := func(r *http.Request) {
 		r.RemoteAddr = "192.168.1.10:40000"
 		r.Header.Set("X-Forwarded-Proto", "https")
@@ -216,24 +225,22 @@ func TestReverseProxySessionIsSecureAndNotReusedOverHTTP(t *testing.T) {
 	}
 }
 
-func TestPreviewIsReadOnlyAndUsesItsOwnCookie(t *testing.T) {
-	s := newServer(t, testPanel(t, nil), true)
+func TestRoutesNotPortedYetAndApiHost(t *testing.T) {
+	s := newServer(t, testConfig(t, nil))
 	cookie, csrf := login(t, s, nil)
-	if cookie.Name == "omnibox_session" {
-		t.Fatal("preview must not overwrite the working panel's cookie")
-	}
 	auth := func(r *http.Request) { r.AddCookie(cookie); r.Header.Set("X-Omnibox-CSRF", csrf) }
-	if w := call(s, "POST", "/api/actions", `{"action":"stopall"}`, auth); w.Code != 403 {
-		t.Fatalf("control in preview: %d", w.Code)
-	}
-	if w := call(s, "GET", "/api/status", "", auth); w.Code != 501 {
-		t.Fatalf("pending route: %d", w.Code)
-	}
-	if w := call(s, "GET", "/v1/models", "", nil); w.Code != 503 {
-		t.Fatalf("/v1 in preview: %d", w.Code)
+	if w := call(s, "POST", "/api/actions", `{"action":"stopall"}`, auth); w.Code != 501 {
+		t.Fatalf("pending control route: %d", w.Code)
 	}
 	if w := call(s, "GET", "/api/unknown", "", auth); w.Code != 404 {
 		t.Fatalf("unknown route: %d", w.Code)
+	}
+	// The clients' API host answers /v1 only, never the panel.
+	if w := call(s, "GET", "/v1/models", "", func(r *http.Request) { r.Host = "llm.fnx.red" }); w.Code != 503 {
+		t.Fatalf("/v1 on the API host: %d", w.Code)
+	}
+	if w := call(s, "GET", "/", "", func(r *http.Request) { r.Host = "llm.fnx.red" }); w.Code != 403 {
+		t.Fatalf("panel on the API host: %d", w.Code)
 	}
 }
 

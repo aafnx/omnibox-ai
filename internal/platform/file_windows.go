@@ -69,3 +69,11 @@ func transient(err error) bool {
 	}
 	return false
 }
+
+func defaultDataDir() string {
+	base := os.Getenv("ProgramData")
+	if base == "" {
+		base = `C:\ProgramData`
+	}
+	return base + `\OmniBox AI`
+}

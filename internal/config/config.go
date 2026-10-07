@@ -1,196 +1,282 @@
+// Package config is the single config.json of the Go version: panel, API, storage and the
+// engines with their launch profiles. Only the service writes it, atomically.
 package config
 
 import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/url"
 	"os"
-	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/aafnx/omnibox-ai/internal/platform"
 )
 
-// Backend is one engine entry of config.json.
-type Backend struct {
-	Name            string
-	Type            string // prism or ollama
-	Service         string
-	BaseURL         string
-	ServiceConfig   string
-	LogDirectory    string
-	LogPrefix       string
-	Executable      string
-	ModelsDirectory string
-	ActiveModel     string
+// Engine names; the engine type is the name.
+const (
+	PrismML = "prismml"
+	Ollama  = "ollama"
+)
+
+// EngineNames lists the supported engines in display order.
+var EngineNames = []string{PrismML, Ollama}
+
+// Label is the engine name shown to people.
+func Label(name string) string {
+	switch name {
+	case PrismML:
+		return "PrismML"
+	case Ollama:
+		return "Ollama"
+	}
+	return name
 }
 
-// Config is config.json, schema 1. Backends keep their file order.
+// ServiceName is the operating system service that runs the engine.
+func ServiceName(engine string) string { return "omnibox-" + engine }
+
+// PanelService is the service of the panel itself.
+const PanelService = "omnibox"
+
+// Config is config.json.
 type Config struct {
-	DefaultBackend string
-	Exclusive      bool
-	StartupTimeout int
-	StopTimeout    int
-	Backends       []Backend
+	SchemaVersion int                `json:"schema_version"`
+	Panel         Panel              `json:"panel"`
+	API           API                `json:"api"`
+	Storage       Storage            `json:"storage"`
+	Engines       map[string]*Engine `json:"engines"`
 }
 
-// Backend returns the named engine, or the default one for an empty name.
-func (c *Config) Backend(name string) (*Backend, bool) {
-	if name == "" {
-		name = c.DefaultBackend
+// Panel holds the web panel's address and password hash.
+type Panel struct {
+	Port           int      `json:"port"`
+	Hosts          []string `json:"hosts"`
+	PublicOrigin   string   `json:"public_origin,omitempty"`
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
+	Password       Password `json:"password"`
+	SSHTarget      string   `json:"ssh_target,omitempty"`
+}
+
+// Password is a PBKDF2-SHA256 hash (base64), never the password itself.
+type Password struct {
+	Salt       string `json:"salt"`
+	Hash       string `json:"hash"`
+	Iterations int    `json:"iterations"`
+}
+
+// Decode returns the raw salt and hash.
+func (p Password) Decode() (salt, hash []byte, err error) {
+	salt, err1 := base64.StdEncoding.DecodeString(p.Salt)
+	hash, err2 := base64.StdEncoding.DecodeString(p.Hash)
+	if err1 != nil || err2 != nil || len(salt) != 32 || len(hash) != 32 || p.Iterations < 210000 || p.Iterations > 1000000 {
+		return nil, nil, errors.New("Некорректный hash пароля панели.")
 	}
-	for i := range c.Backends {
-		if c.Backends[i].Name == name {
-			return &c.Backends[i], true
-		}
+	return salt, hash, nil
+}
+
+// API is the OpenAI-compatible endpoint served at /v1 on the panel port.
+type API struct {
+	Enabled    bool   `json:"enabled"`
+	PublicURL  string `json:"public_url,omitempty"`
+	RequireKey bool   `json:"require_key"`
+	KeyHash    string `json:"key_hash,omitempty"` // SHA256 hex of the key; never the key
+	Engine     string `json:"engine"`
+}
+
+// Storage controls log retention and the request journal.
+type Storage struct {
+	LogRetentionDays int    `json:"log_retention_days"` // 0 keeps logs forever
+	LogWarnMB        int    `json:"log_warn_mb"`
+	RequestLog       string `json:"request_log"` // metadata or content
+}
+
+// Default returns a configuration for a new installation; the installer fills in the rest.
+func Default() *Config {
+	return &Config{
+		SchemaVersion: 1,
+		Panel:         Panel{Port: 18090},
+		API:           API{Engine: PrismML},
+		Storage:       Storage{LogRetentionDays: 30, LogWarnMB: 200, RequestLog: "metadata"},
+		Engines:       map[string]*Engine{},
 	}
-	return nil, false
+}
+
+// Load reads and validates config.json.
+func Load(path string) (*Config, error) {
+	data, err := platform.ReadShared(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("Нет настроек: %s. Установите OmniBox AI заново.", path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return Parse(data)
+}
+
+// Parse decodes and validates config.json content; unknown fields are rejected.
+func Parse(data []byte) (*Config, error) {
+	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
+	dec.DisallowUnknownFields()
+	var c Config
+	if err := dec.Decode(&c); err != nil {
+		return nil, fmt.Errorf("Некорректный config.json: %v", err)
+	}
+	if c.Engines == nil {
+		c.Engines = map[string]*Engine{}
+	}
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// Save validates and writes config.json atomically.
+func (c *Config) Save(path string) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	return platform.WriteAtomic(path, append(data, '\n'), 0o600)
+}
+
+// Clone returns a deep copy, so a change can be prepared and validated before it is saved.
+func (c *Config) Clone() *Config {
+	data, _ := json.Marshal(c)
+	var out Config
+	_ = json.Unmarshal(data, &out)
+	if out.Engines == nil {
+		out.Engines = map[string]*Engine{}
+	}
+	return &out
 }
 
 var (
-	backendName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
-	serviceName = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
-	modelName   = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_./:-]*$`)
+	hostPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*$`)
+	sshPattern  = regexp.MustCompile(`^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+$`)
+	sha256Hex   = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	v1Suffix    = regexp.MustCompile(`/v1/?$`)
 )
 
-// LoadConfig reads and validates config.json.
-func LoadConfig(path string) (*Config, error) {
-	data, err := platform.ReadShared(path)
-	if err != nil {
-		if errors.Is(err, os.ErrNotExist) {
-			return nil, fmt.Errorf("Нет конфигурации: %s. Запусти install.ps1 или создай config.json из config.example.json.", path)
-		}
-		return nil, err
+// Validate checks every section; messages are shown to the owner as is.
+func (c *Config) Validate() error {
+	if c.SchemaVersion != 1 {
+		return errors.New("Неподдерживаемая schema_version; ожидается 1.")
 	}
-	return ParseConfig(data)
+	if err := c.Panel.validate(); err != nil {
+		return err
+	}
+	if err := c.API.validate(c); err != nil {
+		return err
+	}
+	if err := c.Storage.validate(); err != nil {
+		return err
+	}
+	ports := map[int]string{c.Panel.Port: "панель"}
+	for name, e := range c.Engines {
+		if name != PrismML && name != Ollama {
+			return fmt.Errorf("Неизвестный движок: %s", name)
+		}
+		if e == nil {
+			return fmt.Errorf("Пустые настройки движка %s.", name)
+		}
+		if err := e.validate(name); err != nil {
+			return err
+		}
+		if other, ok := ports[e.Port]; ok {
+			return fmt.Errorf("Порт %d уже занят: %s.", e.Port, other)
+		}
+		ports[e.Port] = Label(name)
+	}
+	return nil
 }
 
-// ParseConfig validates config.json content.
-func ParseConfig(data []byte) (*Config, error) {
-	root, err := parseObject(data)
-	if err != nil {
-		return nil, err
+func (p *Panel) validate() error {
+	if p.Port < 1024 || p.Port > 65535 {
+		return errors.New("Порт панели: от 1024 до 65535.")
 	}
-	if v, ok := root.integer("schema_version"); !ok || v != 1 {
-		return nil, errors.New("Неподдерживаемая schema_version; ожидается 1.")
+	if len(p.Hosts) < 1 || len(p.Hosts) > 20 {
+		return errors.New("Нужны адреса панели (hosts), от 1 до 20.")
 	}
-	backends, ok := root.child("backends")
-	if !ok || len(backends.keys) == 0 {
-		return nil, errors.New("backends должен содержать хотя бы один сервер.")
-	}
-	cfg := &Config{}
-	cfg.DefaultBackend, _ = root.str("default_backend")
-	if !backends.has(cfg.DefaultBackend) {
-		return nil, errors.New("default_backend не найден в backends.")
-	}
-	if cfg.Exclusive, ok = root.boolean("exclusive"); !ok {
-		return nil, errors.New("exclusive должен быть true или false.")
-	}
-	for _, key := range []string{"startup_timeout_seconds", "stop_timeout_seconds"} {
-		v, ok := root.integer(key)
-		if !ok {
-			return nil, fmt.Errorf("%s должен быть целым числом.", key)
-		}
-		if v < 1 || v > 3600 {
-			return nil, fmt.Errorf("%s должен быть от 1 до 3600.", key)
-		}
-		if key == "startup_timeout_seconds" {
-			cfg.StartupTimeout = int(v)
-		} else {
-			cfg.StopTimeout = int(v)
+	for _, h := range p.Hosts {
+		if !hostPattern.MatchString(h) || len(h) > 253 {
+			return errors.New("hosts: IPv4 или DNS-имя без порта и пути.")
 		}
 	}
-	services := map[string]bool{}
-	for _, name := range backends.keys {
-		if !backendName.MatchString(name) {
-			return nil, fmt.Errorf("Некорректное имя сервера: %s", name)
-		}
-		entry, ok := backends.child(name)
-		if !ok {
-			return nil, fmt.Errorf("Некорректная конфигурация %s.", name)
-		}
-		b, err := parseBackend(name, entry)
-		if err != nil {
-			return nil, err
-		}
-		key := strings.ToLower(b.Service)
-		if services[key] {
-			return nil, errors.New("Разные серверы не могут управлять одной службой.")
-		}
-		services[key] = true
-		cfg.Backends = append(cfg.Backends, b)
+	if _, _, err := p.Password.Decode(); err != nil {
+		return err
 	}
-	return cfg, nil
+	if p.SSHTarget != "" && !sshPattern.MatchString(p.SSHTarget) {
+		return errors.New("ssh_target: user@host без параметров.")
+	}
+	if len(p.TrustedProxies) > 20 {
+		return errors.New("trusted_proxies: до 20 адресов NAS.")
+	}
+	for _, a := range p.TrustedProxies {
+		if net.ParseIP(a) == nil {
+			return errors.New("trusted_proxies: только конкретные IP, без CIDR и масок.")
+		}
+	}
+	if p.PublicOrigin != "" {
+		u, err := url.Parse(p.PublicOrigin)
+		if err != nil || u.Scheme != "https" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || !hostPattern.MatchString(u.Hostname()) {
+			return errors.New("public_origin: HTTPS-адрес без пути, например https://ai.example.com.")
+		}
+		p.PublicOrigin = "https://" + strings.ToLower(u.Host)
+	}
+	if (p.PublicOrigin != "") != (len(p.TrustedProxies) > 0) {
+		return errors.New("Reverse proxy: укажите public_origin и IP NAS вместе или оставьте оба пустыми.")
+	}
+	return nil
 }
 
-func parseBackend(name string, e *object) (Backend, error) {
-	b := Backend{Name: name}
-	b.Type, _ = e.str("type")
-	if b.Type != "prism" && b.Type != "ollama" {
-		return b, fmt.Errorf("Неизвестный движок: %s", b.Type)
+// TrustedProxyIPs returns the NAS addresses whose X-Forwarded-* headers are trusted.
+func (p *Panel) TrustedProxyIPs() []net.IP {
+	out := make([]net.IP, 0, len(p.TrustedProxies))
+	for _, a := range p.TrustedProxies {
+		out = append(out, net.ParseIP(a))
 	}
-	b.Service, _ = e.str("service")
-	if !serviceName.MatchString(b.Service) {
-		return b, fmt.Errorf("Некорректное имя службы: %s", name)
-	}
-	b.BaseURL, _ = e.str("base_url")
-	if !loopbackRoot(b.BaseURL) {
-		return b, fmt.Errorf("base_url для %s должен быть локальным HTTP-адресом без пути, например http://127.0.0.1:18080.", name)
-	}
-	for _, key := range []string{"log_directory", "log_prefix", "service_config"} {
-		if v, _ := e.str(key); strings.TrimSpace(v) == "" {
-			return b, fmt.Errorf("Не задан %s для %s.", key, name)
-		}
-	}
-	b.LogDirectory, _ = e.str("log_directory")
-	b.LogPrefix, _ = e.str("log_prefix")
-	b.ServiceConfig, _ = e.str("service_config")
-	if !serviceName.MatchString(b.LogPrefix) {
-		return b, fmt.Errorf("Некорректный log_prefix для %s.", name)
-	}
-	b.Executable, _ = e.str("executable")
-	if b.Type == "ollama" && strings.TrimSpace(b.Executable) == "" {
-		return b, fmt.Errorf("Не задан executable для %s.", name)
-	}
-	if e.has("models_directory") {
-		v, ok := e.str("models_directory")
-		if !ok || !fullyQualified(v) {
-			return b, fmt.Errorf("models_directory для %s должен быть полным путём.", name)
-		}
-		b.ModelsDirectory = v
-	}
-	if e.has("active_model") {
-		v, ok := e.str("active_model")
-		if !ok || len(v) > 200 || !modelName.MatchString(v) || strings.Contains(v, "..") {
-			return b, fmt.Errorf("Некорректное имя выбранной модели: %s", name)
-		}
-		b.ActiveModel = v
-	}
-	return b, nil
+	return out
 }
 
-// loopbackRoot accepts http://<loopback host>[:port] with no path, query, fragment or user.
-func loopbackRoot(raw string) bool {
+func (a *API) validate(c *Config) error {
+	if a.Engine != PrismML && a.Engine != Ollama {
+		return errors.New("api.engine: prismml или ollama.")
+	}
+	if a.PublicURL != "" && !ClientBaseURL(a.PublicURL) {
+		return errors.New("Адрес API для клиентов: HTTP/HTTPS с /v1, без пароля и параметров.")
+	}
+	if (a.KeyHash != "" && !sha256Hex.MatchString(a.KeyHash)) || (a.RequireKey && a.KeyHash == "") {
+		return errors.New("Некорректный hash API key.")
+	}
+	return nil
+}
+
+// ClientBaseURL accepts the address clients use for the API: http(s), ends in /v1.
+func ClientBaseURL(raw string) bool {
 	u, err := url.Parse(raw)
-	if err != nil || u.Scheme != "http" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Host == "" {
 		return false
 	}
-	host := u.Hostname()
-	if strings.EqualFold(host, "localhost") {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
+	return v1Suffix.MatchString(u.Path)
 }
 
-// fullyQualified accepts absolute paths of either OS, so files written on Windows
-// validate in tests on Linux and the reverse.
-func fullyQualified(p string) bool {
-	if filepath.IsAbs(p) || strings.HasPrefix(p, "/") {
-		return true
+func (s *Storage) validate() error {
+	if s.LogRetentionDays < 0 || s.LogRetentionDays > 365 {
+		return errors.New("Срок хранения журналов: от 0 (не удалять) до 365 дней.")
 	}
-	return len(p) >= 3 && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z')) && p[1] == ':' && (p[2] == '\\' || p[2] == '/') ||
-		strings.HasPrefix(p, `\\`)
+	if s.LogWarnMB < 10 || s.LogWarnMB > 100000 {
+		return errors.New("Порог объёма журналов: от 10 до 100000 МБ.")
+	}
+	if s.RequestLog != "metadata" && s.RequestLog != "content" {
+		return errors.New("Журнал запросов: metadata или content.")
+	}
+	return nil
 }

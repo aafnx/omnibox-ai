@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"net/url"
 	"regexp"
 	"sort"
 	"strings"
@@ -30,12 +31,9 @@ const (
 
 // Options configure a panel server.
 type Options struct {
-	Panel   *config.Panel
-	Gateway *config.Gateway
-	// Preview serves the panel next to the PowerShell version: read-only, with its own cookie,
-	// so logging in here never signs the owner out of the working panel.
-	Preview bool
-	Now     func() time.Time
+	// Config returns the current settings; the service replaces them after every change.
+	Config func() *config.Config
+	Now    func() time.Time
 }
 
 type session struct {
@@ -70,9 +68,6 @@ func New(opt Options) (*Server, error) {
 		opt.Now = time.Now
 	}
 	s := &Server{opt: opt, cookie: "omnibox_session", sessions: map[string]*session{}, attempts: map[string]*attempt{}}
-	if opt.Preview {
-		s.cookie = "omnibox_preview_session"
-	}
 	files := map[string][2]string{
 		"/":                {"index.html", "text/html; charset=utf-8"},
 		"/app.js":          {"app.js", "text/javascript; charset=utf-8"},
@@ -112,14 +107,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			s.json(w, http.StatusInternalServerError, map[string]any{"error": "Внутренняя ошибка панели."})
 		}
 	}()
+	cfg := s.opt.Config()
 	path := r.URL.Path
-	isAPI := s.opt.Gateway != nil && s.opt.Gateway.Enabled && (path == "/v1" || strings.HasPrefix(path, "/v1/"))
-	if !s.hostAllowed(r.Host, isAPI) {
+	isAPI := cfg.API.Enabled && (path == "/v1" || strings.HasPrefix(path, "/v1/"))
+	if !hostAllowed(cfg, r.Host, isAPI) {
 		s.json(w, http.StatusForbidden, map[string]any{"error": "Host запрещён."})
 		return
 	}
 	if isAPI {
-		s.json(w, http.StatusServiceUnavailable, map[string]any{"error": map[string]any{"message": "The Go preview does not serve /v1 yet.", "type": "omnibox_error"}})
+		s.json(w, http.StatusServiceUnavailable, map[string]any{"error": map[string]any{"message": "The API is not available yet.", "type": "omnibox_error"}})
 		return
 	}
 	if r.Method != http.MethodGet && r.Method != http.MethodPost {
@@ -130,7 +126,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.write(w, http.StatusOK, a.contentType, a.body)
 		return
 	}
-	t, err := requestTransport(r, s.opt.Panel)
+	t, err := requestTransport(r, &cfg.Panel)
 	if err != nil {
 		s.json(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
 		return
@@ -140,7 +136,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodPost && path == "/api/login" {
-		s.login(w, r, t)
+		s.login(w, r, t, cfg)
 		return
 	}
 	key, sess := s.currentSession(r, t)
@@ -155,15 +151,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	route := r.Method + " " + path
 	switch {
 	case route == "GET /api/session":
-		s.json(w, http.StatusOK, map[string]any{"csrf": sess.csrf, "ssh_target": s.opt.Panel.SSHTarget, "port": s.opt.Panel.Port})
+		s.json(w, http.StatusOK, map[string]any{"csrf": sess.csrf, "ssh_target": cfg.Panel.SSHTarget, "port": cfg.Panel.Port})
 	case route == "POST /api/logout":
 		s.mu.Lock()
 		delete(s.sessions, key)
 		s.mu.Unlock()
 		http.SetCookie(w, s.sessionCookie("", -1, t.secure))
 		s.json(w, http.StatusOK, map[string]any{"ok": true})
-	case r.Method == http.MethodPost && s.opt.Preview:
-		s.json(w, http.StatusForbidden, map[string]any{"error": "Предпросмотр Go-версии работает только на чтение. Управляйте в основной панели."})
 	case pendingRoutes[route] || r.Method == http.MethodPost && strings.HasPrefix(path, "/api/"):
 		s.json(w, http.StatusNotImplemented, map[string]any{"error": "Ещё не перенесено в Go-версию."})
 	default:
@@ -171,15 +165,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// hostAllowed mirrors the HttpListener prefixes: the panel answers only its configured names.
-func (s *Server) hostAllowed(hostport string, api bool) bool {
+// hostAllowed answers only the configured names; /v1 also answers the clients' API host.
+func hostAllowed(cfg *config.Config, hostport string, api bool) bool {
 	host := hostport
 	if h, _, err := net.SplitHostPort(hostport); err == nil {
 		host = h
 	}
-	hosts := s.opt.Panel.AllowedHosts
-	if api && s.opt.Gateway != nil && s.opt.Gateway.BaseURL != "" {
-		if u, err := parseURL(s.opt.Gateway.BaseURL); err == nil {
+	hosts := cfg.Panel.Hosts
+	if api && cfg.API.PublicURL != "" {
+		if u, err := url.Parse(cfg.API.PublicURL); err == nil {
 			hosts = append(append([]string{}, hosts...), u.Hostname())
 		}
 	}
@@ -191,7 +185,7 @@ func (s *Server) hostAllowed(hostport string, api bool) bool {
 	return false
 }
 
-func (s *Server) login(w http.ResponseWriter, r *http.Request, t transport) {
+func (s *Server) login(w http.ResponseWriter, r *http.Request, t transport, cfg *config.Config) {
 	now := s.opt.Now().UTC()
 	s.mu.Lock()
 	for ip, a := range s.attempts {
@@ -216,7 +210,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, t transport) {
 		return
 	}
 	// PBKDF2 runs outside the lock: one slow login never blocks other requests.
-	valid := VerifyPassword(password, s.opt.Panel.Credential)
+	valid := VerifyPassword(password, cfg.Panel.Password)
 	s.mu.Lock()
 	if !valid {
 		a, ok := s.attempts[t.client]

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"net"
@@ -18,15 +19,35 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/config"
 )
 
-// VerifyPassword checks a password against panel.json's PBKDF2-SHA256 hash in constant time.
-func VerifyPassword(password string, c config.Credential) bool {
-	// Length in UTF-16 units, as the PowerShell version counts it.
+// VerifyPassword checks a password against the stored PBKDF2-SHA256 hash in constant time.
+func VerifyPassword(password string, p config.Password) bool {
 	n := len(utf16.Encode([]rune(password)))
 	if n < 1 || n > 256 {
 		return false
 	}
-	actual, err := pbkdf2.Key(sha256.New, password, c.Salt, c.Iterations, 32)
-	return err == nil && subtle.ConstantTimeCompare(actual, c.Hash) == 1
+	salt, hash, err := p.Decode()
+	if err != nil {
+		return false
+	}
+	actual, err := pbkdf2.Key(sha256.New, password, salt, p.Iterations, 32)
+	return err == nil && subtle.ConstantTimeCompare(actual, hash) == 1
+}
+
+// NewPassword hashes a new panel password (12 to 256 characters).
+func NewPassword(password string) (config.Password, error) {
+	n := len(utf16.Encode([]rune(password)))
+	if n < 12 || n > 256 {
+		return config.Password{}, errors.New("Пароль панели должен содержать от 12 до 256 символов.")
+	}
+	salt := make([]byte, 32)
+	if _, err := rand.Read(salt); err != nil {
+		return config.Password{}, err
+	}
+	hash, err := pbkdf2.Key(sha256.New, password, salt, 210000, 32)
+	if err != nil {
+		return config.Password{}, err
+	}
+	return config.Password{Salt: base64.StdEncoding.EncodeToString(salt), Hash: base64.StdEncoding.EncodeToString(hash), Iterations: 210000}, nil
 }
 
 func newNonce() string {
@@ -73,7 +94,7 @@ func requestTransport(r *http.Request, p *config.Panel) (transport, error) {
 		t.client = remote.String()
 	}
 	trusted := false
-	for _, ip := range p.TrustedProxyAddresses {
+	for _, ip := range p.TrustedProxyIPs() {
 		if remote != nil && ip.Equal(remote) {
 			trusted = true
 			break
@@ -109,5 +130,3 @@ func originAllowed(origin, authority, scheme string) bool {
 	return err == nil && u.Scheme == scheme && strings.EqualFold(u.Host, authority) && (u.Path == "" || u.Path == "/") &&
 		u.User == nil && u.RawQuery == "" && u.Fragment == ""
 }
-
-func parseURL(raw string) (*url.URL, error) { return url.Parse(raw) }

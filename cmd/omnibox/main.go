@@ -19,6 +19,7 @@ import (
 	omnibox "github.com/aafnx/omnibox-ai"
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/panel"
+	"github.com/aafnx/omnibox-ai/internal/platform"
 )
 
 func main() {
@@ -50,48 +51,31 @@ func run(args []string, stdout, stderr io.Writer) int {
 }
 
 func usage(w io.Writer) {
-	fmt.Fprintln(w, `OmniBox AI (Go)
+	fmt.Fprintln(w, `OmniBox AI
   omnibox version
-  omnibox serve --root <каталог установки> --preview [--port <порт>]`)
+  omnibox serve [--data <каталог данных>]`)
 }
 
 func serve(args []string, stdout io.Writer) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
-	root := fs.String("root", defaultRoot(), "каталог установки")
-	preview := fs.Bool("preview", false, "только чтение рядом с PowerShell-версией")
-	port := fs.Int("port", 0, "порт (в предпросмотре по умолчанию — порт панели + 1)")
+	data := fs.String("data", platform.DataDir(), "каталог данных (config.json, журналы, модели)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	if !*preview {
-		// Control, /v1 and the service mode arrive in later stages; until then only the preview runs.
-		return errors.New("Пока доступен только режим предпросмотра: omnibox serve --preview.")
-	}
-	panelCfg, err := config.LoadPanel(filepath.Join(*root, "panel.json"))
-	if err != nil {
-		return fmt.Errorf("panel.json: %w", err)
-	}
-	gateway, err := config.LoadGateway(filepath.Join(*root, "gateway.json"))
-	if err != nil {
-		return fmt.Errorf("gateway.json: %w", err)
-	}
-	listen := *port
-	if listen == 0 {
-		listen = panelCfg.Port + 1
-	}
-	if listen == panelCfg.Port || (gateway.Enabled && listen == gateway.Port) {
-		return errors.New("Предпросмотр должен работать на свободном порту, отличном от порта панели и API.")
-	}
-	handler, err := panel.New(panel.Options{Panel: panelCfg, Gateway: gateway, Preview: true})
+	cfg, err := config.Load(filepath.Join(*data, "config.json"))
 	if err != nil {
 		return err
 	}
-	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: 30 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10}
-	ln, err := net.Listen("tcp", ":"+strconv.Itoa(listen))
+	handler, err := panel.New(panel.Options{Config: func() *config.Config { return cfg }})
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(stdout, "OmniBox AI %s: предпросмотр панели на порту %d (только чтение)\n", omnibox.Version, listen)
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 60 * time.Second, MaxHeaderBytes: 64 << 10}
+	ln, err := net.Listen("tcp", ":"+strconv.Itoa(cfg.Panel.Port))
+	if err != nil {
+		return err
+	}
+	fmt.Fprintf(stdout, "OmniBox AI %s: панель на порту %d\n", omnibox.Version, cfg.Panel.Port)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	go func() {
@@ -104,14 +88,4 @@ func serve(args []string, stdout io.Writer) error {
 		return err
 	}
 	return nil
-}
-
-func defaultRoot() string {
-	if v := os.Getenv("OMNIBOX_AI_ROOT"); v != "" {
-		return v
-	}
-	if exe, err := os.Executable(); err == nil {
-		return filepath.Dir(exe)
-	}
-	return "."
 }
