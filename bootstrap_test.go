@@ -8,14 +8,20 @@ import (
 )
 
 // Windows PowerShell 5.1 reads a script without a BOM in the ANSI code page and garbles
-// Russian text; the release workflow publishes install.ps1 as it is in the repository.
+// Russian text; the release workflow publishes the .ps1 scripts as they are in the repository.
 func TestBootstrapScripts(t *testing.T) {
 	ps, err := os.ReadFile("install.ps1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.HasPrefix(ps, []byte("\xef\xbb\xbf")) {
-		t.Fatal("install.ps1 needs a UTF-8 BOM")
+	removal, err := os.ReadFile("scripts/remove-old-version.ps1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string][]byte{"install.ps1": ps, "scripts/remove-old-version.ps1": removal} {
+		if !bytes.HasPrefix(text, []byte("\xef\xbb\xbf")) {
+			t.Fatalf("%s needs a UTF-8 BOM", name)
+		}
 	}
 	sh, err := os.ReadFile("install.sh")
 	if err != nil {

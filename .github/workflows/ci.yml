@@ -30,13 +30,15 @@ jobs:
           go vet ./...
           go test ./...
           CGO_ENABLED=0 go build -o "$RUNNER_TEMP/omnibox.exe" ./cmd/omnibox
-      - name: install.ps1 parses in Windows PowerShell 5.1
+      - name: PowerShell scripts parse in Windows PowerShell 5.1
         if: ${{ !cancelled() }}
         shell: powershell
         run: |
-          $errors = $null
-          [System.Management.Automation.Language.Parser]::ParseFile("$pwd\install.ps1", [ref]$null, [ref]$errors) | Out-Null
-          if ($errors.Count) { $errors | ForEach-Object { Write-Host $_ }; exit 1 }
+          foreach ($script in @('install.ps1', 'scripts\remove-old-version.ps1')) {
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile("$pwd\$script", [ref]$null, [ref]$errors) | Out-Null
+            if ($errors.Count) { $errors | ForEach-Object { Write-Host "${script}: $_" }; exit 1 }
+          }
 
   linux:
     name: Linux (Go tests, both builds, web UI)

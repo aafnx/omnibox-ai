@@ -31,9 +31,6 @@ import (
 // FirewallRule is the name of the Windows Firewall rule for the panel port.
 const FirewallRule = "OmniBox AI"
 
-// LegacyServices are the services of the PowerShell version; they use the same ports.
-var LegacyServices = []string{"omnibox-ai", "bonsai", "ollama"}
-
 // Installer installs from the running binary.
 type Installer struct {
 	ProgramDir string
@@ -274,7 +271,6 @@ type answers struct {
 	trustedProxies []string
 	engines        bool
 	models         string
-	removeLegacy   []string
 }
 
 func (i *Installer) wizard() (answers, error) {
@@ -317,15 +313,6 @@ func (i *Installer) wizard() (answers, error) {
 	}
 	a.engines = i.yes("Установить PrismML и Ollama последних версий?", true)
 	a.models = i.ask("Каталог моделей", filepath.Join(i.DataDir, "models"))
-	var legacy []string
-	for _, name := range LegacyServices {
-		if s, err := i.Services.Query(name); err == nil && s.State != platform.Missing {
-			legacy = append(legacy, name)
-		}
-	}
-	if len(legacy) > 0 && i.yes("Найдены службы PowerShell-версии ("+strings.Join(legacy, ", ")+"). Удалить их после установки? Файлы останутся на диске.", true) {
-		a.removeLegacy = legacy
-	}
 	return a, nil
 }
 
@@ -386,17 +373,8 @@ func (i *Installer) fresh(ctx context.Context) error {
 	if err != nil {
 		return i.rollback(err)
 	}
-	// Committed. The old version's services go only now, when the new panel works: a failed
-	// installation leaves the old version running.
-	for _, name := range a.removeLegacy {
-		if err := i.Services.Remove(name, control.StopTimeout); err != nil {
-			i.say("Службу %s удалить не удалось: %v", name, err)
-		} else {
-			i.say("Служба %s прежней версии удалена.", name)
-		}
-	}
-	// Engines are downloaded afterwards: a slow or failed download leaves a working panel,
-	// where the engines can be installed later.
+	// Committed. Engines are downloaded afterwards: a slow or failed download leaves a working
+	// panel, where the engines can be installed later.
 	if a.engines {
 		i.installEngines(ctx, a.models)
 	}
