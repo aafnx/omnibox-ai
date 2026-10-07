@@ -25,6 +25,7 @@ type rig struct {
 	services *platform.FakeServices
 	rules    map[string]int
 	health   []string
+	path     []string
 }
 
 func newRig(t *testing.T, input string) *rig {
@@ -43,7 +44,12 @@ func newRig(t *testing.T, input string) *rig {
 		AllowPort:  func(rule string, port int) error { r.rules[rule] = port; return nil },
 		RemoveRule: func(rule string) error { delete(r.rules, rule); return nil },
 		Health:     func(_ context.Context, port int, host string) error { r.health = append(r.health, host); return nil },
-		Addresses:  func() []string { return []string{"192.168.1.77", "omnibox", "localhost"} }}
+		Addresses:  func() []string { return []string{"192.168.1.77", "omnibox", "localhost"} },
+		Restrict:   func(string) error { return nil }, ShimDir: filepath.Join(root, "shim"),
+		AddToPath: func(dir string) (func() error, error) {
+			r.path = append(r.path, dir)
+			return func() error { r.path = r.path[:len(r.path)-1]; return nil }, nil
+		}}
 	return r
 }
 
@@ -101,7 +107,7 @@ func TestAnswersAreUsed(t *testing.T) {
 }
 
 func TestFailureAtEveryStepUndoesEverything(t *testing.T) {
-	for _, stepName := range []string{"files", "data", "config", "services", "firewall", "panel", "panel-started"} {
+	for _, stepName := range []string{"files", "data", "config", "services", "firewall", "command", "path", "panel", "panel-started"} {
 		r := newRig(t, "")
 		r.Yes = true
 		r.services.Set("bonsai", platform.Running)
@@ -121,6 +127,9 @@ func TestFailureAtEveryStepUndoesEverything(t *testing.T) {
 		}
 		if _, err := os.Stat(filepath.Dir(r.binary())); err == nil {
 			t.Fatalf("%s: binary left", stepName)
+		}
+		if shim, _ := r.shim(); fileExists(shim) || len(r.path) != 0 {
+			t.Fatalf("%s: ai command or PATH left", stepName)
 		}
 		if s, _ := r.services.Query("bonsai"); s.State == platform.Missing {
 			t.Fatalf("%s: the old version was removed by a failed install", stepName)
@@ -198,5 +207,33 @@ func TestUpdateSwitchesServicesAndRollsBack(t *testing.T) {
 	entries, _ := os.ReadDir(filepath.Join(r.ProgramDir, "bin"))
 	if len(entries) != 2 {
 		t.Fatalf("versions kept: %v", entries)
+	}
+}
+
+func fileExists(path string) bool { _, err := os.Stat(path); return err == nil }
+
+func TestAiCommandFollowsTheInstalledVersion(t *testing.T) {
+	r := newRig(t, "")
+	r.Yes = true
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	shim, _ := r.shim()
+	first, _ := os.ReadFile(shim)
+	if !strings.Contains(string(first), r.binary()) || !strings.Contains(string(first), " ai ") || len(r.path) != 1 || r.path[0] != r.ShimDir {
+		t.Fatalf("%q %v", first, r.path)
+	}
+	r.Version = "0.18.1"
+	r.Health = func(context.Context, int, string) error { return errors.New("down") }
+	r.Run(context.Background())
+	if after, _ := os.ReadFile(shim); !bytes.Equal(after, first) {
+		t.Fatal("a failed update left the ai command on the new version")
+	}
+	r.Health = func(context.Context, int, string) error { return nil }
+	if err := r.Run(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if after, _ := os.ReadFile(shim); !strings.Contains(string(after), filepath.Join("bin", "0.18.1")) {
+		t.Fatalf("%q", after)
 	}
 }
