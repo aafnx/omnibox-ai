@@ -5,10 +5,11 @@ $script:AiVersion = (Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRo
 
 function Read-AiConfig {
     param([string]$Path)
-    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+    try { $text = Read-AiSharedText $Path }
+    catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] {
         throw "Нет конфигурации: $Path. Запусти install.ps1 или создай config.json из config.example.json."
     }
-    $config = Read-AiSharedText $Path | ConvertFrom-Json -AsHashtable
+    $config = $text | ConvertFrom-Json -AsHashtable
     if ($config.schema_version -ne 1) { throw 'Неподдерживаемая schema_version; ожидается 1.' }
     if ($config.backends -isnot [System.Collections.IDictionary] -or $config.backends.Count -eq 0) {
         throw 'backends должен содержать хотя бы один сервер.'
@@ -87,11 +88,12 @@ function ConvertTo-AiContext {
 function Read-AiServiceXml {
     param($Backend)
     $path = $Backend.service_config
-    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Нет XML службы: $path" }
+    try { $text = Read-AiSharedText $path }
+    catch [IO.FileNotFoundException], [IO.DirectoryNotFoundException] { throw "Нет XML службы: $path" }
     $settings = [Xml.XmlReaderSettings]::new()
     $settings.DtdProcessing = [Xml.DtdProcessing]::Prohibit
     $settings.XmlResolver = $null
-    $source = [IO.StringReader]::new((Read-AiSharedText $path))
+    $source = [IO.StringReader]::new($text)
     $reader = [Xml.XmlReader]::Create($source, $settings)
     try {
         $xml = [Xml.XmlDocument]::new()
