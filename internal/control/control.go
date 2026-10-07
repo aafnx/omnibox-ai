@@ -12,6 +12,7 @@ import (
 
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/engine"
+	"github.com/aafnx/omnibox-ai/internal/enginemgr"
 	"github.com/aafnx/omnibox-ai/internal/platform"
 )
 
@@ -33,6 +34,12 @@ type Controller struct {
 	StartupTimeout time.Duration
 	// Report receives progress lines for the panel's operation log.
 	Report func(string)
+	// Manager installs engine versions; DataDir and Executable are what new engine services run.
+	Manager    *enginemgr.Manager
+	DataDir    string
+	Executable string
+	// Gate lets a version switch wait for the running generation.
+	Gate Reserver
 
 	mu sync.Mutex
 }
