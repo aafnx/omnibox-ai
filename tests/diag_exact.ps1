@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 $modulePath = Join-Path $repo 'src/OmniBox.Ai.psm1'
 $root = Join-Path ([IO.Path]::GetTempPath()) ('diag-exact-' + [Guid]::NewGuid().ToString('N')); $null = New-Item -ItemType Directory $root
-foreach ($round in 1..20) {
+foreach ($round in 1..30) {
     $config = Get-Content (Join-Path $repo 'config.example.json') -Raw | ConvertFrom-Json -AsHashtable
     $xmlPath = Join-Path $root ([Guid]::NewGuid().ToString('N') + '-bonsai.xml')
     '<service><id>bonsai</id><arguments>-m "C:\m\a.gguf" --port 18080 -c 196608</arguments><startmode>Manual</startmode><logpath>C:\ai\logs\bonsai</logpath></service>' | Set-Content -LiteralPath $xmlPath
@@ -26,5 +26,5 @@ foreach ($round in 1..20) {
     $writeError = $null
     try { for ($i = 0; $i -lt 200; $i++) { & $m { param($P, $B) Write-AiAtomicBytes $P $B } $configPath $configBytes; & $m { param($P, $B) Write-AiAtomicBytes $P $B } $xmlPath $xmlBytes } } catch { $writeError = $_.Exception.Message }
     $state.stop = $true; $job | Wait-Job | Receive-Job; Remove-Job $job
-    "round ${round}: reads $($state.count); writer error: $writeError; reader error: $($state.error)"
+    $slow = $state.slowest; "round ${round}: reads $($state.count); writer error: $writeError; reader error: $($state.error)"
 }
