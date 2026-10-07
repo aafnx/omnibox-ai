@@ -57,44 +57,67 @@ type Installer struct {
 	// running uninstaller, which Windows deletes only after it exits.
 	RemoveFromPath func(dir string) error
 	RemoveProgram  func(dir string) error
-	// FailAt makes the named step fail, to test the rollback.
-	FailAt string
+	// FailAt makes the named step fail, to test the rollback; CrashAt stops the installer there
+	// without any rollback, as a power loss would, to test the recovery from the journal.
+	FailAt  string
+	CrashAt string
 
 	in   *bufio.Reader
 	eof  bool
+	mode string
 	undo []step
 }
 
 type step struct {
-	name string
-	undo func() error
+	Name string `json:"name"`
+	Undo Undo   `json:"undo"`
 }
+
+// errCrash is a simulated power loss: no rollback runs.
+var errCrash = errors.New("simulated crash")
 
 func (i *Installer) say(format string, args ...any) { fmt.Fprintf(i.Out, format+"\n", args...) }
 
-// do runs one step and remembers how to undo it.
-func (i *Installer) do(name string, run func() error, undo func() error) error {
+// do runs one step. Its undo is written to the journal before the step runs: a step cut off
+// halfway is undone too, which every undo allows.
+func (i *Installer) do(name string, run func() error, undo *Undo) error {
 	if i.FailAt == name {
 		return fmt.Errorf("Искусственный сбой установки на шаге %s.", name)
 	}
-	if err := run(); err != nil {
-		return fmt.Errorf("%s: %v", name, err)
-	}
 	if undo != nil {
-		i.undo = append(i.undo, step{name, undo})
+		i.undo = append(i.undo, step{name, *undo})
+		if err := i.record(); err != nil {
+			i.undo = i.undo[:len(i.undo)-1]
+			return fmt.Errorf("журнал установки: %v", err)
+		}
+	}
+	if i.CrashAt == name {
+		return errCrash
+	}
+	if err := run(); err != nil {
+		if undo != nil {
+			// The step did not happen: nothing of it to undo.
+			i.undo = i.undo[:len(i.undo)-1]
+			_ = i.record()
+		}
+		return fmt.Errorf("%s: %v", name, err)
 	}
 	return nil
 }
 
+// commit ends the installation: nothing is undone any more.
+func (i *Installer) commit() {
+	i.undo = nil
+	_ = os.Remove(i.journalPath())
+}
+
 func (i *Installer) rollback(cause error) error {
+	if errors.Is(cause, errCrash) {
+		return cause
+	}
 	i.say("Установка не завершилась: %v", cause)
 	i.say("Возвращаю всё как было…")
-	var failed []string
-	for k := len(i.undo) - 1; k >= 0; k-- {
-		if err := i.undo[k].undo(); err != nil {
-			failed = append(failed, i.undo[k].name+": "+err.Error())
-		}
-	}
+	failed := i.undoAll()
 	if len(failed) > 0 {
 		return fmt.Errorf("%v. Откат выполнен не полностью: %s", cause, strings.Join(failed, "; "))
 	}
@@ -124,25 +147,27 @@ func (i *Installer) shim() (path, content string) {
 func (i *Installer) placeCommand() error {
 	path, content := i.shim()
 	old, readErr := os.ReadFile(path)
+	undo := &Undo{Op: undoWrite, Path: path, Data: old}
+	if readErr != nil {
+		undo = &Undo{Op: undoRemove, Path: path}
+	}
 	if err := i.do("command", func() error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
 		return os.WriteFile(path, []byte(content), 0o755)
-	}, func() error {
-		if readErr != nil {
-			return os.Remove(path)
-		}
-		return os.WriteFile(path, old, 0o755)
-	}); err != nil {
+	}, undo); err != nil {
 		return err
 	}
-	var undo func() error
+	// An update finds the directory on PATH already and leaves it there on rollback.
+	var pathUndo *Undo
+	if i.mode == "fresh" {
+		pathUndo = &Undo{Op: undoPathRemove, Path: i.ShimDir}
+	}
 	return i.do("path", func() error {
-		var err error
-		undo, err = i.AddToPath(i.ShimDir)
+		_, err := i.AddToPath(i.ShimDir)
 		return err
-	}, func() error { return undo() })
+	}, pathUndo)
 }
 
 func panelSpec(exe, data string) platform.ServiceSpec {
@@ -159,11 +184,16 @@ func engineSpec(name, exe, data string) platform.ServiceSpec {
 // Run installs, or updates when OmniBox AI is already installed.
 func (i *Installer) Run(ctx context.Context) error {
 	i.in = bufio.NewReader(i.In)
-	// Each run undoes only its own steps.
+	// Each run undoes only its own steps, after what an earlier, cut-off run left.
 	i.undo = nil
+	if err := i.recover(); err != nil {
+		return err
+	}
 	if _, err := os.Stat(i.configPath()); err == nil {
+		i.mode = "update"
 		return i.update(ctx)
 	}
+	i.mode = "fresh"
 	return i.fresh(ctx)
 }
 
@@ -199,17 +229,16 @@ func (i *Installer) placeBinary() error {
 	if _, err := os.Stat(exe); err == nil {
 		existed = true
 	}
+	var undo *Undo
+	if !existed {
+		undo = &Undo{Op: undoRemove, Path: filepath.Dir(exe)}
+	}
 	return i.do("files", func() error {
 		if existed && samePath(i.Source, exe) {
 			return nil
 		}
 		return copyFile(i.Source, exe)
-	}, func() error {
-		if existed {
-			return nil
-		}
-		return os.RemoveAll(filepath.Dir(exe))
-	})
+	}, undo)
 }
 
 func samePath(a, b string) bool {
@@ -438,21 +467,20 @@ func (i *Installer) fresh(ctx context.Context) error {
 		}, nil); err != nil {
 			return err
 		}
-		if err := i.do("config", func() error { return cfg.Save(i.configPath()) }, func() error { return os.Remove(i.configPath()) }); err != nil {
+		if err := i.do("config", func() error { return cfg.Save(i.configPath()) }, &Undo{Op: undoRemove, Path: i.configPath()}); err != nil {
 			return err
 		}
 		spec := panelSpec(i.binary(), i.DataDir)
-		if err := i.do("services", func() error { return i.Services.Install(spec) },
-			func() error { return i.Services.Remove(spec.Name, control.StopTimeout) }); err != nil {
+		if err := i.do("services", func() error { return i.Services.Install(spec) }, &Undo{Op: undoServiceRemove, Service: spec.Name}); err != nil {
 			return err
 		}
-		if err := i.do("firewall", func() error { return i.AllowPort(FirewallRule, a.port) }, func() error { return i.RemoveRule(FirewallRule) }); err != nil {
+		if err := i.do("firewall", func() error { return i.AllowPort(FirewallRule, a.port) }, &Undo{Op: undoRuleRemove}); err != nil {
 			return err
 		}
 		if err := i.placeCommand(); err != nil {
 			return err
 		}
-		if err := i.do("panel", func() error { return i.Services.Start(config.PanelService) }, func() error { return i.Services.Stop(config.PanelService, control.StopTimeout) }); err != nil {
+		if err := i.do("panel", func() error { return i.Services.Start(config.PanelService) }, &Undo{Op: undoServiceStop, Service: config.PanelService}); err != nil {
 			return err
 		}
 		return i.do("panel-started", func() error { return i.Health(ctx, a.port, healthHost(a.hosts)) }, nil)
@@ -460,6 +488,7 @@ func (i *Installer) fresh(ctx context.Context) error {
 	if err != nil {
 		return i.rollback(err)
 	}
+	i.commit()
 	// Committed. The secrets are shown first: an engine download can be long or interrupted,
 	// and the panel works without engines.
 	i.say("")
@@ -555,7 +584,7 @@ func (i *Installer) update(ctx context.Context) error {
 			}
 			previous := spec
 			previous.Executable = old
-			if err := i.do("services", func() error { return i.Services.Change(spec) }, func() error { return i.Services.Change(previous) }); err != nil {
+			if err := i.do("services", func() error { return i.Services.Change(spec) }, &Undo{Op: undoServiceChange, Spec: &previous}); err != nil {
 				return err
 			}
 		}
@@ -568,10 +597,7 @@ func (i *Installer) update(ctx context.Context) error {
 				return err
 			}
 			return i.Services.Start(config.PanelService)
-		}, func() error {
-			_ = i.Services.Stop(config.PanelService, control.StopTimeout)
-			return i.Services.Start(config.PanelService)
-		}); err != nil {
+		}, &Undo{Op: undoServiceStart, Service: config.PanelService}); err != nil {
 			return err
 		}
 		return i.do("panel-started", func() error { return i.Health(ctx, cfg.Panel.Port, healthHost(cfg.Panel.Hosts)) }, nil)
@@ -579,6 +605,7 @@ func (i *Installer) update(ctx context.Context) error {
 	if err != nil {
 		return i.rollback(err)
 	}
+	i.commit()
 	i.pruneVersions()
 	i.say("Готово: OmniBox AI %s. Работающий движок перейдёт на новую версию при следующем запуске.", i.Version)
 	i.say("Пароль панели и API key не изменились. Забыли — ai password reset или ai key new (от имени администратора) покажут новые.")

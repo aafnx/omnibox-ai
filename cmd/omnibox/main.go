@@ -116,7 +116,7 @@ func runInstall(args []string, in io.Reader, out io.Writer) error {
 	i := &install.Installer{ProgramDir: *program, DataDir: *data, Version: omnibox.Version, Source: exe,
 		Services: platform.NewServices(), Manager: &enginemgr.Manager{DataDir: *data}, In: in, Out: out, Yes: *yes,
 		AllowPort: platform.AllowPort, RemoveRule: platform.RemovePortRule, Health: install.PanelHealth,
-		Restrict: platform.RestrictToAdmins, AddToPath: platform.AddToPath, ShimDir: shimDir(*program)}
+		Restrict: platform.RestrictToAdmins, AddToPath: platform.AddToPath, RemoveFromPath: platform.RemoveFromPath, ShimDir: shimDir(*program)}
 	return i.Run(context.Background())
 }
 
