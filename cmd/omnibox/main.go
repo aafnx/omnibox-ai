@@ -26,6 +26,7 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/panel"
 	"github.com/aafnx/omnibox-ai/internal/platform"
 	"github.com/aafnx/omnibox-ai/internal/status"
+	"github.com/aafnx/omnibox-ai/internal/storage"
 	"github.com/aafnx/omnibox-ai/internal/telemetry"
 )
 
@@ -99,6 +100,8 @@ func serve(args []string, stdout io.Writer) error {
 	}
 	cfg := store.Get()
 	current := store.Get
+	// Housekeeping runs once per start, never on a timer.
+	storage.Cleanup(*data, cfg, time.Now())
 	services := platform.NewServices()
 	api := gateway.New(&gateway.Gateway{Config: current, Services: services, Dir: filepath.Join(*data, "logs", "requests")})
 	builder := &status.Builder{Config: current, Services: services, DataDir: *data, Activity: api}
@@ -126,6 +129,24 @@ func serve(args []string, stdout io.Writer) error {
 		Telemetry: func(ctx context.Context, once bool) any {
 			observeSlots(ctx, current(), api)
 			return telemetryView(ctx, current(), services, sampler, once)
+		},
+		Storage: func() any { return storage.GetUsage(*data, current()) },
+		StorageAction: func(body map[string]any) (any, error) {
+			var result *storage.Result
+			switch body["action"] {
+			case "save":
+				if err := storage.Save(*data, store, body); err != nil {
+					return nil, err
+				}
+			case "cleanup":
+				r := storage.Cleanup(*data, current(), time.Now())
+				result = &r
+			default:
+				return nil, errors.New("Неизвестное действие с журналами.")
+			}
+			u := storage.GetUsage(*data, current())
+			u.Cleanup = result
+			return u, nil
 		},
 		API:            api,
 		Activity:       func() any { return api.Snapshot() },
