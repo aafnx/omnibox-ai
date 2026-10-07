@@ -23,7 +23,10 @@ function New-AiGatewayRuntimeCache {
 
 function Get-AiRuntimeCacheInput {
     param([string]$ConfigPath, [string]$Name)
-    $text = [IO.File]::ReadAllText($ConfigPath)
+    # Atomic writers must be able to replace the file while a worker reads the old snapshot on Windows.
+    $stream = [IO.File]::Open($ConfigPath, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+    $reader = [IO.StreamReader]::new($stream)
+    try { $text = $reader.ReadToEnd() } finally { $reader.Dispose() }
     $config = $text | ConvertFrom-Json -AsHashtable
     $parts = [Collections.Generic.List[string]]::new()
     $version = [OmniBox.InferenceStats]::RuntimeVersion
