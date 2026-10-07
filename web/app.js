@@ -386,7 +386,7 @@ function residencyText(r){
 setInterval(()=>{if(loggedIn&&!document.hidden&&snapshot)document.querySelectorAll('.engine-idle').forEach(el=>{const b=snapshot.backends.find(b=>b.name===el.dataset.backend);if(b)el.textContent=idleText(b);});},1000);
 
 // The program is installed and updated by the same one command; settings, password and key stay.
-const updateCommands=[['Windows (PowerShell от имени администратора)','gh release download --repo aafnx/omnibox-ai --pattern install.ps1 --dir $env:TEMP --clobber; powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\\install.ps1'],['Linux','gh release download --repo aafnx/omnibox-ai --pattern install.sh --dir /tmp --clobber && sudo sh /tmp/install.sh']];
+const updateCommands=[['Обычно — в терминале от имени администратора (Windows) или через sudo (Linux)','ai update'],['Если команда ai не работает: Windows (PowerShell от имени администратора)','gh release download --repo aafnx/omnibox-ai --pattern install.ps1 --dir $env:TEMP --clobber; powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\\install.ps1'],['Linux','gh release download --repo aafnx/omnibox-ai --pattern install.sh --dir /tmp --clobber && sudo sh /tmp/install.sh']];
 function renderUpdateInfo(){
  $('update-version').textContent=snapshot?`Установлена версия ${snapshot.version}.`:'—';
  $('update-commands').replaceChildren(...updateCommands.map(([label,command])=>copyRow(label,command)));

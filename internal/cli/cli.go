@@ -30,7 +30,8 @@ const usage = `ai — управление OmniBox AI на этом компью
   ai logs [<движок>]         последние строки журналов
   ai password reset          новый пароль панели (все входы завершаются)
   ai key new                 новый API key (прежний сразу перестаёт действовать)
-  ai update                  как обновить программу
+  ai update [версия]         скачать выпуск, проверить SHA256 и обновить программу;
+                             без версии — последняя (нужен gh или GitHub token)
   ai version                 версия`
 
 // Run executes one command and returns the process exit code.
@@ -113,13 +114,6 @@ func run(args []string, svc Service, out io.Writer) error {
 			return err
 		}
 		fmt.Fprintf(out, "Новый API key: %s\nПрежний ключ больше не действует. Ключ показан один раз; сохраните его в менеджере паролей.\n", r.Key)
-	case "update":
-		fmt.Fprintln(out, "Обновление — та же команда, что и установка; настройки, пароль и API key сохраняются.")
-		fmt.Fprintln(out, "Windows (PowerShell от имени администратора):")
-		fmt.Fprintln(out, `  gh release download --repo aafnx/omnibox-ai --pattern install.ps1 --dir $env:TEMP --clobber`)
-		fmt.Fprintln(out, `  powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\install.ps1`)
-		fmt.Fprintln(out, "Linux:")
-		fmt.Fprintln(out, "  gh release download --repo aafnx/omnibox-ai --pattern install.sh --dir /tmp --clobber && sudo sh /tmp/install.sh")
 	default:
 		return fmt.Errorf("Неизвестная команда %q. Справка: ai help", args[0])
 	}

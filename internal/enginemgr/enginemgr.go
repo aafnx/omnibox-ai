@@ -312,7 +312,7 @@ func (m *Manager) Install(ctx context.Context, name, tag string) (Version, error
 		if err := m.download(ctx, a, archive); err != nil {
 			return Version{}, err
 		}
-		if err := extract(archive, files); err != nil {
+		if err := Extract(archive, files); err != nil {
 			return Version{}, fmt.Errorf("Не удалось распаковать %s: %v", a.Name, err)
 		}
 		_ = os.Remove(archive)
@@ -409,8 +409,8 @@ func writeFile(path string, r io.Reader, mode os.FileMode) error {
 	return f.Close()
 }
 
-// extract unpacks a zip or tar.gz archive; links and entries outside dir are refused.
-func extract(archive, dir string) error {
+// Extract unpacks a zip or tar.gz archive; links and entries outside dir are refused.
+func Extract(archive, dir string) error {
 	if strings.HasSuffix(archive, ".zip") {
 		z, err := zip.OpenReader(archive)
 		if err != nil {

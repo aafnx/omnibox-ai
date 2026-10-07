@@ -55,6 +55,10 @@ func run(args []string, stdout, stderr io.Writer) int {
 		}
 		return 0
 	case "ai":
+		// The update runs here, as the administrator who typed it: it replaces the service.
+		if len(args) > 1 && args[1] == "update" {
+			return runUpdate(args[2:], defaultUpdater(), stdout, stderr)
+		}
 		return cli.Run(args[1:], local.Dial(platform.DataDir()), stdout, stderr)
 	case "install":
 		if err := runInstall(args[1:], os.Stdin, stdout); err != nil {

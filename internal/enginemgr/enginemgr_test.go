@@ -199,7 +199,7 @@ func TestExtractRefusesEscapingEntries(t *testing.T) {
 	} {
 		archive := filepath.Join(dir, name)
 		os.WriteFile(archive, data, 0o644)
-		if err := extract(archive, filepath.Join(dir, "out")); err == nil {
+		if err := Extract(archive, filepath.Join(dir, "out")); err == nil {
 			t.Fatalf("%s: escaping entry accepted", name)
 		}
 	}
@@ -208,7 +208,7 @@ func TestExtractRefusesEscapingEntries(t *testing.T) {
 	}
 	archive := filepath.Join(dir, "ok.tgz")
 	os.WriteFile(archive, tgzOf(t, map[string]string{"bin/ollama": "x", "lib/ollama/libggml.so": "y"}), 0o644)
-	if err := extract(archive, filepath.Join(dir, "ok")); err != nil {
+	if err := Extract(archive, filepath.Join(dir, "ok")); err != nil {
 		t.Fatal(err)
 	}
 	if findExe(filepath.Join(dir, "ok"), "ollama") == "" {
