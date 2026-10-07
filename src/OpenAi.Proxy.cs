@@ -17,6 +17,16 @@ namespace OmniBox {
         }) { Timeout = TimeSpan.FromMinutes(30) };
         private static int Active;
         private const int BodyLimit = 8 * 1024 * 1024;
+        // Shared by the listener and the proxy: reject unauthenticated requests before a runtime probe.
+        public static bool IsAuthorized(HttpListenerRequest request, bool requireKey, string hash) {
+            if (!requireKey) return true;
+            var auth = request.Headers["Authorization"] ?? "";
+            if (!auth.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase) || auth.Length > 256 || hash == null || hash.Length != 64) return false;
+            try {
+                var actual = SHA256.HashData(Encoding.UTF8.GetBytes(auth.Substring(7)));
+                return CryptographicOperations.FixedTimeEquals(actual, Convert.FromHexString(hash));
+            } catch (FormatException) { return false; }
+        }
         private static async Task Error(HttpListenerContext ctx, int code, string message) {
             var bytes = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new {error=new {message,type="omnibox_error",code}}));
             ctx.Response.StatusCode = code; ctx.Response.ContentType = "application/json; charset=utf-8";
@@ -56,7 +66,7 @@ namespace OmniBox {
             public void Finish() { if(!SSE && !Overflow){string text=Text.ToString();InferenceStats.Observe(Record,text);Capture?.SetBody(text);} }
         }
         public static Task Handle(HttpListenerContext ctx, string baseUrl, bool requireKey, string hash, string upstreamKey,
-            string backend, string selectedModel, int contextLimit, string engineType, string placement = "auto") {
+            string backend, string selectedModel, int contextLimit, string engineType, string placement = "auto", long runtimeVersion = -1) {
             return Task.Run(async () => {
                 using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(30));
                 bool acquired=false, started=false, completed=false;
@@ -66,12 +76,7 @@ namespace OmniBox {
                     bool allowed=(req.HttpMethod=="GET" && path=="/v1/models") ||
                         (req.HttpMethod=="POST" && (path=="/v1/chat/completions" || path=="/v1/completions" || path=="/v1/embeddings" || path=="/v1/responses"));
                     if(!allowed || req.Url.Query.Length!=0){await Error(ctx,404,"Unsupported OpenAI route.");return;}
-                    if(requireKey) {
-                        var auth=req.Headers["Authorization"]??"";
-                        if(!auth.StartsWith("Bearer ",StringComparison.OrdinalIgnoreCase)||auth.Length>256||hash.Length!=64){await Error(ctx,401,"API key required.");return;}
-                        var actual=SHA256.HashData(Encoding.UTF8.GetBytes(auth.Substring(7)));
-                        if(!CryptographicOperations.FixedTimeEquals(actual,Convert.FromHexString(hash))){await Error(ctx,401,"Invalid API key.");return;}
-                    }
+                    if(!IsAuthorized(req,requireKey,hash)){await Error(ctx,401,"Invalid or missing API key.");return;}
                     if(Interlocked.Increment(ref Active)>8){Interlocked.Decrement(ref Active);await Error(ctx,429,"Too many simultaneous requests.");return;}
                     acquired=true;
                     var target=new Uri(baseUrl.TrimEnd('/')+path);
@@ -108,7 +113,7 @@ namespace OmniBox {
                                 json["options"]=loadOptions;
                                 body=Encoding.UTF8.GetBytes(json.ToJsonString());
                             }
-                            record=InferenceStats.Begin(backend,selectedModel,path,contextLimit,req.Headers["X-Omnibox-Session"],timeout);
+                            record=InferenceStats.Begin(backend,selectedModel,path,contextLimit,req.Headers["X-Omnibox-Session"],timeout,runtimeVersion);
                             if(record==null){await Error(ctx,409,"The model is busy or a control operation is running. Retry after completion.");return;}
                             if(clientBody!=null)capture=new ContentCapture(clientBody);
                             bool streaming=json["stream"] is JsonValue sv && sv.TryGetValue<bool>(out bool flag) && flag;

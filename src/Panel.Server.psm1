@@ -1,21 +1,7 @@
 Set-StrictMode -Version Latest
 
 $script:AiVersion = (Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'VERSION') -Raw).Trim()
-function Send-AiHttpResponse {
-    param($Context, [int]$Status, $Value, [string]$ContentType = 'application/json; charset=utf-8')
-    $response = $Context.Response
-    $response.StatusCode = $Status
-    $response.ContentType = $ContentType
-    $response.Headers['Cache-Control'] = 'no-store'
-    $response.Headers['X-Content-Type-Options'] = 'nosniff'
-    $response.Headers['X-Frame-Options'] = 'DENY'
-    $response.Headers['Referrer-Policy'] = 'no-referrer'
-    $response.Headers['Content-Security-Policy'] = "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
-    $text = if ($Value -is [byte[]]) { '' } elseif ($ContentType.StartsWith('application/json')) { ConvertTo-Json -InputObject $Value -Depth 20 -Compress } else { [string]$Value }
-    $bytes = if($Value -is [byte[]]){$Value}else{[Text.Encoding]::UTF8.GetBytes($text)}
-    $response.ContentLength64 = $bytes.Length
-    try { $response.OutputStream.Write($bytes, 0, $bytes.Length) } finally { $response.Close() }
-}
+Import-Module (Join-Path $PSScriptRoot 'Panel.Requests.psm1')
 
 function Read-AiHttpJson {
     param($Request)
@@ -62,6 +48,7 @@ function Start-AiPanelOperation {
         if(-not [OmniBox.InferenceStats]::BeginControl($cancel)){throw 'Модель занята генерацией или другой операцией. Дождись завершения либо останови сервер.'}
         if($Body.Contains('backend')){[OmniBox.InferenceStats]::EndModelSession([string]$Body.backend)}
     }
+    [OmniBox.InferenceStats]::InvalidateRuntime()
     try{$job = Start-ThreadJob -ArgumentList $EngineModulePath, $ConfigPath, $Body, $guarded -ScriptBlock {
         param($EnginePath, $Config, $Request, $Guarded)
         $ErrorActionPreference = 'Stop'
@@ -71,7 +58,7 @@ function Start-AiPanelOperation {
             $messages = @(Invoke-AiPanelAction -ConfigPath $Config -Request $Request)
             @{ ok = $true; message = ($messages | ForEach-Object { [string]$_ }) -join "`n" }
         } catch { @{ ok = $false; message = $_.Exception.Message } }
-        finally{if($Guarded){[OmniBox.InferenceStats]::EndControl()}}
+        finally{[OmniBox.InferenceStats]::InvalidateRuntime();if($Guarded){[OmniBox.InferenceStats]::EndControl()}}
     }}catch{if($guarded){[OmniBox.InferenceStats]::EndControl()};throw}
     $id = [Guid]::NewGuid().ToString('N')
     $backend = if ($Body.Contains('backend')) { [string]$Body.backend } else { '' }
@@ -114,6 +101,8 @@ function Start-OmniBoxPanel {
         $usage.drives = @($disk.drives); $usage.models = @($disk.models)
         $usage
     }
+    $runtimeCache = New-AiGatewayRuntimeCache
+    $requestJobs = [Collections.Generic.List[object]]::new()
     $telemetryJob=$null;$telemetryCache=$null;$telemetryTime=[DateTime]::MinValue
     $assets = @{ '/inter-400.woff'=@('web/inter-400.woff.base64','font/woff'); '/inter-600.woff'=@('web/inter-600.woff.base64','font/woff'); '/favicon.svg'=@('web/favicon.svg','image/svg+xml'); '/brand-light.svg'=@('web/brand-light.svg','image/svg+xml'); '/brand-dark.svg'=@('web/brand-dark.svg','image/svg+xml'); '/'  = @('web/index.html','text/html; charset=utf-8'); '/app.js' = @('web/app.js','text/javascript; charset=utf-8'); '/style.css' = @('web/style.css','text/css; charset=utf-8') }
     try {
@@ -133,13 +122,10 @@ function Start-OmniBoxPanel {
                 if ($isApi) {
                     if((Get-AiWebUpdateStatus $updates).phase -eq 'installing'){Send-AiHttpResponse $context 503 @{error=@{message='Application update in progress.';type='omnibox_error'}};continue}
                     $apiConfig = Read-AiGatewayConfig $gatewayPath
-                    $backends = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
-                    if (-not $apiConfig.enabled -or -not $backends.backends.Contains($apiConfig.backend)) { Send-AiHttpResponse $context 503 @{error=@{message='Selected backend is unavailable.';type='omnibox_error'}}; continue }
-                    $b = $backends.backends[$apiConfig.backend]
-                    $upstreamKey = if ($b.Contains('upstream_api_key')) { [string]$b.upstream_api_key } else { '' }
-                    $runtime=Get-AiGatewayRuntime $configPath $apiConfig.backend
-                    if(-not $runtime.available){Send-AiHttpResponse $context ([int]$runtime.status) @{error=@{message=$runtime.reason;type='omnibox_error'}};continue}
-                    $null = [OmniBox.OpenAiProxy]::Handle($context, [string]$b.base_url, [bool]$apiConfig.require_key, [string]$apiConfig.key_hash, $upstreamKey, [string]$apiConfig.backend, [string]$runtime.model, [int]$runtime.context, [string]$runtime.type, $(if($runtime.Contains('placement')){[string]$runtime.placement}else{'auto'}))
+                    if (-not [OmniBox.OpenAiProxy]::IsAuthorized($request, [bool]$apiConfig.require_key, [string]$apiConfig.key_hash)) {
+                        Send-AiHttpResponse $context 401 @{ error = @{ message = 'Invalid or missing API key.'; type = 'omnibox_error' } }; continue
+                    }
+                    Start-AiHttpRequestJob $requestJobs $context 'gateway' $EngineModulePath $configPath $gatewayPath $runtimeCache
                     continue
                 }
                 if ($method -notin @('GET','POST')) { Send-AiHttpResponse $context 405 @{ error = 'Метод запрещён.' }; continue }
@@ -225,14 +211,13 @@ function Start-OmniBoxPanel {
                         $backends = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
                         $changed = Update-AiGatewaySettings $c $body @($backends.backends.Keys)
                         Write-AiGatewayConfig $gatewayPath $changed.config
+                        [OmniBox.InferenceStats]::InvalidateRuntime()
                         Send-AiHttpResponse $context 200 @{ gateway=(Get-AiGatewayView $changed.config);key=$changed.key }
                     }
                     'POST /api/logout' { $sessions.Remove($cookie.Value); $secureCookie = if ($transport.secure) { '; Secure' } else { '' }; $context.Response.Headers['Set-Cookie'] = "omnibox_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0$secureCookie"; Send-AiHttpResponse $context 200 @{ ok = $true } }
                     'GET /api/status' {
-                        $data = Get-AiDashboard -ConfigPath $configPath -IncludeGpu:($request.QueryString['gpu'] -eq '1')
-                        $data.operations = @(Update-AiPanelOperations $operations)
-                        foreach($b in $data.backends){if(($b.service -eq 'Stopped' -or $b.sleeping) -and -not [OmniBox.InferenceStats]::IsActive([string]$b.name)){[OmniBox.InferenceStats]::EndModelSession([string]$b.name)}}
-                        Send-AiHttpResponse $context 200 $data
+                        $operationView = @(Update-AiPanelOperations $operations)
+                        Start-AiHttpRequestJob $requestJobs $context 'dashboard' $EngineModulePath $configPath $gatewayPath $runtimeCache ($request.QueryString['gpu'] -eq '1') $operationView
                     }
                     'GET /api/storage' { Send-AiHttpResponse $context 200 (& $storageView) }
                     'POST /api/storage' {
@@ -304,6 +289,7 @@ function Start-OmniBoxPanel {
         }
     } finally {
         $listener.Close()
+        foreach ($entry in $requestJobs) { Stop-Job $entry.job; Remove-Job $entry.job -Force }
         Stop-AiWebUpdateManager $updates
         foreach ($operation in $operations.Values) { if ($null -ne $operation.job) { Stop-Job $operation.job; Remove-Job $operation.job -Force } }
         foreach($entry in $catalog.Values){Stop-Job $entry.job;Remove-Job $entry.job -Force}

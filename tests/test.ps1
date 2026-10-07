@@ -1068,6 +1068,39 @@ try {
         Assert-True (-not [OmniBox.InferenceStats]::BeginControl($false));Assert-True ([OmniBox.InferenceStats]::BeginControl($true));Assert-True $cancel.IsCancellationRequested
         [OmniBox.InferenceStats]::Finish($r,504,$false);[OmniBox.InferenceStats]::EndControl();$cancel.Dispose()
     }
+    Test 'cached runtime is invalidated on control start and finish without file changes' {
+        $requests = Import-Module (Join-Path $repo 'src/Panel.Requests.psm1') -PassThru
+        $cache = New-AiGatewayRuntimeCache
+        $f = New-WebModelFixture
+        & $requests { $script:checks = 0; function script:Get-AiGatewayRuntime { param($ConfigPath, $Name) $script:checks++; @{ available = $true; model = 'm'; context = 32768; type = 'prism'; placement = 'auto' } } }
+        $first = Get-AiCachedGatewayRuntime $cache $f.path 'bonsai'
+        $null = Get-AiCachedGatewayRuntime $cache $f.path 'bonsai'
+        Assert-Equal (& $requests { $script:checks }) 1
+        Assert-True ([OmniBox.InferenceStats]::BeginControl($false))
+        try {
+            $blocked = Get-AiCachedGatewayRuntime $cache $f.path 'bonsai'
+            Assert-Equal $blocked.runtime.status 409
+            Assert-Equal (& $requests { $script:checks }) 1
+        } finally { [OmniBox.InferenceStats]::EndControl() }
+        $next = Get-AiCachedGatewayRuntime $cache $f.path 'bonsai'
+        Assert-Equal (& $requests { $script:checks }) 2
+        Assert-True ($first.version -ne $next.version)
+    }
+    Test 'cached runtime notices CLI configuration changes and generation admission rejects old snapshots' {
+        $requests = Import-Module (Join-Path $repo 'src/Panel.Requests.psm1') -PassThru
+        $cache = New-AiGatewayRuntimeCache; $f = New-WebModelFixture
+        & $requests { $script:checks = 0; function script:Get-AiGatewayRuntime { param($ConfigPath, $Name) $script:checks++; @{ available = $true; model = 'm'; context = 32768; type = 'prism'; placement = 'auto' } } }
+        $first = Get-AiCachedGatewayRuntime $cache $f.path 'bonsai'
+        $changed = Get-Content -LiteralPath $f.path -Raw | ConvertFrom-Json -AsHashtable
+        $changed.backends.ollama.active_model = 'changed:latest'
+        $changed | ConvertTo-Json -Depth 10 | Set-Content -LiteralPath $f.path
+        $null = Get-AiCachedGatewayRuntime $cache $f.path 'bonsai'
+        Assert-Equal (& $requests { $script:checks }) 2
+        Assert-True ([OmniBox.InferenceStats]::BeginControl($false)); [OmniBox.InferenceStats]::EndControl()
+        $cancel = [Threading.CancellationTokenSource]::new()
+        try { Assert-True ($null -eq [OmniBox.InferenceStats]::Begin('bonsai', 'm', '/v1/chat/completions', 32768, $null, $cancel, $first.version)) }
+        finally { $cancel.Dispose() }
+    }
     Test 'request journal rotates bounded files and preserves unknown usage as null' {
         $dir=Join-Path $testRoot 'rotation-usage';[OmniBox.InferenceStats]::Configure($dir)
         [IO.File]::WriteAllText((Join-Path $dir 'requests.jsonl'),('x'*(4MB)))
