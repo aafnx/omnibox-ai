@@ -1,0 +1,282 @@
+// Package config is the single config.json of the Go version: panel, API, storage and the
+// engines with their launch profiles. Only the service writes it, atomically.
+package config
+
+import (
+	"bytes"
+	"encoding/base64"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"net"
+	"net/url"
+	"os"
+	"regexp"
+	"strings"
+
+	"github.com/aafnx/omnibox-ai/internal/platform"
+)
+
+// Engine names; the engine type is the name.
+const (
+	PrismML = "prismml"
+	Ollama  = "ollama"
+)
+
+// EngineNames lists the supported engines in display order.
+var EngineNames = []string{PrismML, Ollama}
+
+// Label is the engine name shown to people.
+func Label(name string) string {
+	switch name {
+	case PrismML:
+		return "PrismML"
+	case Ollama:
+		return "Ollama"
+	}
+	return name
+}
+
+// ServiceName is the operating system service that runs the engine.
+func ServiceName(engine string) string { return "omnibox-" + engine }
+
+// PanelService is the service of the panel itself.
+const PanelService = "omnibox"
+
+// Config is config.json.
+type Config struct {
+	SchemaVersion int                `json:"schema_version"`
+	Panel         Panel              `json:"panel"`
+	API           API                `json:"api"`
+	Storage       Storage            `json:"storage"`
+	Engines       map[string]*Engine `json:"engines"`
+}
+
+// Panel holds the web panel's address and password hash.
+type Panel struct {
+	Port           int      `json:"port"`
+	Hosts          []string `json:"hosts"`
+	PublicOrigin   string   `json:"public_origin,omitempty"`
+	TrustedProxies []string `json:"trusted_proxies,omitempty"`
+	Password       Password `json:"password"`
+	SSHTarget      string   `json:"ssh_target,omitempty"`
+}
+
+// Password is a PBKDF2-SHA256 hash (base64), never the password itself.
+type Password struct {
+	Salt       string `json:"salt"`
+	Hash       string `json:"hash"`
+	Iterations int    `json:"iterations"`
+}
+
+// Decode returns the raw salt and hash.
+func (p Password) Decode() (salt, hash []byte, err error) {
+	salt, err1 := base64.StdEncoding.DecodeString(p.Salt)
+	hash, err2 := base64.StdEncoding.DecodeString(p.Hash)
+	if err1 != nil || err2 != nil || len(salt) != 32 || len(hash) != 32 || p.Iterations < 210000 || p.Iterations > 1000000 {
+		return nil, nil, errors.New("Некорректный hash пароля панели.")
+	}
+	return salt, hash, nil
+}
+
+// API is the OpenAI-compatible endpoint served at /v1 on the panel port.
+type API struct {
+	Enabled    bool   `json:"enabled"`
+	PublicURL  string `json:"public_url,omitempty"`
+	RequireKey bool   `json:"require_key"`
+	KeyHash    string `json:"key_hash,omitempty"` // SHA256 hex of the key; never the key
+	Engine     string `json:"engine"`
+}
+
+// Storage controls log retention and the request journal.
+type Storage struct {
+	LogRetentionDays int    `json:"log_retention_days"` // 0 keeps logs forever
+	LogWarnMB        int    `json:"log_warn_mb"`
+	RequestLog       string `json:"request_log"` // metadata or content
+}
+
+// Default returns a configuration for a new installation; the installer fills in the rest.
+func Default() *Config {
+	return &Config{
+		SchemaVersion: 1,
+		Panel:         Panel{Port: 18090},
+		API:           API{Engine: PrismML},
+		Storage:       Storage{LogRetentionDays: 30, LogWarnMB: 200, RequestLog: "metadata"},
+		Engines:       map[string]*Engine{},
+	}
+}
+
+// Load reads and validates config.json.
+func Load(path string) (*Config, error) {
+	data, err := platform.ReadShared(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, fmt.Errorf("Нет настроек: %s. Установите OmniBox AI заново.", path)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return Parse(data)
+}
+
+// Parse decodes and validates config.json content; unknown fields are rejected.
+func Parse(data []byte) (*Config, error) {
+	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
+	dec.DisallowUnknownFields()
+	var c Config
+	if err := dec.Decode(&c); err != nil {
+		return nil, fmt.Errorf("Некорректный config.json: %v", err)
+	}
+	if c.Engines == nil {
+		c.Engines = map[string]*Engine{}
+	}
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// Save validates and writes config.json atomically.
+func (c *Config) Save(path string) error {
+	if err := c.Validate(); err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	return platform.WriteAtomic(path, append(data, '\n'), 0o600)
+}
+
+// Clone returns a deep copy, so a change can be prepared and validated before it is saved.
+func (c *Config) Clone() *Config {
+	data, _ := json.Marshal(c)
+	var out Config
+	_ = json.Unmarshal(data, &out)
+	if out.Engines == nil {
+		out.Engines = map[string]*Engine{}
+	}
+	return &out
+}
+
+var (
+	hostPattern = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]*$`)
+	sshPattern  = regexp.MustCompile(`^[a-zA-Z0-9_.-]+@[a-zA-Z0-9_.-]+$`)
+	sha256Hex   = regexp.MustCompile(`^[a-f0-9]{64}$`)
+	v1Suffix    = regexp.MustCompile(`/v1/?$`)
+)
+
+// Validate checks every section; messages are shown to the owner as is.
+func (c *Config) Validate() error {
+	if c.SchemaVersion != 1 {
+		return errors.New("Неподдерживаемая schema_version; ожидается 1.")
+	}
+	if err := c.Panel.validate(); err != nil {
+		return err
+	}
+	if err := c.API.validate(c); err != nil {
+		return err
+	}
+	if err := c.Storage.validate(); err != nil {
+		return err
+	}
+	ports := map[int]string{c.Panel.Port: "панель"}
+	for name, e := range c.Engines {
+		if name != PrismML && name != Ollama {
+			return fmt.Errorf("Неизвестный движок: %s", name)
+		}
+		if e == nil {
+			return fmt.Errorf("Пустые настройки движка %s.", name)
+		}
+		if err := e.validate(name); err != nil {
+			return err
+		}
+		if other, ok := ports[e.Port]; ok {
+			return fmt.Errorf("Порт %d уже занят: %s.", e.Port, other)
+		}
+		ports[e.Port] = Label(name)
+	}
+	return nil
+}
+
+func (p *Panel) validate() error {
+	if p.Port < 1024 || p.Port > 65535 {
+		return errors.New("Порт панели: от 1024 до 65535.")
+	}
+	if len(p.Hosts) < 1 || len(p.Hosts) > 20 {
+		return errors.New("Нужны адреса панели (hosts), от 1 до 20.")
+	}
+	for _, h := range p.Hosts {
+		if !hostPattern.MatchString(h) || len(h) > 253 {
+			return errors.New("hosts: IPv4 или DNS-имя без порта и пути.")
+		}
+	}
+	if _, _, err := p.Password.Decode(); err != nil {
+		return err
+	}
+	if p.SSHTarget != "" && !sshPattern.MatchString(p.SSHTarget) {
+		return errors.New("ssh_target: user@host без параметров.")
+	}
+	if len(p.TrustedProxies) > 20 {
+		return errors.New("trusted_proxies: до 20 адресов NAS.")
+	}
+	for _, a := range p.TrustedProxies {
+		if net.ParseIP(a) == nil {
+			return errors.New("trusted_proxies: только конкретные IP, без CIDR и масок.")
+		}
+	}
+	if p.PublicOrigin != "" {
+		u, err := url.Parse(p.PublicOrigin)
+		if err != nil || u.Scheme != "https" || u.User != nil || (u.Path != "" && u.Path != "/") || u.RawQuery != "" || u.Fragment != "" || !hostPattern.MatchString(u.Hostname()) {
+			return errors.New("public_origin: HTTPS-адрес без пути, например https://ai.example.com.")
+		}
+		p.PublicOrigin = "https://" + strings.ToLower(u.Host)
+	}
+	if (p.PublicOrigin != "") != (len(p.TrustedProxies) > 0) {
+		return errors.New("Reverse proxy: укажите public_origin и IP NAS вместе или оставьте оба пустыми.")
+	}
+	return nil
+}
+
+// TrustedProxyIPs returns the NAS addresses whose X-Forwarded-* headers are trusted.
+func (p *Panel) TrustedProxyIPs() []net.IP {
+	out := make([]net.IP, 0, len(p.TrustedProxies))
+	for _, a := range p.TrustedProxies {
+		out = append(out, net.ParseIP(a))
+	}
+	return out
+}
+
+func (a *API) validate(c *Config) error {
+	if a.Engine != PrismML && a.Engine != Ollama {
+		return errors.New("api.engine: prismml или ollama.")
+	}
+	if a.PublicURL != "" && !ClientBaseURL(a.PublicURL) {
+		return errors.New("Адрес API для клиентов: HTTP/HTTPS с /v1, без пароля и параметров.")
+	}
+	if (a.KeyHash != "" && !sha256Hex.MatchString(a.KeyHash)) || (a.RequireKey && a.KeyHash == "") {
+		return errors.New("Некорректный hash API key.")
+	}
+	return nil
+}
+
+// ClientBaseURL accepts the address clients use for the API: http(s), ends in /v1.
+func ClientBaseURL(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.Host == "" {
+		return false
+	}
+	return v1Suffix.MatchString(u.Path)
+}
+
+func (s *Storage) validate() error {
+	if s.LogRetentionDays < 0 || s.LogRetentionDays > 365 {
+		return errors.New("Срок хранения журналов: от 0 (не удалять) до 365 дней.")
+	}
+	if s.LogWarnMB < 10 || s.LogWarnMB > 100000 {
+		return errors.New("Порог объёма журналов: от 10 до 100000 МБ.")
+	}
+	if s.RequestLog != "metadata" && s.RequestLog != "content" {
+		return errors.New("Журнал запросов: metadata или content.")
+	}
+	return nil
+}

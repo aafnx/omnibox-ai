@@ -28,6 +28,16 @@ jobs:
           fetch-depth: 0
       - name: PowerShell version
         run: $PSVersionTable.PSVersion.ToString(); if ($PSVersionTable.PSVersion -lt [version]'7.4') { throw 'PowerShell 7.4+ required' }
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Go tests
+        if: ${{ !cancelled() }}
+        run: |
+          go vet ./...
+          go test ./...
+          go build -o "$env:RUNNER_TEMP/omnibox.exe" ./cmd/omnibox
       - name: Core tests
         if: ${{ !cancelled() }}
         run: ./tests/test.ps1
@@ -72,6 +82,20 @@ jobs:
         with:
           # Release commits from releases.json are checked and installed in tests.
           fetch-depth: 0
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Go format, vet, tests and builds for Windows and Linux
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          unformatted="$(gofmt -l .)"; if [ -n "$unformatted" ]; then echo "$unformatted"; exit 1; fi
+          go vet ./...
+          GOOS=windows go vet ./...
+          go test ./...
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o "$RUNNER_TEMP/omnibox" ./cmd/omnibox
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o "$RUNNER_TEMP/omnibox.exe" ./cmd/omnibox
       - name: Core tests
         if: ${{ !cancelled() }}
         run: ./tests/test.ps1
