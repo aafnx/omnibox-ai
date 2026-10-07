@@ -905,6 +905,20 @@ try {
         Assert-Equal (Read-AiPanelSessions $path $credential).Count 0
         $sessions[$key].expires = [DateTime]::UtcNow.AddHours(1)
         Write-AiPanelSessions $path $credential $sessions
+        & $sessionModule {
+            param($Path)
+            $plain = Unprotect-AiPanelSessions ([IO.File]::ReadAllBytes($Path))
+            try {
+                $data = [Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json -AsHashtable
+                foreach ($session in $data.sessions.Values) { $session.expires = [DateTime]::UtcNow.AddSeconds(-1).ToString('o') }
+                $changed = [Text.Encoding]::UTF8.GetBytes(($data | ConvertTo-Json -Depth 6))
+                try { [IO.File]::WriteAllBytes($Path, (Protect-AiPanelSessions $changed)) }
+                finally { [Array]::Clear($changed, 0, $changed.Length) }
+            } finally { [Array]::Clear($plain, 0, $plain.Length) }
+        } $path
+        Assert-Equal (Read-AiPanelSessions $path $credential).Count 0
+        $sessions[$key].expires = [DateTime]::UtcNow.AddHours(1)
+        Write-AiPanelSessions $path $credential $sessions
         $loaded = Read-AiPanelSessions $path $credential
         $loaded.Remove($key)
         Write-AiPanelSessions $path $credential $loaded
@@ -1059,10 +1073,16 @@ try {
     Test 'password reset invalidates old password and restarts only panel service' {
         $m=New-TestModule;$dir=Join-Path $testRoot 'panel-recovery'
         & $m {$script:services['omnibox-ai']=[pscustomobject]@{Status='Running';StartType='Automatic'}}
+        $sessionPath = Join-Path $dir 'panel-sessions.dpapi'
+        $oldCredential = & $m {param($Root)(Read-AiPanelConfig (Join-Path $Root 'panel.json')).credential} $dir
+        $sessionKey = Get-AiPanelSessionKey (New-AiPanelNonce)
+        Write-AiPanelSessions $sessionPath $oldCredential @{ $sessionKey = @{ csrf = New-AiPanelNonce; expires = [DateTime]::UtcNow.AddHours(1); secure = $true } }
+        Assert-Equal (Read-AiPanelSessions $sessionPath $oldCredential).Count 1
         & $m {param($Root)Set-AiPanelPassword $Root 'new recovery password'} $dir
         $c=& $m {param($Root)Read-AiPanelConfig (Join-Path $Root 'panel.json')} $dir
         Assert-True (& $m {param($c)Test-AiPanelPassword 'new recovery password' $c.credential} $c)
         Assert-True (-not(& $m {param($c)Test-AiPanelPassword 'old recovery password' $c.credential} $c))
+        Assert-Equal (Read-AiPanelSessions $sessionPath $c.credential).Count 0
         Assert-Equal ($c.trusted_proxy_addresses -join ',') '192.168.1.9';Assert-Equal $c.public_origin 'https://llm.fnx.red'
         Assert-Equal ((Get-Calls $m)-join ',') 'stop:omnibox-ai,start:omnibox-ai'
         $bytes=Get-Content (Join-Path $dir 'panel.json') -Raw;Assert-True (-not $bytes.Contains('new recovery password'))

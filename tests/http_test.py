@@ -105,12 +105,22 @@ class PanelFixture:
         self.start()
 
     def start(self):
+        self.output.flush()
+        output_offset=self.output.tell()
         self.process = subprocess.Popen(self.command, stdout=self.output, stderr=subprocess.STDOUT, env=self.process_env)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 self.output.flush()
                 raise RuntimeError((self.root / 'server-output.log').read_text())
+            # Managed HttpListener accepts before its internal collections are initialized.
+            # Sending the readiness probe too early can crash Start() on Linux.
+            # The server emits this marker only after listener.Start() has returned.
+            self.output.flush()
+            startup=(self.root/'server-output.log').read_bytes()[output_offset:].decode('utf-8',errors='replace')
+            if f'panel: port {self.port}' not in startup:
+                time.sleep(.05)
+                continue
             try:
                 urllib.request.urlopen(self.url, timeout=.5).close()
                 break
