@@ -1,4 +1,5 @@
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'File.Read.psm1')
 
 function New-AiPanelPassword {
     param([string]$Password)
@@ -35,7 +36,7 @@ function Set-AiPanelProxyDefaults {
 
 function Read-AiPanelConfig {
     param([string]$Path)
-    $config = Get-Content -LiteralPath $Path -Raw | ConvertFrom-Json -AsHashtable
+    $config = Read-AiSharedText $Path | ConvertFrom-Json -AsHashtable
     if ($config.schema_version -ne 1 -or $config.port -isnot [long] -and $config.port -isnot [int] -or $config.port -lt 1024 -or $config.port -gt 65535) { throw 'Некорректная конфигурация панели или порт.' }
     if ($config.allowed_hosts -isnot [array] -or $config.allowed_hosts.Count -lt 1 -or $config.allowed_hosts.Count -gt 20) { throw 'Нужны allowed_hosts панели.' }
     foreach ($hostName in $config.allowed_hosts) {

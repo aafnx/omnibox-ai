@@ -832,6 +832,172 @@ try {
         Assert-True (-not (Test-Path (Join-Path $dir 'bad-model.gguf')))
         Assert-Equal @(Get-ChildItem -LiteralPath $dir -Filter '*.part').Count 0
     }
+    Test 'settings writers replace a file that a status reader holds open' {
+        $dir = Join-Path $testRoot ([Guid]::NewGuid().ToString('N')); $null = New-Item -ItemType Directory -Path $dir
+        Import-Module (Join-Path $repo 'src/File.Read.psm1') -Force
+        Import-Module (Join-Path $repo 'src/Gateway.Helpers.psm1') -Force
+        $path = Join-Path $dir 'gateway.json'
+        Write-AiGatewayConfig $path @{schema_version=1;enabled=$true;port=18090;base_url='https://llm.fnx.red/v1';backend='bonsai';require_key=$false;key_hash=''}
+        # A status read in progress: the same sharing the product's readers use.
+        $reader = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+        try {
+            Write-AiGatewayConfig $path @{schema_version=1;enabled=$true;port=18090;base_url='https://llm.fnx.red/v1';backend='ollama';require_key=$false;key_hash=''}
+            $temp = Join-Path $dir 'plain.tmp'; [IO.File]::WriteAllText($temp, 'new'); [IO.File]::WriteAllText((Join-Path $dir 'plain.txt'), 'old')
+            $second = [IO.File]::Open((Join-Path $dir 'plain.txt'), [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
+            try { Move-AiFileOver $temp (Join-Path $dir 'plain.txt') } finally { $second.Dispose() }
+        } finally { $reader.Dispose() }
+        Assert-Equal (Read-AiGatewayConfig $path).backend 'ollama'
+        Assert-Equal (Read-AiSharedText (Join-Path $dir 'plain.txt')) 'new'; Assert-True (-not (Test-Path -LiteralPath $temp))
+        [IO.File]::WriteAllText($temp, 'first'); Move-AiFileOver $temp (Join-Path $dir 'fresh.txt')
+        Assert-Equal (Read-AiSharedText (Join-Path $dir 'fresh.txt')) 'first'
+    }
+    Test 'concurrent production config and XML readers allow atomic replacement' {
+        $f = New-WebModelFixture; $m = New-TestModule
+        $state = @{ ready = [Threading.ManualResetEventSlim]::new($false); stop = [Threading.ManualResetEventSlim]::new($false) }
+        $job = Start-ThreadJob -ArgumentList $modulePath, $f.path, $state -ScriptBlock {
+            param($ModulePath, $ConfigPath, $State)
+            $ErrorActionPreference = 'Stop'
+            $engine = Import-Module $ModulePath -PassThru
+            & $engine {
+                param($ConfigPath, $State)
+                $count = 0
+                while (-not $State.stop.IsSet) {
+                    $config = Read-AiConfig $ConfigPath
+                    $null = Read-AiServiceXml $config.backends.bonsai
+                    $count++
+                    $State.ready.Set()
+                }
+                return $count
+            } $ConfigPath $State
+        }
+        try {
+            Assert-True ($state.ready.Wait(10000)) 'Reader did not start'
+            $configBytes = [IO.File]::ReadAllBytes($f.path)
+            $xmlBytes = [IO.File]::ReadAllBytes($f.bonsai)
+            for ($i = 0; $i -lt 200; $i++) {
+                & $m { param($Path, $Bytes) Write-AiAtomicBytes $Path $Bytes } $f.path $configBytes
+                & $m { param($Path, $Bytes) Write-AiAtomicBytes $Path $Bytes } $f.bonsai $xmlBytes
+            }
+            $state.stop.Set()
+            $count = $job | Wait-Job | Receive-Job -ErrorAction Stop
+            Assert-True ($count -gt 0)
+        } finally {
+            $state.stop.Set()
+            $job | Wait-Job | Out-Null
+            Remove-Job $job -Force
+            $state.ready.Dispose(); $state.stop.Dispose()
+        }
+    }
+
+    Test 'production dashboard and telemetry work in a fresh thread without LASTEXITCODE' {
+        $f = New-WebModelFixture
+        $job = Start-ThreadJob -ArgumentList $modulePath, $f.path -ScriptBlock {
+            param($ModulePath, $ConfigPath)
+            $ErrorActionPreference = 'Stop'
+            $engine = Import-Module $ModulePath -PassThru
+            & $engine {
+                param($ConfigPath)
+                Remove-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue
+                function script:Get-AiService { param($Name) [pscustomobject]@{ Status = 'Stopped'; StartType = 'Manual' } }
+                function script:Get-Command { param($Name) if ($Name -ne 'nvidia-smi') { throw 'Unexpected native lookup' } }
+                function script:Get-CimInstance { throw 'No real hardware queries in this fixture' }
+                $dashboard = Get-AiDashboard $ConfigPath -IncludeGpu
+                $telemetry = Get-AiTelemetry $ConfigPath -Snapshot
+                $absent = $null -eq (Get-Variable LASTEXITCODE -Scope Global -ErrorAction SilentlyContinue)
+                $global:LASTEXITCODE = 17
+                function script:Get-Command { [pscustomobject]@{ Source = 'Invoke-TestGpu' } }
+                function script:Invoke-TestGpu { $global:LASTEXITCODE = 9 }
+                $null = Get-AiGpuData
+                return @{ dashboard = $dashboard; telemetry = $telemetry; absent = $absent; restored = $global:LASTEXITCODE }
+            } $ConfigPath
+        }
+        try {
+            $result = $job | Wait-Job | Receive-Job -ErrorAction Stop
+            Assert-Equal $result.dashboard.backends.Count 2
+            Assert-Equal $result.dashboard.gpu.Count 0
+            Assert-True $result.telemetry.enabled
+            Assert-Equal $result.telemetry.sample.gpu.Count 0
+            Assert-True $result.absent
+            Assert-Equal $result.restored 17
+        } finally { Remove-Job $job -Force }
+    }
+
+    Import-Module (Join-Path $repo 'src/Panel.Security.psm1')
+    $sessionModule = Import-Module (Join-Path $repo 'src/Panel.Sessions.psm1') -PassThru
+    if (-not $IsWindows) {
+        # DPAPI runs in Windows CI; Linux substitutes only the encryption boundary.
+        & $sessionModule {
+            function script:Protect-AiPanelSessions { param([byte[]]$Bytes) return ,([byte[]]$Bytes.Clone()) }
+            function script:Unprotect-AiPanelSessions { param([byte[]]$Bytes) return ,([byte[]]$Bytes.Clone()) }
+        }
+    }
+    Test 'panel sessions survive restart with hashed tokens and absolute expiry' {
+        $path = Join-Path $testRoot 'persistent-panel.dpapi'
+        $credential = New-AiPanelPassword 'persistent test password'
+        $token = New-AiPanelNonce; $key = Get-AiPanelSessionKey $token
+        $expires = [DateTime]::UtcNow.AddHours(1)
+        $sessions = @{ $key = @{ csrf = New-AiPanelNonce; expires = $expires; secure = $true } }
+        Write-AiPanelSessions $path $credential $sessions
+        $stored = [Text.Encoding]::UTF8.GetString([IO.File]::ReadAllBytes($path))
+        Assert-True (-not $stored.Contains($token))
+        if ($IsWindows) { Assert-True (-not $stored.Contains($sessions[$key].csrf)) }
+        $loaded = Read-AiPanelSessions $path $credential
+        Assert-Equal $loaded.Count 1
+        Assert-Equal $loaded[$key].csrf $sessions[$key].csrf
+        Assert-True $loaded[$key].secure
+        Assert-Equal $loaded[$key].expires.ToUniversalTime().Ticks $expires.Ticks
+        Write-AiPanelSessions $path $credential $loaded
+        Assert-Equal (Read-AiPanelSessions $path $credential)[$key].expires.Ticks $expires.Ticks
+        Assert-Equal (Get-AiPanelSessionKey 'invalid-cookie') ''
+    }
+    Test 'panel password replacement expired sessions and logout revoke persisted access' {
+        $path = Join-Path $testRoot 'revoked-panel.dpapi'
+        $credential = New-AiPanelPassword 'original test password'
+        $key = Get-AiPanelSessionKey (New-AiPanelNonce)
+        $sessions = @{ $key = @{ csrf = New-AiPanelNonce; expires = [DateTime]::UtcNow.AddHours(1); secure = $false } }
+        Write-AiPanelSessions $path $credential $sessions
+        Assert-Equal (Read-AiPanelSessions $path (New-AiPanelPassword 'replacement test password')).Count 0
+        $sessions[$key].expires = [DateTime]::UtcNow.AddSeconds(-1)
+        Write-AiPanelSessions $path $credential $sessions
+        Assert-Equal (Read-AiPanelSessions $path $credential).Count 0
+        $sessions[$key].expires = [DateTime]::UtcNow.AddHours(1)
+        Write-AiPanelSessions $path $credential $sessions
+        & $sessionModule {
+            param($Path)
+            $plain = Unprotect-AiPanelSessions ([IO.File]::ReadAllBytes($Path))
+            try {
+                $data = [Text.Encoding]::UTF8.GetString($plain) | ConvertFrom-Json -AsHashtable
+                foreach ($session in $data.sessions.Values) { $session.expires = [DateTime]::UtcNow.AddSeconds(-1).ToString('o') }
+                $changed = [Text.Encoding]::UTF8.GetBytes(($data | ConvertTo-Json -Depth 6))
+                try { [IO.File]::WriteAllBytes($Path, (Protect-AiPanelSessions $changed)) }
+                finally { [Array]::Clear($changed, 0, $changed.Length) }
+            } finally { [Array]::Clear($plain, 0, $plain.Length) }
+        } $path
+        Assert-Equal (Read-AiPanelSessions $path $credential).Count 0
+        $sessions[$key].expires = [DateTime]::UtcNow.AddHours(1)
+        Write-AiPanelSessions $path $credential $sessions
+        $loaded = Read-AiPanelSessions $path $credential
+        $loaded.Remove($key)
+        Write-AiPanelSessions $path $credential $loaded
+        Assert-Equal (Read-AiPanelSessions $path $credential).Count 0
+    }
+    Test 'corrupt or unreadable session store fails closed without crashing panel startup' {
+        $path = Join-Path $testRoot 'corrupt-panel.dpapi'
+        $credential = New-AiPanelPassword 'corrupt store password'
+        [IO.File]::WriteAllText($path, '{"truncated":')
+        Assert-Equal (Read-AiPanelSessions $path $credential).Count 0
+        Assert-Equal (Read-AiPanelSessions ($path + '.missing') $credential).Count 0
+        $key = Get-AiPanelSessionKey (New-AiPanelNonce)
+        Write-AiPanelSessions $path $credential @{ $key = @{ csrf = New-AiPanelNonce; expires = [DateTime]::UtcNow.AddHours(1); secure = $false } }
+        & $sessionModule { function script:Unprotect-AiPanelSessions { throw 'fixture decryption failure' } }
+        Assert-Equal (Read-AiPanelSessions $path $credential).Count 0
+        if (-not $IsWindows) {
+            & $sessionModule { function script:Unprotect-AiPanelSessions { param([byte[]]$Bytes) return ,([byte[]]$Bytes.Clone()) } }
+        } else {
+            & $sessionModule { function script:Unprotect-AiPanelSessions { param([byte[]]$Bytes) return ,([Security.Cryptography.ProtectedData]::Unprotect($Bytes, $null, [Security.Cryptography.DataProtectionScope]::LocalMachine)) } }
+        }
+    }
+
     Test 'panel password hashes are salted and checked securely' {
         Import-Module (Join-Path $repo 'src/Panel.Security.psm1') -Force
         $a=New-AiPanelPassword 'correct test password'; $b=New-AiPanelPassword 'correct test password'
@@ -964,10 +1130,16 @@ try {
     Test 'password reset invalidates old password and restarts only panel service' {
         $m=New-TestModule;$dir=Join-Path $testRoot 'panel-recovery'
         & $m {$script:services['omnibox-ai']=[pscustomobject]@{Status='Running';StartType='Automatic'}}
+        $sessionPath = Join-Path $dir 'panel-sessions.dpapi'
+        $oldCredential = (Get-Content (Join-Path $dir 'panel.json') -Raw | ConvertFrom-Json -AsHashtable).credential
+        $sessionKey = Get-AiPanelSessionKey ([Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant())
+        Write-AiPanelSessions $sessionPath $oldCredential @{ $sessionKey = @{ csrf = [Convert]::ToHexString([Security.Cryptography.RandomNumberGenerator]::GetBytes(32)).ToLowerInvariant(); expires = [DateTime]::UtcNow.AddHours(1); secure = $true } }
+        Assert-Equal (Read-AiPanelSessions $sessionPath $oldCredential).Count 1
         & $m {param($Root)Set-AiPanelPassword $Root 'new recovery password'} $dir
         $c=& $m {param($Root)Read-AiPanelConfig (Join-Path $Root 'panel.json')} $dir
         Assert-True (& $m {param($c)Test-AiPanelPassword 'new recovery password' $c.credential} $c)
         Assert-True (-not(& $m {param($c)Test-AiPanelPassword 'old recovery password' $c.credential} $c))
+        Assert-Equal (Read-AiPanelSessions $sessionPath $c.credential).Count 0
         Assert-Equal ($c.trusted_proxy_addresses -join ',') '192.168.1.9';Assert-Equal $c.public_origin 'https://llm.fnx.red'
         Assert-Equal ((Get-Calls $m)-join ',') 'stop:omnibox-ai,start:omnibox-ai'
         $bytes=Get-Content (Join-Path $dir 'panel.json') -Raw;Assert-True (-not $bytes.Contains('new recovery password'))

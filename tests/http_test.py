@@ -47,7 +47,7 @@ class Upstream(http.server.BaseHTTPRequestHandler):
             self.send_response(200); self.send_header('Content-Type','application/json'); self.send_header('Content-Length',str(len(body))); self.end_headers(); self.wfile.write(body)
 
 class PanelFixture:
-    def __init__(self, proxy=False, gateway=False, shared_port=False, updates=False):
+    def __init__(self, proxy=False, gateway=False, shared_port=False, updates=False, production_engine=False):
         self.temp = tempfile.TemporaryDirectory(prefix='omnibox-ai-http-')
         self.root = Path(self.temp.name)
         shutil.copytree(ROOT / 'web', self.root / 'web')
@@ -91,12 +91,36 @@ class PanelFixture:
             gh.write_text("#!/usr/bin/env python3\nimport sys,time,pathlib\ntime.sleep(.7)\nprint((pathlib.Path(__file__).parent.parent/'contents.json').read_text())\n")
             gh.chmod(0o755)
             process_env['PATH']=str(fake)+os.pathsep+process_env.get('PATH','')
-        self.process = subprocess.Popen([PWSH, '-NoProfile', '-File', str(ROOT / 'tests/http-fixture.ps1'), '-Root', str(self.root)], stdout=self.output, stderr=subprocess.STDOUT, env=process_env)
+        if production_engine:
+            state=json.loads((ROOT/'config.example.json').read_text())
+            for name, backend in state['backends'].items():
+                profile=self.root/f'{name}.xml'
+                profile.write_text('<service><id>'+name+'</id><arguments>-m missing.gguf -c 32768</arguments><startmode>Manual</startmode></service>')
+                backend['service_config']=str(profile)
+                backend['log_directory']=str(logs)
+            (self.root/'config.json').write_text(json.dumps(state))
+        self.command=[PWSH, '-NoProfile', '-File', str(ROOT / 'tests/http-fixture.ps1'), '-Root', str(self.root)]
+        if production_engine:self.command.append('-ProductionEngine')
+        self.process_env=process_env
+        self.start()
+
+    def start(self):
+        self.output.flush()
+        output_offset=self.output.tell()
+        self.process = subprocess.Popen(self.command, stdout=self.output, stderr=subprocess.STDOUT, env=self.process_env)
         deadline = time.monotonic() + 15
         while time.monotonic() < deadline:
             if self.process.poll() is not None:
                 self.output.flush()
                 raise RuntimeError((self.root / 'server-output.log').read_text())
+            # Managed HttpListener accepts before its internal collections are initialized.
+            # Sending the readiness probe too early can crash Start() on Linux.
+            # The server emits this marker only after listener.Start() has returned.
+            self.output.flush()
+            startup=(self.root/'server-output.log').read_bytes()[output_offset:].decode('utf-8',errors='replace')
+            if f'panel: port {self.port}' not in startup:
+                time.sleep(.05)
+                continue
             try:
                 urllib.request.urlopen(self.url, timeout=.5).close()
                 break
@@ -106,7 +130,7 @@ class PanelFixture:
             self.close()
             raise RuntimeError('Panel did not start')
 
-    def close(self):
+    def stop(self):
         if self.process.poll() is None:
             self.process.terminate()
             try:
@@ -114,6 +138,12 @@ class PanelFixture:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait()
+    def restart(self):
+        self.stop()
+        self.start()
+
+    def close(self):
+        self.stop()
         self.output.close()
         if self.upstream:
             self.upstream.shutdown(); self.upstream.server_close()
@@ -770,6 +800,86 @@ class UpdateTests(unittest.TestCase):
             result.write_text(json.dumps(dict(phase='failed',message='Fixture recovery',version='9.9.9')))
             # A newly started manager (idle) exposes persisted results, rather than dropping them.
         finally:result.unlink()
+
+class ProductionStatusTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.fixture=PanelFixture(production_engine=True)
+        cls.cookies=http.cookiejar.CookieJar()
+        cls.client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cls.cookies))
+        code, data, _=cls.call('/api/login', {'password':PASSWORD})
+        if code!=200:raise RuntimeError(data)
+        cls.csrf=data['csrf']
+
+    call=classmethod(HttpTests.call.__func__)
+    tearDownClass=classmethod(HttpTests.tearDownClass.__func__)
+
+    def test_production_status_with_gpu_in_new_worker(self):
+        for path in ('/api/status?gpu=1', '/api/status', '/api/status?gpu=1'):
+            code, data, _=self.call(path)
+            self.assertEqual(code, 200, data)
+            self.assertEqual(len(data['backends']), 2)
+            self.assertEqual(data['gpu'], [])
+            self.assertTrue(all(b['service']=='Stopped' for b in data['backends']))
+
+    def test_production_telemetry_snapshot_in_new_worker(self):
+        self.assertEqual(self.call('/api/telemetry?once=1')[0], 200)
+        deadline=time.monotonic()+8
+        while time.monotonic()<deadline:
+            code, data, _=self.call('/api/telemetry')
+            self.assertEqual(code, 200, data)
+            if not data['collecting']:
+                self.assertTrue(data['enabled'])
+                self.assertIsNotNone(data['sample'], data)
+                self.assertEqual(data['sample']['gpu'], [])
+                return
+            time.sleep(.1)
+        self.fail('Production telemetry worker did not finish')
+
+class PersistentSessionTests(unittest.TestCase):
+    def setUp(self):
+        self.fixture=PanelFixture()
+        self.cookies=http.cookiejar.CookieJar()
+        self.client=urllib.request.build_opener(urllib.request.HTTPCookieProcessor(self.cookies))
+        code, data, _=self.call('/api/login', {'password':PASSWORD})
+        self.assertEqual(code, 200, data)
+        self.csrf=data['csrf']
+        self.token=next(c.value for c in self.cookies if c.name=='omnibox_session')
+
+    def tearDown(self):
+        self.fixture.close()
+
+    call=HttpTests.call.__func__
+
+    def test_restart_keeps_cookie_and_csrf_and_logout_is_persistent(self):
+        self.fixture.restart()
+        code, data, _=self.call('/api/session')
+        self.assertEqual(code, 200, data)
+        self.assertEqual(data['csrf'], self.csrf)
+        self.assertEqual(self.call('/api/status')[0], 200)
+        self.assertEqual(self.call('/api/logout', {}, csrf=self.csrf)[0], 200)
+        self.fixture.restart()
+        request=urllib.request.Request(self.fixture.url+'/api/session', headers={'Cookie':f'omnibox_session={self.token}'})
+        with self.assertRaises(urllib.error.HTTPError) as caught:urllib.request.urlopen(request, timeout=10)
+        self.assertEqual(caught.exception.code, 401)
+
+    def test_password_replacement_invalidates_saved_sessions(self):
+        self.fixture.stop()
+        path=self.fixture.root/'panel.json'
+        panel=json.loads(path.read_text())
+        salt=secrets.token_bytes(32)
+        panel['credential']=dict(salt=base64.b64encode(salt).decode(),hash=base64.b64encode(hashlib.pbkdf2_hmac('sha256',b'changed panel password',salt,210000)).decode(),iterations=210000)
+        path.write_text(json.dumps(panel))
+        self.fixture.start()
+        self.assertEqual(self.call('/api/session')[0], 401)
+        self.assertEqual(self.call('/api/login', {'password':'changed panel password'})[0], 200)
+
+    def test_corrupt_store_requires_login_and_panel_still_works(self):
+        self.fixture.stop()
+        (self.fixture.root/'panel-sessions.dpapi').write_bytes(b'corrupt session store')
+        self.fixture.start()
+        self.assertEqual(self.call('/api/session')[0], 401)
+        self.assertEqual(self.call('/api/login', {'password':PASSWORD})[0], 200)
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)

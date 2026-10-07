@@ -1,9 +1,9 @@
 # HTTP/UI integration fixture only. Never installed or included in the release package.
+# The fixture reads and replaces its state like the product does, so parallel operations and status never collide.
+Import-Module (Join-Path $PSScriptRoot '../src/File.Read.psm1')
 function Read-TestPanelState {
     param([string]$Path)
-    $stream = [IO.File]::Open($Path, [IO.FileMode]::Open, [IO.FileAccess]::Read, ([IO.FileShare]::ReadWrite -bor [IO.FileShare]::Delete))
-    $reader = [IO.StreamReader]::new($stream)
-    try { return $reader.ReadToEnd() | ConvertFrom-Json -AsHashtable } finally { $reader.Dispose() }
+    return Read-AiSharedText $Path | ConvertFrom-Json -AsHashtable
 }
 function Get-AiDashboard {
     param([string]$ConfigPath, [switch]$IncludeGpu)
@@ -29,7 +29,7 @@ function Invoke-AiPanelAction {
     $temporary = $ConfigPath + '.' + [Guid]::NewGuid().ToString('N') + '.tmp'
     try {
         [IO.File]::WriteAllText($temporary, ($state | ConvertTo-Json -Depth 10))
-        [IO.File]::Move($temporary, $ConfigPath, $true)
+        Move-AiFileOver $temporary $ConfigPath
     } finally { if ([IO.File]::Exists($temporary)) { [IO.File]::Delete($temporary) } }
     return 'Операция завершена.'
 }

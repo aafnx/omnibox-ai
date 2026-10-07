@@ -1,7 +1,9 @@
 Set-StrictMode -Version Latest
+Import-Module (Join-Path $PSScriptRoot 'File.Read.psm1')
 
 $script:AiVersion = (Get-Content -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'VERSION') -Raw).Trim()
 Import-Module (Join-Path $PSScriptRoot 'Panel.Requests.psm1')
+Import-Module (Join-Path $PSScriptRoot 'Panel.Sessions.psm1')
 
 function Read-AiHttpJson {
     param($Request)
@@ -85,7 +87,7 @@ function Start-OmniBoxPanel {
     [OmniBox.InferenceStats]::Configure((Join-Path $Root 'logs/requests'))
     # Panel start (normally Windows boot) is the only automatic cleanup point: no timers.
     [OmniBox.InferenceStats]::SetContentLogging((Read-AiStorageSettings $Root).request_log -eq 'content')
-    try { $null = Invoke-AiStorageCleanup $Root (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable) } catch { Write-Host "Очистка журналов пропущена: $($_.Exception.Message)" }
+    try { $null = Invoke-AiStorageCleanup $Root (Read-AiSharedText $configPath | ConvertFrom-Json -AsHashtable) } catch { Write-Host "Очистка журналов пропущена: $($_.Exception.Message)" }
     $listener = [Net.HttpListener]::new()
     foreach ($hostName in $panel.allowed_hosts) { $listener.Prefixes.Add("http://${hostName}:$($panel.port)/") }
     if ($gateway.enabled -and $gatewayPort -ne $panel.port) { foreach ($hostName in $apiHosts) { $listener.Prefixes.Add("http://${hostName}:$gatewayPort/") } }
@@ -93,10 +95,12 @@ function Start-OmniBoxPanel {
         $listener.TimeoutManager.HeaderWait = [TimeSpan]::FromSeconds(10)
         $listener.TimeoutManager.EntityBody = [TimeSpan]::FromSeconds(10)
     }
-    $sessions = @{}; $attempts = @{}; $operations = @{}; $catalog = @{}; $releaseJobs = @{}
+    $sessionPath = Join-Path $Root 'panel-sessions.dpapi'
+    $sessions = Read-AiPanelSessions $sessionPath $panel.credential
+    $attempts = @{}; $operations = @{}; $catalog = @{}; $releaseJobs = @{}
     # Disk usage, drives and model sizes: computed only when the owner opens the view.
     $storageView = {
-        $usage = Get-AiStorageUsage $Root (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable)
+        $usage = Get-AiStorageUsage $Root (Read-AiSharedText $configPath | ConvertFrom-Json -AsHashtable)
         $disk = Get-AiDiskOverview $configPath
         $usage.drives = @($disk.drives); $usage.models = @($disk.models)
         $usage
@@ -154,13 +158,15 @@ function Start-OmniBoxPanel {
                     foreach ($key in @($sessions.Keys)) { if ($sessions[$key].expires -lt $now) { $sessions.Remove($key) } }
                     if ($sessions.Count -ge 32) { $old = $sessions.Keys | Sort-Object { $sessions[$_].expires } | Select-Object -First 1; $sessions.Remove($old) }
                     $id = New-AiPanelNonce; $csrf = New-AiPanelNonce
-                    $sessions[$id] = @{ csrf = $csrf; expires = $now.AddHours(8); secure = $transport.secure }
+                    $sessions[(Get-AiPanelSessionKey $id)] = @{ csrf = $csrf; expires = $now.AddHours(8); secure = $transport.secure }
+                    Write-AiPanelSessions $sessionPath $panel.credential $sessions
                     $secureCookie = if ($transport.secure) { '; Secure' } else { '' }
                     $context.Response.Headers['Set-Cookie'] = "omnibox_session=$id; Path=/; HttpOnly; SameSite=Strict; Max-Age=28800$secureCookie"
                     Send-AiHttpResponse $context 200 @{ csrf = $csrf }; continue
                 }
                 $cookie = $request.Cookies['omnibox_session']
-                $session = if ($null -ne $cookie -and $sessions.Contains($cookie.Value)) { $sessions[$cookie.Value] } else { $null }
+                $sessionKey = if ($null -ne $cookie) { Get-AiPanelSessionKey $cookie.Value } else { '' }
+                $session = if ($sessionKey -and $sessions.Contains($sessionKey)) { $sessions[$sessionKey] } else { $null }
                 if ($null -eq $session -or $session.expires -lt [DateTime]::UtcNow -or ($session.secure -and -not $transport.secure)) { Send-AiHttpResponse $context 401 @{ error = 'Войди в панель.' }; continue }
                 if ($method -eq 'POST' -and $request.Headers['X-Omnibox-CSRF'] -cne $session.csrf) { Send-AiHttpResponse $context 403 @{ error = 'CSRF-проверка не пройдена.' }; continue }
                 switch ("$method $path") {
@@ -208,13 +214,13 @@ function Start-OmniBoxPanel {
                         $body = Read-AiHttpJson $request
                         $c = Read-AiGatewayConfig $gatewayPath
                         if (-not $c.enabled) { throw 'Сетевой API ещё не установлен. Повтори установщик с включённым OpenAI API.' }
-                        $backends = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
+                        $backends = Read-AiSharedText $configPath | ConvertFrom-Json -AsHashtable
                         $changed = Update-AiGatewaySettings $c $body @($backends.backends.Keys)
                         Write-AiGatewayConfig $gatewayPath $changed.config
                         [OmniBox.InferenceStats]::InvalidateRuntime()
                         Send-AiHttpResponse $context 200 @{ gateway=(Get-AiGatewayView $changed.config);key=$changed.key }
                     }
-                    'POST /api/logout' { $sessions.Remove($cookie.Value); $secureCookie = if ($transport.secure) { '; Secure' } else { '' }; $context.Response.Headers['Set-Cookie'] = "omnibox_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0$secureCookie"; Send-AiHttpResponse $context 200 @{ ok = $true } }
+                    'POST /api/logout' { $sessions.Remove($sessionKey); Write-AiPanelSessions $sessionPath $panel.credential $sessions; $secureCookie = if ($transport.secure) { '; Secure' } else { '' }; $context.Response.Headers['Set-Cookie'] = "omnibox_session=; Path=/; HttpOnly; SameSite=Strict; Max-Age=0$secureCookie"; Send-AiHttpResponse $context 200 @{ ok = $true } }
                     'GET /api/status' {
                         $operationView = @(Update-AiPanelOperations $operations)
                         Start-AiHttpRequestJob $requestJobs $context 'dashboard' $EngineModulePath $configPath $gatewayPath $runtimeCache ($request.QueryString['gpu'] -eq '1') $operationView
@@ -222,7 +228,7 @@ function Start-OmniBoxPanel {
                     'GET /api/storage' { Send-AiHttpResponse $context 200 (& $storageView) }
                     'POST /api/storage' {
                         $body = Read-AiHttpJson $request
-                        $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
+                        $config = Read-AiSharedText $configPath | ConvertFrom-Json -AsHashtable
                         $result = $null
                         if ($body.action -eq 'save') {
                             $changes = @{}; foreach ($key in @($body.Keys | Where-Object { $_ -ne 'action' })) { $changes[$key] = $body[$key] }
@@ -259,7 +265,7 @@ function Start-OmniBoxPanel {
                         Send-AiHttpResponse $context 200 @{state='done';releases=@($result.data)}
                     }
                     'GET /api/logs' {
-                        $config = Get-Content $configPath -Raw | ConvertFrom-Json -AsHashtable
+                        $config = Read-AiSharedText $configPath | ConvertFrom-Json -AsHashtable
                         $name = $request.QueryString['backend']
                         if ($name -and -not $config.backends.Contains($name)) { throw 'Неизвестный сервер.' }
                         $logs=@();$lines=@()
