@@ -29,6 +29,7 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/local"
 	"github.com/aafnx/omnibox-ai/internal/panel"
 	"github.com/aafnx/omnibox-ai/internal/platform"
+	"github.com/aafnx/omnibox-ai/internal/selfupdate"
 	"github.com/aafnx/omnibox-ai/internal/status"
 	"github.com/aafnx/omnibox-ai/internal/storage"
 	"github.com/aafnx/omnibox-ai/internal/telemetry"
@@ -69,6 +70,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 		return cli.Run(args[1:], local.Dial(platform.DataDir()), stdout, stderr)
 	case "install":
 		if err := runInstall(args[1:], os.Stdin, stdout); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1
+		}
+		return 0
+	case "update-service":
+		if err := runUpdateService(args[1:]); err != nil {
 			fmt.Fprintln(stderr, err)
 			return 1
 		}
@@ -169,6 +176,10 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 	manager := &enginemgr.Manager{DataDir: *data}
 	hub := &catalog.Hub{}
 	controller := &control.Controller{Store: store, Services: services, Manager: manager, DataDir: *data, Executable: exe, Gate: api}
+	updates := &panelUpdate{Services: services, Data: *data, Program: programDirOf(exe), Current: omnibox.Version,
+		NewUpdater: func(token string) *selfupdate.Updater { return &selfupdate.Updater{Token: token} }}
+	controller.SelfUpdate = updates.Start
+	cleanupUpdate(services, *data)
 	operations := &control.Operations{Run: controller.Do, Gate: api}
 	handler, err := panel.New(panel.Options{
 		Config:       current,
@@ -177,6 +188,9 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 		Status: func(ctx context.Context, gpu bool) any {
 			d := builder.Build(ctx, gpu)
 			d.Operations = operations.List()
+			if r := lastUpdate(*data); r != nil {
+				d.LastUpdate = r
+			}
 			return d
 		},
 		Action: func(body map[string]any) (any, error) {
@@ -379,6 +393,15 @@ func runUninstall(args []string, in io.Reader, out io.Writer) error {
 			return os.RemoveAll(dir)
 		}}
 	return i.Uninstall(context.Background())
+}
+
+// programDirOf is the program directory of an installed binary (<program>/bin/<version>/omnibox);
+// a binary run from elsewhere (tests, a download) uses the default one.
+func programDirOf(exe string) string {
+	if bin := filepath.Dir(filepath.Dir(exe)); filepath.Base(bin) == "bin" {
+		return filepath.Dir(bin)
+	}
+	return platform.ProgramDir()
 }
 
 // shimDir is where the ai command is placed.

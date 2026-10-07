@@ -16,7 +16,7 @@ themes.forEach(t=>$(`theme-${t}`).addEventListener('click',()=>{theme=t;applyThe
 function placeThemeSwitch(inDashboard){const target=inDashboard?$('topbar-actions'):document.body;if(target)target.append($('theme-switch'));}
 themeMedia.addEventListener('change',()=>{if(theme==='system')applyTheme(theme);});
 const fields = {placement:'placement',context:'context',idle_minutes:'idle',alias:'alias',gpu_layers:'gpu-layers',n_cpu_moe:'n-cpu-moe',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch',kv_offload:'kv-offload',threads:'threads',load_mode:'load-mode',reasoning:'reasoning',reasoning_effort:'reasoning-effort',reasoning_budget:'reasoning-budget',temperature:'temperature',top_k:'top-k',top_p:'top-p',min_p:'min-p',repeat_penalty:'repeat-penalty',presence_penalty:'presence-penalty',frequency_penalty:'frequency-penalty',max_tokens:'max-tokens',seed:'seed'};
-const labels = {'engine-install':'Установка движка','engine-update':'Обновление движка','engine-remove':'Удаление движка','model-delete':'Удаление модели',start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление','auto-restart':'Автоперезапуск',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
+const labels = {'engine-install':'Установка движка','engine-update':'Обновление движка','engine-remove':'Удаление движка','model-delete':'Удаление модели',start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление','auto-restart':'Автоперезапуск','self-update':'Обновление программы',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
 async function api(path, body) {
   const response = await fetch(path, {method:body === undefined?'GET':'POST',credentials:'same-origin',headers:body === undefined?{}:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:body === undefined?undefined:JSON.stringify(body)});
   const data = await response.json();
@@ -389,8 +389,14 @@ setInterval(()=>{if(loggedIn&&!document.hidden&&snapshot)document.querySelectorA
 const updateCommands=[['Обычно — в терминале от имени администратора (Windows) или через sudo (Linux)','ai update'],['Если команда ai не работает: Windows (PowerShell от имени администратора)','gh release download --repo aafnx/omnibox-ai --pattern install.ps1 --dir $env:TEMP --clobber; powershell -NoProfile -ExecutionPolicy Bypass -File $env:TEMP\\install.ps1'],['Linux','gh release download --repo aafnx/omnibox-ai --pattern install.sh --dir /tmp --clobber && sudo sh /tmp/install.sh']];
 function renderUpdateInfo(){
  $('update-version').textContent=snapshot?`Установлена версия ${snapshot.version}.`:'—';
+ const last=snapshot?.last_update;$('last-update').hidden=!last;
+ if(last)$('last-update').textContent=`Последнее обновление из панели${last.time?' '+new Date(last.time).toLocaleString('ru-RU'):''}: ${last.ok?'успешно':'не удалось'}${last.from?' ('+last.from+' → '+last.version+')':''}. ${last.message} Подробности — logs/update.log.`;
  $('update-commands').replaceChildren(...updateCommands.map(([label,command])=>copyRow(label,command)));
 }
+$('self-update-form').addEventListener('submit',e=>{e.preventDefault();
+ // The token leaves the page at once: it is sent for this download and never kept.
+ const token=$('update-token').value.trim(),version=$('update-target').value.trim();$('update-token').value='';
+ action({action:'self-update',token,...(version?{version}:{})}).catch(err=>notice(err.message,true));});
 $('password-form').addEventListener('submit',async e=>{
  e.preventDefault();const current=$('password-current').value,next=$('password-new').value,repeat=$('password-repeat').value;
  // The fields are cleared whatever the result: passwords never stay in the page.

@@ -21,7 +21,7 @@ import (
 
 var (
 	engineLog  = regexp.MustCompile(`^(?:out|err|host)\.log(?:\.\d+)?$`)
-	panelLog   = regexp.MustCompile(`^panel\.log(?:\.\d+)?$`)
+	panelLog   = regexp.MustCompile(`^(?:panel|update)\.log(?:\.\d+)?$`)
 	requestLog = regexp.MustCompile(`^(?:requests|content)\.jsonl(?:\.\d+)?$`)
 	contentLog = regexp.MustCompile(`^content\.jsonl(?:\.\d+)?$`)
 	staging    = regexp.MustCompile(`^\.staging-[0-9a-f]{32}$`)

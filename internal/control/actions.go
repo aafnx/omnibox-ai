@@ -27,15 +27,17 @@ type Request struct {
 	Size     string            `json:"size,omitempty"`
 	EngineID string            `json:"engine,omitempty"`
 	Enabled  string            `json:"enabled,omitempty"`
+	// Token is the GitHub token of a self-update: kept in memory only, never listed or logged.
+	Token string `json:"-"`
 }
 
 // Actions the panel may request.
-var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart"}
+var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart", "self-update"}
 
 // ParseRequest validates a panel operation body; unknown fields are refused.
 func ParseRequest(body map[string]any) (Request, error) {
 	var r Request
-	allowed := []string{"action", "backend", "settings", "model", "url", "filename", "sha256", "engine", "version", "size", "enabled"}
+	allowed := []string{"action", "backend", "settings", "model", "url", "filename", "sha256", "engine", "version", "size", "enabled", "token"}
 	for key, value := range body {
 		if !slices.Contains(allowed, key) {
 			return r, fmt.Errorf("Неизвестное поле: %s", key)
@@ -80,10 +82,15 @@ func ParseRequest(body map[string]any) (Request, error) {
 			r.Size = s
 		case "enabled":
 			r.Enabled = s
+		case "token":
+			r.Token = strings.TrimSpace(s)
 		}
 	}
 	if !slices.Contains(Actions, r.Action) {
 		return r, errors.New("Неизвестная операция панели.")
+	}
+	if r.Token != "" && r.Action != "self-update" {
+		return r, errors.New("token нужен только для обновления программы.")
 	}
 	if strings.HasPrefix(r.Action, "engine-") {
 		if !slices.Contains(config.EngineNames, r.EngineID) {
@@ -113,6 +120,13 @@ func scalar(v any) (string, error) {
 
 // Do runs a panel operation and returns the message shown to the owner.
 func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
+	// The program update does not touch the engines' settings.
+	if r.Action == "self-update" {
+		if c.SelfUpdate == nil {
+			return "", errors.New("Обновление из панели недоступно в этом режиме.")
+		}
+		return c.SelfUpdate(ctx, r.Token, r.Version)
+	}
 	cfg := c.Store.Get()
 	name := r.Engine
 	if name == "" {

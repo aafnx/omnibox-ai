@@ -43,6 +43,9 @@ type Controller struct {
 	Gate Reserver
 	// HTTP downloads models (tests point it at a fake Hugging Face).
 	HTTP *http.Client
+	// SelfUpdate downloads a release of the program and hands it to a temporary installer
+	// service; the panel restarts during the update.
+	SelfUpdate func(ctx context.Context, token, version string) (string, error)
 
 	mu sync.Mutex
 }
