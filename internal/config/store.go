@@ -47,3 +47,6 @@ func (s *Store) Update(change func(c *Config) error) error {
 	s.current.Store(next)
 	return nil
 }
+
+// Path is where the configuration is saved.
+func (s *Store) Path() string { return s.path }

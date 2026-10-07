@@ -428,3 +428,53 @@ func TestCatalogRoute(t *testing.T) {
 		t.Fatalf("failure: %d", w.Code)
 	}
 }
+
+func TestPasswordChangeEndsOtherSessions(t *testing.T) {
+	c := testConfig(t, nil)
+	var stored config.Password
+	s, _ := New(Options{
+		Config:      func() *config.Config { return c },
+		SetPassword: func(p config.Password) error { stored = p; c.Panel.Password = p; return nil },
+	})
+	mine, csrf := login(t, s, nil)
+	other, _ := login(t, s, nil)
+	auth := func(r *http.Request) { r.AddCookie(mine); r.Header.Set("X-Omnibox-CSRF", csrf) }
+	if w := call(s, "POST", "/api/password", `{"current":"wrong-password","password":"новый-пароль-панели"}`, auth); w.Code != 403 || stored.Hash != "" {
+		t.Fatalf("wrong current password: %d", w.Code)
+	}
+	if w := call(s, "POST", "/api/password", `{"current":"`+testPassword+`","password":"short"}`, auth); w.Code != 400 || stored.Hash != "" {
+		t.Fatalf("short password: %d", w.Code)
+	}
+	if w := call(s, "POST", "/api/password", `{"current":"`+testPassword+`","password":"новый-пароль-панели"}`, auth); w.Code != 200 || !VerifyPassword("новый-пароль-панели", stored) {
+		t.Fatalf("change: %d", w.Code)
+	}
+	if w := call(s, "GET", "/api/session", "", func(r *http.Request) { r.AddCookie(other) }); w.Code != 401 {
+		t.Fatalf("other session survived: %d", w.Code)
+	}
+	if w := call(s, "GET", "/api/session", "", func(r *http.Request) { r.AddCookie(mine) }); w.Code != 200 {
+		t.Fatalf("own session ended: %d", w.Code)
+	}
+	if w := call(s, "POST", "/api/login", `{"password":"`+testPassword+`"}`, nil); w.Code != 401 {
+		t.Fatalf("old password still works: %d", w.Code)
+	}
+}
+
+func TestGatewayRoutesNeverReturnTheHash(t *testing.T) {
+	c := testConfig(t, func(c *config.Config) { c.API.KeyHash, c.API.RequireKey = strings.Repeat("b", 64), true })
+	s, _ := New(Options{
+		Config:        func() *config.Config { return c },
+		Gateway:       func() any { return map[string]any{"has_key": true} },
+		GatewayAction: func(map[string]any) (any, error) { return map[string]any{"key": "obai-x"}, nil },
+	})
+	cookie, csrf := login(t, s, nil)
+	w := call(s, "GET", "/api/gateway", "", func(r *http.Request) { r.AddCookie(cookie) })
+	if w.Code != 200 || strings.Contains(w.Body.String(), c.API.KeyHash) {
+		t.Fatalf("%d %s", w.Code, w.Body.String())
+	}
+	if w := call(s, "POST", "/api/gateway", `{"action":"generate"}`, func(r *http.Request) { r.AddCookie(cookie) }); w.Code != 403 {
+		t.Fatalf("without CSRF: %d", w.Code)
+	}
+	if w := call(s, "POST", "/api/gateway", `{"action":"generate"}`, func(r *http.Request) { r.AddCookie(cookie); r.Header.Set("X-Omnibox-CSRF", csrf) }); w.Code != 200 {
+		t.Fatalf("generate: %d", w.Code)
+	}
+}

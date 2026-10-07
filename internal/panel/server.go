@@ -56,6 +56,11 @@ type Options struct {
 	Releases func(ctx context.Context, engine string) (any, error)
 	// Catalog searches Hugging Face (query) or lists a repository's GGUF files (repo).
 	Catalog func(ctx context.Context, query, repo string) (any, error)
+	// Gateway shows the API settings; GatewayAction saves them or creates a key.
+	Gateway       func() any
+	GatewayAction func(body map[string]any) (any, error)
+	// SetPassword stores a new panel password hash.
+	SetPassword func(p config.Password) error
 }
 
 type session struct {
@@ -118,7 +123,6 @@ func New(opt Options) (*Server, error) {
 
 // Routes of the PowerShell panel that later stages port; until then they answer 501.
 var pendingRoutes = map[string]bool{
-	"GET /api/gateway": true,
 	"GET /api/updates": true,
 }
 
@@ -220,6 +224,20 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.json(w, http.StatusOK, result)
+	case route == "GET /api/gateway" && s.opt.Gateway != nil:
+		s.json(w, http.StatusOK, s.opt.Gateway())
+	case route == "POST /api/gateway" && s.opt.GatewayAction != nil:
+		body, err := readJSON(r)
+		if err == nil {
+			var result any
+			if result, err = s.opt.GatewayAction(body); err == nil {
+				s.json(w, http.StatusOK, result)
+				return
+			}
+		}
+		s.json(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+	case route == "POST /api/password" && s.opt.SetPassword != nil:
+		s.changePassword(w, r, t, key, cfg)
 	case route == "GET /api/storage" && s.opt.Storage != nil:
 		s.json(w, http.StatusOK, s.opt.Storage())
 	case route == "POST /api/storage" && s.opt.StorageAction != nil:
@@ -398,4 +416,57 @@ func (s *Server) write(w http.ResponseWriter, status int, contentType string, bo
 	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 	w.WriteHeader(status)
 	_, _ = w.Write(body)
+}
+
+// changePassword replaces the panel password after checking the current one, and ends every
+// other session: whoever knew the old password is signed out.
+func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, t transport, current string, cfg *config.Config) {
+	body, err := readJSON(r)
+	if err != nil {
+		s.json(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	old, ok1 := body["current"].(string)
+	next, ok2 := body["password"].(string)
+	if len(body) != 2 || !ok1 || !ok2 {
+		s.json(w, http.StatusBadRequest, map[string]any{"error": "Нужны текущий и новый пароль."})
+		return
+	}
+	s.mu.Lock()
+	if a, ok := s.attempts[t.client]; ok && a.count >= maxAttempts {
+		s.mu.Unlock()
+		s.json(w, http.StatusTooManyRequests, map[string]any{"error": "Слишком много попыток. Повтори через 5 минут."})
+		return
+	}
+	s.mu.Unlock()
+	if !VerifyPassword(old, cfg.Panel.Password) {
+		s.mu.Lock()
+		a, ok := s.attempts[t.client]
+		if !ok && len(s.attempts) < maxTrackedIPs {
+			a = &attempt{until: s.opt.Now().UTC().Add(lockout)}
+			s.attempts[t.client] = a
+		}
+		if a != nil {
+			a.count++
+		}
+		s.mu.Unlock()
+		s.json(w, http.StatusForbidden, map[string]any{"error": "Текущий пароль неверен."})
+		return
+	}
+	hash, err := NewPassword(next)
+	if err == nil {
+		err = s.opt.SetPassword(hash)
+	}
+	if err != nil {
+		s.json(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	s.mu.Lock()
+	for k := range s.sessions {
+		if k != current {
+			delete(s.sessions, k)
+		}
+	}
+	s.mu.Unlock()
+	s.json(w, http.StatusOK, map[string]any{"ok": true})
 }
