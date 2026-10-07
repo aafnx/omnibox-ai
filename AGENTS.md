@@ -134,6 +134,7 @@
 | `tests/real_install_test.ps1` | Настоящая установка, принудительные сбои обновления и откат | Только одноразовая Windows-машина, `OMNIBOX_AI_REAL_INSTALL_TEST=1` |
 | `tests/http_test.py` | Настоящий HTTP-сервер панели и `/v1` с тестовым движком | Везде (Python 3) |
 | `tests/web_test.cjs` | Поведение UI через DOM-адаптер | Везде (Node) |
+| `go test ./...` | Go-версия: настройки, слой платформы, панель | Везде (Go из `go.mod`); CI также собирает Windows и Linux |
 
 Запуск:
 
@@ -144,6 +145,7 @@ pwsh -NoProfile -File ./tests/install_flow_test.ps1
 pwsh -NoProfile -File ./tests/native_host_test.ps1
 python tests/http_test.py
 node tests/web_test.cjs
+gofmt -l . ; go vet ./... ; GOOS=windows go vet ./... ; go test ./...
 ```
 
 - **Никогда** не запускай `real_install_test.ps1` и `scm_test.ps1` на серверном ПК пользователя: они регистрируют службы, в том числе `omnibox-ai`.
