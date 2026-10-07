@@ -54,7 +54,8 @@ function Start-AiPanelOperation {
     $category = if ($Body.action -in @('pull','download')) { 'download' } elseif ($Body.action -like 'engine-*') { 'engine' } else { 'control' }
     if (@($Operations.Values | Where-Object { $_.category -eq $category -and $null -ne $_.job -and $_.job.State -notin @('Completed','Failed','Stopped') }).Count) { throw 'Операция этого типа ещё выполняется. Дождись результата.' }
     # Body travels as structured data. There is no shell, command text, or eval endpoint.
-    # engine-update is not guarded: its download may take minutes; the restart itself runs under the control lock.
+    # engine-update is not guarded here: its download may take minutes. Set-AiEngineVersion takes the
+    # generation guard itself right before a running engine restarts on the new runtime.
     $guarded=$Body.action -in @('start','stop','restart','stopall','apply','restore','load','unload','engine-remove') -and ('OmniBox.InferenceStats' -as [type])
     if($guarded){
         $cancel=$Body.action -in @('stop','stopall','unload','engine-remove')

@@ -32,7 +32,7 @@ try{
     $previousConfig=Get-Content -LiteralPath (Join-Path $snapshot 'config.json') -Raw|ConvertFrom-Json -AsHashtable
     $profiles=@{'omnibox-ai'=(Join-Path $Root 'panel-service.xml')}
     foreach($backend in $previousConfig.backends.Values){if($backend.service -notmatch '^[A-Za-z0-9_.-]+$'){throw 'Invalid backend service.'};$profiles[$backend.service]=$backend.service_config}
-    $pwsh=(Get-Process -Id $PID).Path
+    $pwsh=[Environment]::ProcessPath
     foreach($name in $profiles.Keys){
         $svc=Get-CimInstance Win32_Service -Filter "Name='$name'"
         if($null -ne $svc){
@@ -68,7 +68,7 @@ try{
             # A failed installation may have stopped the panel before stopping every backend.
             # Only stop services whose command exactly belongs to this installation.
             Import-Module (Join-Path $snapshot 'src/Service.Install.psm1') -Force
-            $pwsh=(Get-Process -Id $PID).Path
+            $pwsh=[Environment]::ProcessPath
             foreach($entry in $serviceSnapshot){
                 $svc=Get-CimInstance Win32_Service -Filter "Name='$($entry.name)'"
                 if($null -ne $svc -and $svc.State -ne 'Stopped'){

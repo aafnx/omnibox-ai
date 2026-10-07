@@ -128,9 +128,17 @@ function Get-AiPrismModels {
     $directory = Get-AiPrismModelDirectory $Backend
     if (-not $directory) { return @() }
     if (-not (Test-Path -LiteralPath $directory -PathType Container)) { return @() }
-    return @(Get-ChildItem -LiteralPath $directory -File -Filter '*.gguf' |
-        Where-Object { $_.Name -notmatch '(?i)mmproj|projector' -and -not $_.LinkType } |
-        Sort-Object Name | ForEach-Object { @{ name = $_.Name; id = $_.FullName; bytes = $_.Length; quant = Get-AiGgufQuant $_.Name } })
+    $files = @(Get-ChildItem -LiteralPath $directory -File -Filter '*.gguf' | Where-Object { $_.Name -notmatch '(?i)mmproj|projector' -and -not $_.LinkType })
+    # A split model (name-00001-of-00003.gguf ...) is one model: llama-server loads it from the first part.
+    return @($files | Where-Object { $_.Name -notmatch '-(?!00001)\d{5}-of-\d{5}\.gguf$' } | Sort-Object Name | ForEach-Object {
+        $item = @{ name = $_.Name; id = $_.FullName; bytes = $_.Length; quant = Get-AiGgufQuant $_.Name; parts = 1 }
+        if ($_.Name -match '^(?<base>.+)-00001-of-(?<total>\d{5})\.gguf$') {
+            $pattern = '^' + [regex]::Escape($Matches.base) + '-\d{5}-of-' + $Matches.total + '\.gguf$'
+            $group = @($files | Where-Object { $_.Name -match $pattern })
+            $item.parts = $group.Count; $item.bytes = [long]($group | Measure-Object -Property Length -Sum).Sum
+        }
+        $item
+    })
 }
 
 function New-AiLaunchXml {

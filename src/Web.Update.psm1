@@ -216,7 +216,7 @@ function Start-AiWebUpdateWorker {
     if(-not (Test-Path -LiteralPath (Join-Path $Root '.omnibox-ai-install'))){throw 'Нет маркера установленного приложения.'}
     $bytes=[IO.File]::ReadAllBytes($Installer)
     if([Convert]::ToHexString([Security.Cryptography.SHA256]::HashData($bytes)).ToLowerInvariant() -cne $Sha256){throw 'Скачанный установщик изменился. Повторите проверку.'}
-    $pwsh=(Get-Process -Id $PID).Path
+    $pwsh=[Environment]::ProcessPath
     Import-Module (Join-Path $Root 'src/Service.Install.psm1') -Force
     $old=@(Get-ChildItem -LiteralPath (Join-Path $Root 'updates') -Directory -ErrorAction SilentlyContinue|Where-Object Name -match '^run-[a-f0-9]{32}$'|Sort-Object LastWriteTimeUtc -Descending)
     foreach($item in @($old|Select-Object -Skip 2)){
