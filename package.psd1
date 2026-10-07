@@ -4,7 +4,7 @@
         'VERSION', 'ai.ps1', 'ai.cmd', 'panel.ps1', 'service.ps1',
         'src/Service.Host.cs', 'src/Service.Install.psm1', 'scripts/build-service.ps1', 'src/OmniBox.Ai.psm1',
         'src/Panel.Engine.ps1', 'src/Panel.Cli.ps1', 'src/Telemetry.ps1', 'src/Engine.Manager.ps1', 'src/Inference.Stats.cs',
-        'src/Gateway.Helpers.psm1', 'src/OpenAi.Proxy.cs', 'src/Model.Catalog.psm1', 'src/Panel.Server.psm1',
+        'src/Gateway.Helpers.psm1', 'src/OpenAi.Proxy.cs', 'src/Model.Catalog.psm1', 'src/Panel.Server.psm1', 'src/Panel.Requests.psm1',
         'src/Panel.Security.psm1', 'src/Panel.Install.psm1', 'src/Install.Helpers.psm1', 'src/Install.Transaction.psm1',
         'src/Update.Helpers.psm1', 'src/Web.Update.psm1', 'scripts/update-worker.ps1', 'scripts/get-install.ps1',
         'src/Setup.Helpers.psm1', 'src/Storage.Helpers.psm1',

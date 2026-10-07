@@ -536,6 +536,97 @@ class GatewayTests(unittest.TestCase):
         self.assertFalse(content.exists())
         self.assertEqual(self.call('/api/storage',{'action':'save','request_log':'everything'},csrf=self.csrf)[0],400)
 
+class ResponsiveRequestTests(unittest.TestCase):
+    call = classmethod(HttpTests.call.__func__)
+    model_request = GatewayTests.model_request
+
+    def setUp(self):
+        cls = type(self)
+        cls.fixture = PanelFixture(gateway=True)
+        cls.cookies = http.cookiejar.CookieJar()
+        cls.client = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(cls.cookies))
+        cls.csrf = cls.call('/api/login', {'password': PASSWORD})[1]['csrf']
+
+    def tearDown(self):
+        self.fixture.close()
+
+    def configure(self, **values):
+        path = self.fixture.root / 'config.json'
+        state = json.loads(path.read_text()); state.update(values)
+        path.write_text(json.dumps(state))
+
+    def events(self, kind):
+        path = self.fixture.root / 'probe-events.log'
+        return path.read_text().splitlines().count(kind) if path.exists() else 0
+
+    def wait_probe(self, kind):
+        deadline = time.monotonic() + 4
+        while time.monotonic() < deadline:
+            if self.events(kind): return
+            time.sleep(.01)
+        self.fail('The slow check did not start')
+
+    def background(self, action):
+        result = []
+        def run():
+            try: result.append(action())
+            except Exception as error: result.append(error)
+        thread = threading.Thread(target=run); thread.start()
+        self.addCleanup(thread.join, 6)
+        return thread, result
+
+    def test_01_invalid_key_never_probes_engine(self):
+        self.configure(runtime_delay_ms=1400)
+        started = time.monotonic()
+        self.assertEqual(self.model_request(key='wrong')[0], 401)
+        self.assertLess(time.monotonic() - started, .7)
+        self.assertEqual(self.events('runtime'), 0)
+
+    def test_02_cold_runtime_check_does_not_block_session_or_login(self):
+        self.configure(runtime_delay_ms=1400)
+        thread, result = self.background(self.model_request)
+        self.wait_probe('runtime')
+        started = time.monotonic()
+        self.assertEqual(self.call('/api/session')[0], 200)
+        self.assertEqual(self.call('/api/login', {'password': PASSWORD})[0], 200)
+        self.assertLess(time.monotonic() - started, .7)
+        thread.join(5); self.assertFalse(thread.is_alive()); self.assertEqual(result[0][0], 200)
+
+    def test_03_slow_dashboard_does_not_block_session(self):
+        self.configure(dashboard_delay_ms=1400)
+        thread, result = self.background(lambda: self.call('/api/status?gpu=1'))
+        self.wait_probe('dashboard')
+        started = time.monotonic()
+        self.assertEqual(self.call('/api/session')[0], 200)
+        self.assertLess(time.monotonic() - started, .7)
+        thread.join(5); self.assertFalse(thread.is_alive()); self.assertEqual(result[0][0], 200)
+        self.assertEqual(result[0][1]['gpu'][0]['used'], 15020)
+
+    def test_04_concurrent_cold_requests_share_one_check_and_idle_has_no_probes(self):
+        self.configure(runtime_delay_ms=500)
+        workers = [self.background(self.model_request) for _ in range(3)]
+        for thread, result in workers:
+            thread.join(5); self.assertFalse(thread.is_alive()); self.assertEqual(result[0][0], 200)
+        self.assertEqual(self.events('runtime'), 1)
+        self.assertEqual(self.model_request()[0], 200)
+        self.assertEqual(self.events('runtime'), 1)
+        time.sleep(1.2)
+        self.assertEqual(self.events('runtime'), 1, 'Idle cache expiry must not poll the engine')
+        self.assertEqual(self.model_request()[0], 200)
+        self.assertEqual(self.events('runtime'), 2)
+
+    def test_05_check_started_before_stop_does_not_publish_old_runtime(self):
+        self.configure(runtime_delay_ms=1400)
+        thread, result = self.background(self.model_request)
+        self.wait_probe('runtime')
+        code, op, _ = self.call('/api/actions', {'action': 'stopall'}, csrf=self.csrf)
+        self.assertEqual(code, 202)
+        HttpTests.wait_operation(self, op['id'])
+        thread.join(5); self.assertFalse(thread.is_alive()); self.assertEqual(result[0][0], 409)
+        self.assertEqual(self.model_request()[0], 503)
+        self.assertEqual(self.call('/api/status')[1]['backends'][0]['service'], 'Stopped')
+
+
 class ProxyTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):

@@ -98,6 +98,7 @@ namespace OmniBox {
         private static readonly Dictionary<string, string> ModelSessions = new Dictionary<string, string>();
         private static RequestStat Current;
         private static bool Control;
+        private static long RuntimeRevision;
         private static CancellationTokenSource Cancellation;
         private static string DirectoryPath, JournalError;
         private const long FileLimit = 4 * 1024 * 1024, ContentFileLimit = 16 * 1024 * 1024;
@@ -147,17 +148,22 @@ namespace OmniBox {
             lock (Sync) {
                 if (Control || (Current != null && !cancelInference)) return false;
                 Control = true;
+                RuntimeRevision++;
                 if (cancelInference) Cancellation?.Cancel();
                 return true;
             }
         }
-        public static void EndControl() { lock (Sync) { Control = false; } }
+        public static void EndControl() { lock (Sync) { Control = false; RuntimeRevision++; } }
+        public static void InvalidateRuntime() { lock (Sync) { RuntimeRevision++; } }
+        public static long RuntimeVersion { get { lock (Sync) { return RuntimeRevision; } } }
+        public static bool IsControlling { get { lock (Sync) { return Control; } } }
         // Closes admission of new generations at once and lets the current one finish;
         // the caller waits for IsGenerating to turn false before acting.
         public static bool ReserveControl() {
             lock (Sync) {
                 if (Control) return false;
                 Control = true;
+                RuntimeRevision++;
                 return true;
             }
         }
@@ -166,8 +172,11 @@ namespace OmniBox {
             lock (Sync) { foreach (string k in ModelSessions.Keys.Where(k => k.StartsWith(backend + "\n", StringComparison.Ordinal)).ToArray()) ModelSessions.Remove(k); }
         }
         public static RequestStat Begin(string backend, string model, string route, int context, string sessionHeader, CancellationTokenSource cancellation) {
+            return Begin(backend, model, route, context, sessionHeader, cancellation, -1);
+        }
+        public static RequestStat Begin(string backend, string model, string route, int context, string sessionHeader, CancellationTokenSource cancellation, long runtimeVersion) {
             lock (Sync) {
-                if (Control || Current != null) return null;
+                if (Control || Current != null || (runtimeVersion >= 0 && runtimeVersion != RuntimeRevision)) return null;
                 string key = backend + "\n" + model;
                 string session;
                 if (!String.IsNullOrEmpty(sessionHeader) && sessionHeader.Length <= 128)

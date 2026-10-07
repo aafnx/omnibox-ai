@@ -2,6 +2,10 @@
 function Get-AiDashboard {
     param([string]$ConfigPath, [switch]$IncludeGpu)
     $state = Get-Content $ConfigPath -Raw | ConvertFrom-Json -AsHashtable
+    if ($state.Contains('dashboard_delay_ms')) {
+        [IO.File]::AppendAllText((Join-Path (Split-Path $ConfigPath -Parent) 'probe-events.log'), "dashboard`n")
+        Start-Sleep -Milliseconds $state.dashboard_delay_ms
+    }
     $settings=@{context=$state.context;idle_minutes=30;model='C:\ai\models\bonsai\bonsai-2-27b-pq2_0.gguf';alias='bonsai-2-27b';gpu_layers='99';n_cpu_moe='0';kv_offload='on';reasoning='';temperature='';cache_key='q8_0';cache_value='q8_0';flash_attention='on';batch='512';ubatch='128'}
     $gpu=@();if($IncludeGpu){$gpu=@(@{name='NVIDIA GeForce RTX 5080';total=16303;used=15020;free=958})}
     return @{version='0.9.4';computer='OMNIBOX';default_backend='bonsai';exclusive=$true;gpu=$gpu;backends=@(
@@ -22,6 +26,8 @@ function Invoke-AiPanelAction {
 function Get-AiGatewayRuntime {
     param($ConfigPath,$Name)
     $c=Get-Content $ConfigPath -Raw|ConvertFrom-Json -AsHashtable
+    [IO.File]::AppendAllText((Join-Path (Split-Path $ConfigPath -Parent) 'probe-events.log'), "runtime`n")
+    if ($c.Contains('runtime_delay_ms')) { Start-Sleep -Milliseconds $c.runtime_delay_ms }
     if($Name -ne 'bonsai' -or $c.service -ne 'Running'){return @{available=$false;status=503;reason='Selected engine is stopped.'}}
     return @{available=$true;model='bonsai-2-27b';context=196608;type=$(if($c.Contains('gateway_type')){$c.gateway_type}else{'prism'});placement=$(if($c.Contains('gateway_placement')){$c.gateway_placement}else{'auto'})}
 }
