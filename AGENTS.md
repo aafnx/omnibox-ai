@@ -52,6 +52,7 @@ PowerShell-версия удалена из `main` по решению влад�
 | `web/` | Интерфейс панели. Оформление — по брендбуку `docs/brand/` |
 | `tests/web_test.cjs` | Поведение интерфейса через DOM-адаптер |
 | `install.ps1`, `install.sh` | Установка и обновление одной командой: скачивают выпуск, сверяют SHA256, запускают `omnibox install`. `install.ps1` — для Windows PowerShell 5.1, UTF-8 с BOM |
+| `scripts/remove-old-version.ps1` | Одноразовое удаление PowerShell-версии с переносом моделей; не часть программы, публикуется в выпуске. Установщик прежнюю версию не трогает |
 | `.github/workflows/release.yml` | Сборка и публикация выпуска (вручную, из `main`) |
 | `docs/` | Пользователю: `install.md`, `api.md`, `ai.md`; архитектура (`architecture-go.md`), план (`roadmap.md`), брендбук |
 
@@ -106,7 +107,7 @@ node tests/web_test.cjs
 
 `.github/workflows/ci.yml` запускается на push в любую ветку и на pull request:
 
-- **Windows** (`windows-latest`): `go vet`, `go test` (в том числе хост движка с Job Object), сборка `omnibox.exe`, разбор `install.ps1` во встроенном Windows PowerShell 5.1.
+- **Windows** (`windows-latest`): `go vet`, `go test` (в том числе хост движка с Job Object), сборка `omnibox.exe`, разбор `install.ps1` и `scripts/remove-old-version.ps1` во встроенном Windows PowerShell 5.1.
 - **Linux** (`ubuntu-latest`): `gofmt`, `go vet` для обеих ОС, `go test -race`, сборки для Linux и Windows без cgo, `web_test.cjs`, проверка синтаксиса `install.sh`.
 
 Перед push прогони проверки локально. Красный CI — это работа, а не «флейк»: найди причину. Тесты нельзя отключать, пропускать или ослаблять ради зелёного CI.

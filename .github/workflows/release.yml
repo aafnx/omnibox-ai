@@ -41,7 +41,8 @@ jobs:
         run: |
           (cd out/windows && zip -q ../../omnibox-windows-amd64.zip omnibox.exe)
           tar -czf omnibox-linux-amd64.tar.gz -C out/linux omnibox
-          sha256sum omnibox-windows-amd64.zip omnibox-linux-amd64.tar.gz install.ps1 install.sh > SHA256SUMS
+          cp scripts/remove-old-version.ps1 .
+          sha256sum omnibox-windows-amd64.zip omnibox-linux-amd64.tar.gz install.ps1 install.sh remove-old-version.ps1 > SHA256SUMS
           # Release notes: this version's section of CHANGELOG.md.
           awk -v v="$VERSION" '$0 ~ "^## "v" " {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
       - name: Publish
@@ -49,6 +50,6 @@ jobs:
           flags=""
           if [ "${{ inputs.prerelease }}" = "true" ]; then flags="--prerelease"; fi
           gh release create "v$VERSION" --target "$GITHUB_SHA" --title "OmniBox AI $VERSION" --notes-file notes.md $flags \
-            omnibox-windows-amd64.zip omnibox-linux-amd64.tar.gz SHA256SUMS install.ps1 install.sh
+            omnibox-windows-amd64.zip omnibox-linux-amd64.tar.gz SHA256SUMS install.ps1 install.sh remove-old-version.ps1
         env:
           GH_TOKEN: ${{ github.token }}

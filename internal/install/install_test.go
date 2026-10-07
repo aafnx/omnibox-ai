@@ -110,7 +110,6 @@ func TestFailureAtEveryStepUndoesEverything(t *testing.T) {
 	for _, stepName := range []string{"files", "data", "config", "services", "firewall", "command", "path", "panel", "panel-started"} {
 		r := newRig(t, "")
 		r.Yes = true
-		r.services.Set("bonsai", platform.Running)
 		r.FailAt = stepName
 		err := r.Run(context.Background())
 		if err == nil || !strings.Contains(err.Error(), "отменены") {
@@ -131,27 +130,6 @@ func TestFailureAtEveryStepUndoesEverything(t *testing.T) {
 		if shim, _ := r.shim(); fileExists(shim) || len(r.path) != 0 {
 			t.Fatalf("%s: ai command or PATH left", stepName)
 		}
-		if s, _ := r.services.Query("bonsai"); s.State == platform.Missing {
-			t.Fatalf("%s: the old version was removed by a failed install", stepName)
-		}
-	}
-}
-
-func TestLegacyServicesAreRemovedAfterSuccess(t *testing.T) {
-	r := newRig(t, "")
-	r.Yes = true
-	r.services.Set("omnibox-ai", platform.Running)
-	r.services.Set("bonsai", platform.Stopped)
-	if err := r.Run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"omnibox-ai", "bonsai"} {
-		if s, _ := r.services.Query(name); s.State != platform.Missing {
-			t.Fatalf("%s kept", name)
-		}
-	}
-	if i := slices.Index(r.services.Calls, "remove:bonsai"); i < slices.Index(r.services.Calls, "start:omnibox") {
-		t.Fatalf("legacy removed before the new panel ran: %v", r.services.Calls)
 	}
 }
 
