@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 	"unsafe"
 
@@ -62,6 +63,50 @@ func AddToPath(dir string) (func() error, error) {
 		return nil, err
 	}
 	return func() error { return set(old) }, nil
+}
+
+// RemoveFromPath takes a directory out of the machine PATH.
+func RemoveFromPath(dir string) error {
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, environmentKey, registry.QUERY_VALUE|registry.SET_VALUE)
+	if err != nil {
+		return err
+	}
+	defer k.Close()
+	old, kind, err := k.GetStringValue("Path")
+	if err != nil {
+		return err
+	}
+	var kept []string
+	for _, p := range strings.Split(old, ";") {
+		if p != "" && !strings.EqualFold(strings.TrimRight(p, `\`), strings.TrimRight(dir, `\`)) {
+			kept = append(kept, p)
+		}
+	}
+	value := strings.Join(kept, ";")
+	if value == strings.Trim(old, ";") {
+		return nil
+	}
+	if kind == registry.EXPAND_SZ {
+		err = k.SetExpandStringValue("Path", value)
+	} else {
+		err = k.SetStringValue("Path", value)
+	}
+	broadcastEnvironment()
+	return err
+}
+
+// RemoveAfterExit deletes a directory a few seconds after this process ends: Windows does not
+// delete a running program, and the uninstaller runs from the directory it removes.
+func RemoveAfterExit(dir string) error {
+	if strings.ContainsAny(dir, "\"&|<>^%!") {
+		return fmt.Errorf("необычный путь каталога программы: %s", dir)
+	}
+	cmd := exec.Command("cmd.exe")
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		CmdLine:       `cmd.exe /c ping -n 4 127.0.0.1 >nul & rmdir /s /q "` + dir + `"`,
+		CreationFlags: windows.CREATE_NO_WINDOW | windows.DETACHED_PROCESS,
+	}
+	return cmd.Start()
 }
 
 // broadcastEnvironment tells Explorer that the environment changed, so new terminals get PATH.

@@ -53,6 +53,10 @@ type Installer struct {
 	AddToPath func(dir string) (func() error, error)
 	// ShimDir is where the ai command goes: the program directory on Windows, /usr/local/bin on Linux.
 	ShimDir string
+	// RemoveFromPath and RemoveProgram are used by Uninstall: the program directory may hold the
+	// running uninstaller, which Windows deletes only after it exits.
+	RemoveFromPath func(dir string) error
+	RemoveProgram  func(dir string) error
 	// FailAt makes the named step fail, to test the rollback.
 	FailAt string
 
