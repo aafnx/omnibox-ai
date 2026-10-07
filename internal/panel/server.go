@@ -2,6 +2,7 @@ package panel
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -34,6 +35,12 @@ type Options struct {
 	// Config returns the current settings; the service replaces them after every change.
 	Config func() *config.Config
 	Now    func() time.Time
+	// Status builds /api/status; gpu adds a GPU reading.
+	Status func(ctx context.Context, gpu bool) any
+	// Telemetry returns a resource sample; once is a single reading the user asked for.
+	Telemetry func(ctx context.Context, once bool) any
+	// Logs returns the engines' recent log lines; engine "" means all.
+	Logs func(engine string) any
 }
 
 type session struct {
@@ -96,8 +103,8 @@ func New(opt Options) (*Server, error) {
 
 // Routes of the PowerShell panel that later stages port; until then they answer 501.
 var pendingRoutes = map[string]bool{
-	"GET /api/status": true, "GET /api/activity": true, "GET /api/telemetry": true, "GET /api/logs": true,
-	"GET /api/storage": true, "GET /api/engines": true, "GET /api/engine-releases": true, "GET /api/gateway": true,
+	"GET /api/activity": true,
+	"GET /api/storage":  true, "GET /api/engines": true, "GET /api/engine-releases": true, "GET /api/gateway": true,
 	"GET /api/updates": true, "GET /api/catalog": true, "GET /api/request-content": true,
 }
 
@@ -152,6 +159,17 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case route == "GET /api/session":
 		s.json(w, http.StatusOK, map[string]any{"csrf": sess.csrf, "ssh_target": cfg.Panel.SSHTarget, "port": cfg.Panel.Port})
+	case route == "GET /api/status" && s.opt.Status != nil:
+		s.json(w, http.StatusOK, s.opt.Status(r.Context(), r.URL.Query().Get("gpu") == "1"))
+	case route == "GET /api/telemetry" && s.opt.Telemetry != nil:
+		s.json(w, http.StatusOK, s.opt.Telemetry(r.Context(), r.URL.Query().Get("once") == "1"))
+	case route == "GET /api/logs" && s.opt.Logs != nil:
+		name := r.URL.Query().Get("backend")
+		if _, ok := cfg.Engines[name]; name != "" && !ok {
+			s.json(w, http.StatusBadRequest, map[string]any{"error": "Неизвестный движок."})
+			return
+		}
+		s.json(w, http.StatusOK, map[string]any{"logs": s.opt.Logs(name)})
 	case route == "POST /api/logout":
 		s.mu.Lock()
 		delete(s.sessions, key)

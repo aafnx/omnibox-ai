@@ -1,6 +1,7 @@
 package panel
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -250,5 +251,35 @@ func TestSessionKeyRejectsMalformedTokens(t *testing.T) {
 	}
 	if k := sessionKey(strings.Repeat("a", 64)); len(k) != 64 || k == strings.Repeat("a", 64) {
 		t.Fatalf("key %q", k)
+	}
+}
+
+func TestStatusTelemetryAndLogsRoutes(t *testing.T) {
+	c := testConfig(t, func(c *config.Config) {
+		c.Engines[config.PrismML] = &config.Engine{Port: 8801, Launch: config.Launch{Settings: map[string]string{}}}
+	})
+	var gpuAsked, onceAsked bool
+	s, _ := New(Options{
+		Config:    func() *config.Config { return c },
+		Status:    func(_ context.Context, gpu bool) any { gpuAsked = gpu; return map[string]any{"backends": []any{}} },
+		Telemetry: func(_ context.Context, once bool) any { onceAsked = once; return map[string]any{"enabled": false} },
+		Logs:      func(engine string) any { return []any{engine} },
+	})
+	cookie, _ := login(t, s, nil)
+	auth := func(r *http.Request) { r.AddCookie(cookie) }
+	if w := call(s, "GET", "/api/status?gpu=1", "", auth); w.Code != 200 || !gpuAsked {
+		t.Fatalf("status: %d gpu %v", w.Code, gpuAsked)
+	}
+	if w := call(s, "GET", "/api/telemetry?once=1", "", auth); w.Code != 200 || !onceAsked {
+		t.Fatalf("telemetry: %d once %v", w.Code, onceAsked)
+	}
+	if w := call(s, "GET", "/api/logs?backend=prismml", "", auth); w.Code != 200 || !strings.Contains(w.Body.String(), "prismml") {
+		t.Fatalf("logs: %d %s", w.Code, w.Body.String())
+	}
+	if w := call(s, "GET", "/api/logs?backend=vllm", "", auth); w.Code != 400 {
+		t.Fatalf("unknown engine logs: %d", w.Code)
+	}
+	if w := call(s, "GET", "/api/status", "", nil); w.Code != 401 {
+		t.Fatalf("status without login: %d", w.Code)
 	}
 }

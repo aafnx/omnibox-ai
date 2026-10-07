@@ -20,6 +20,8 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/panel"
 	"github.com/aafnx/omnibox-ai/internal/platform"
+	"github.com/aafnx/omnibox-ai/internal/status"
+	"github.com/aafnx/omnibox-ai/internal/telemetry"
 )
 
 func main() {
@@ -66,7 +68,18 @@ func serve(args []string, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	handler, err := panel.New(panel.Options{Config: func() *config.Config { return cfg }})
+	current := func() *config.Config { return cfg }
+	services := platform.NewServices()
+	builder := &status.Builder{Config: current, Services: services, DataDir: *data}
+	sampler := &telemetry.Sampler{}
+	handler, err := panel.New(panel.Options{
+		Config: current,
+		Status: func(ctx context.Context, gpu bool) any { return builder.Build(ctx, gpu) },
+		Telemetry: func(ctx context.Context, once bool) any {
+			return telemetryView(ctx, current(), services, sampler, once)
+		},
+		Logs: func(engine string) any { return status.Logs(*data, current(), engine) },
+	})
 	if err != nil {
 		return err
 	}
@@ -88,4 +101,19 @@ func serve(args []string, stdout io.Writer) error {
 		return err
 	}
 	return nil
+}
+
+// telemetryView polls resources only while an engine works; with every engine stopped the
+// panel gets a sample only when the user asked for one (login, returning to the tab, refresh).
+func telemetryView(ctx context.Context, cfg *config.Config, services platform.Services, sampler *telemetry.Sampler, once bool) map[string]any {
+	working := false
+	for name := range cfg.Engines {
+		if info, err := services.Query(config.ServiceName(name)); err == nil && (info.State == platform.Running || info.State == platform.StartPending) {
+			working = true
+		}
+	}
+	if !working && !once {
+		return map[string]any{"enabled": false, "timestamp": time.Now().UTC(), "reason": "Серверы остановлены; опрос ресурсов выключен."}
+	}
+	return map[string]any{"enabled": true, "sample": sampler.Get(ctx), "collecting": false}
 }
