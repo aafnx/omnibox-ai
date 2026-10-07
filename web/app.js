@@ -198,6 +198,7 @@ function renderGatewayForm() {
   $('api-public-origin').value=gateway.public_origin||'';$('api-trusted-proxies').value=(gateway.trusted_proxies||[]).join(', ');
   $('api-state').textContent=!gateway.enabled?'Сетевой API не включён. Повторите установщик и выберите OpenAI API.':`API доступен на порту панели ${panelPort} по пути /v1 и обслуживает запущенный движок. ${gateway.require_key?'Используйте сохранённый ключ или сгенерируйте новый.':'Авторизация отключена: ключ не нужен.'}`;
   $('save-api').disabled=!gateway.enabled;$('generate-api-key').disabled=!gateway.enabled;
+  $('api-no-key-warning').hidden=!gateway.enabled||gateway.require_key;
 }
 function renderConnections() {
   if(!snapshot||!gateway)return;$('connections').replaceChildren();if(!gateway.enabled)return;
