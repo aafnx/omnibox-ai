@@ -80,13 +80,15 @@ type Dashboard struct {
 	Engine   string          `json:"default_backend"`
 	Engines  []Engine        `json:"backends"`
 	GPU      []telemetry.GPU `json:"gpu"`
+	// Operations are the panel's background operations; the service fills them in.
+	Operations any `json:"operations"`
 }
 
 // Build computes the dashboard; engines are checked in parallel with short probes.
 func (b *Builder) Build(ctx context.Context, includeGPU bool) Dashboard {
 	cfg := b.Config()
 	host, _ := os.Hostname()
-	d := Dashboard{Version: omnibox.Version, Computer: host, Engine: cfg.API.Engine, Engines: []Engine{}, GPU: []telemetry.GPU{}}
+	d := Dashboard{Version: omnibox.Version, Computer: host, Engine: cfg.API.Engine, Engines: []Engine{}, GPU: []telemetry.GPU{}, Operations: []any{}}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var gpus []telemetry.GPU
