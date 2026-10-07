@@ -47,6 +47,15 @@ type Record struct {
 	PromptProcessed  *int64     `json:"prompt_processed"`
 	PromptTotal      *int64     `json:"prompt_total"`
 	UsageSource      string     `json:"usage_source"`
+	// KeyID is the client's API key (its short id), empty without a key.
+	KeyID string `json:"key_id,omitempty"`
+}
+
+// KeyUsage is what one API key used: shown next to the key so an unused one can be revoked.
+type KeyUsage struct {
+	Requests int       `json:"requests"`
+	Tokens   int64     `json:"tokens"`
+	LastUsed time.Time `json:"last_used"`
 }
 
 // Session sums the requests of one client conversation with one model.
@@ -334,6 +343,20 @@ func (g *Gateway) add(r *Record) {
 		s = &Session{ID: r.SessionID, Engine: r.Engine, Model: r.Model, Started: r.Started}
 		g.sessions[r.SessionID] = s
 	}
+	if r.KeyID != "" {
+		u := g.keyUse[r.KeyID]
+		if u == nil {
+			u = &KeyUsage{}
+			g.keyUse[r.KeyID] = u
+		}
+		u.Requests++
+		if r.TotalTokens != nil {
+			u.Tokens += *r.TotalTokens
+		}
+		if r.Ended.After(u.LastUsed) {
+			u.LastUsed = *r.Ended
+		}
+	}
 	s.Requests++
 	s.LastRequest = *r.Ended
 	if r.InputTokens != nil {
@@ -394,6 +417,17 @@ func (g *Gateway) Snapshot() Activity {
 	}
 	sort.Slice(a.Sessions, func(i, j int) bool { return a.Sessions[i].LastRequest.After(a.Sessions[j].LastRequest) })
 	return a
+}
+
+// KeyUsage returns the use of each API key by its id, from the request journal.
+func (g *Gateway) KeyUsage() map[string]KeyUsage {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make(map[string]KeyUsage, len(g.keyUse))
+	for id, u := range g.keyUse {
+		out[id] = *u
+	}
+	return out
 }
 
 // IsActive tells whether a generation runs on the engine.

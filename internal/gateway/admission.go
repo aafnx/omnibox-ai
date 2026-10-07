@@ -47,13 +47,13 @@ func (g *Gateway) now() time.Time {
 
 // admit makes the request the one running generation, waiting in the FIFO queue if another
 // one runs. cancel aborts the request when a control operation stops the engine.
-func (g *Gateway) admit(ctx context.Context, gen uint64, t Target, route, sessionHeader string, cancel context.CancelFunc, depth int, timeout time.Duration) (*Record, error) {
+func (g *Gateway) admit(ctx context.Context, gen uint64, t Target, route, sessionHeader, keyID string, cancel context.CancelFunc, depth int, timeout time.Duration) (*Record, error) {
 	g.mu.Lock()
 	if g.control || gen != g.gen {
 		g.mu.Unlock()
 		return nil, errChanged
 	}
-	r := &Record{ID: newID(), SessionID: g.sessionID(t.Engine, t.Model, sessionHeader), Engine: t.Engine, Model: t.Model, Route: route,
+	r := &Record{ID: newID(), SessionID: g.sessionID(t.Engine, t.Model, sessionHeader), KeyID: keyID, Engine: t.Engine, Model: t.Model, Route: route,
 		Started: g.now().UTC(), State: "preparing", ContextLimit: t.Context, UsageSource: "unavailable"}
 	if g.current == nil && len(g.queue) == 0 {
 		g.current, g.cancel = r, cancel
