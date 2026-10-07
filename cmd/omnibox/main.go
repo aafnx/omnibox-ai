@@ -162,6 +162,18 @@ func serve(args []string, stdout io.Writer) error {
 			models, err := hub.Search(ctx, query)
 			return map[string]any{"models": models, "source": "Hugging Face", "query": query}, err
 		},
+		Gateway: func() any { return gateway.SettingsView(current()) },
+		GatewayAction: func(body map[string]any) (any, error) {
+			key, err := gateway.UpdateSettings(store, body)
+			if err != nil {
+				return nil, err
+			}
+			// A new key is shown once and never stored.
+			return map[string]any{"gateway": gateway.SettingsView(current()), "key": key}, nil
+		},
+		SetPassword: func(p config.Password) error {
+			return store.Update(func(c *config.Config) error { c.Panel.Password = p; return nil })
+		},
 		Storage: func() any { return storage.GetUsage(*data, current()) },
 		StorageAction: func(body map[string]any) (any, error) {
 			var result *storage.Result
