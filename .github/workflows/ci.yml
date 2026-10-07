@@ -28,16 +28,6 @@ jobs:
           fetch-depth: 0
       - name: PowerShell version
         run: $PSVersionTable.PSVersion.ToString(); if ($PSVersionTable.PSVersion -lt [version]'7.4') { throw 'PowerShell 7.4+ required' }
-      - name: Build candidate installer for remote validation
-        run: |
-          ./scripts/build-setup.ps1
-          ./dist/install-omnibox-ai.ps1 -CheckOnly
-          if (-not $IsWindows) {
-            $encoded = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path (Get-Location) 'dist/install-omnibox-ai.ps1')))
-            for ($offset=0; $offset -lt $encoded.Length; $offset+=4096) {
-              Write-Host ('OMNIBOX_PACKAGE:' + $encoded.Substring($offset,[Math]::Min(4096,$encoded.Length-$offset)))
-            }
-          }
       - name: Core tests
         if: ${{ !cancelled() }}
         run: ./tests/test.ps1
@@ -82,16 +72,6 @@ jobs:
         with:
           # Release commits from releases.json are checked and installed in tests.
           fetch-depth: 0
-      - name: Build candidate installer for remote validation
-        run: |
-          ./scripts/build-setup.ps1
-          ./dist/install-omnibox-ai.ps1 -CheckOnly
-          if (-not $IsWindows) {
-            $encoded = [Convert]::ToBase64String([IO.File]::ReadAllBytes((Join-Path (Get-Location) 'dist/install-omnibox-ai.ps1')))
-            for ($offset=0; $offset -lt $encoded.Length; $offset+=4096) {
-              Write-Host ('OMNIBOX_PACKAGE:' + $encoded.Substring($offset,[Math]::Min(4096,$encoded.Length-$offset)))
-            }
-          }
       - name: Core tests
         if: ${{ !cancelled() }}
         run: ./tests/test.ps1
