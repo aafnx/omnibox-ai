@@ -180,6 +180,15 @@ function renderPresets(b){
   if(list.some(p=>p.name===old))select.value=old;
   const current=list.find(p=>p.name===select.value);$('preset-delete').disabled=!current||current.builtin;$('preset-apply').disabled=!list.length;
 }
+// The estimate reads only the GGUF header and is asked for by the owner, never by a timer.
+let lastEstimate=null;
+async function estimatePlacement(){
+  const q=new URLSearchParams({model:$('model-choice').value,context:$('context').value.trim(),cache_key:$('cache-key').value,cache_value:$('cache-value').value});
+  $('estimate').textContent='Оценка…';$('estimate-apply').hidden=true;
+  try{lastEstimate=await api(`/api/estimate?${q}`);$('estimate').textContent=lastEstimate.text;$('estimate-apply').hidden=lastEstimate.placement!=='hybrid';}
+  catch(e){lastEstimate=null;$('estimate').textContent=e.message;}
+}
+function applyEstimate(){if(!lastEstimate)return;$('placement').value='hybrid';$('gpu-layers').value=lastEstimate.gpu_layers;syncKvOffload();notice(`Подставлено: ${lastEstimate.gpu_layers} слоёв на GPU. Сохраните или примените настройки.`);}
 function restartText(b){
   const rule='Не больше 2 раз за 10 минут и не при нехватке памяти. Остановка из панели или ai stop не отменяется.';
   const parts=[];if(b.restarts)parts.push(`Автоперезапусков после запуска: ${b.restarts}.`);
@@ -370,6 +379,8 @@ $('model-backend').addEventListener('change',e=>chooseBackend(e.target.value));
 $('settings-form').addEventListener('input',()=>{settingsDirty=true;formRevision++;});$('settings-form').addEventListener('change',()=>{settingsDirty=true;formRevision++;});
 $('settings-form').addEventListener('submit',e=>{e.preventDefault();action({action:'save',backend:selectedBackend,settings:collectSettings()}).catch(error=>notice(error.message,true));});
 $('apply').addEventListener('click',()=>{if($('settings-form').reportValidity())action({action:'apply',backend:selectedBackend,settings:collectSettings()}).catch(e=>notice(e.message,true));});
+$('estimate-button').addEventListener('click',()=>estimatePlacement());
+$('estimate-apply').addEventListener('click',applyEstimate);
 $('test-model').addEventListener('click',()=>action({action:'model-test'}).catch(e=>notice(e.message,true)));
 $('preset-choice').addEventListener('change',()=>{const b=backend();if(b)renderPresets(b);});
 $('preset-apply').addEventListener('click',()=>action({action:'preset-apply',backend:selectedBackend,model:$('preset-choice').value}).catch(e=>notice(e.message,true)));
