@@ -403,3 +403,28 @@ func TestEngineRoutes(t *testing.T) {
 		t.Fatalf("unknown engine: %d", w.Code)
 	}
 }
+
+func TestCatalogRoute(t *testing.T) {
+	var gotQuery, gotRepo string
+	s, _ := New(Options{
+		Config: func() *config.Config { return testConfig(t, nil) },
+		Catalog: func(_ context.Context, query, repo string) (any, error) {
+			gotQuery, gotRepo = query, repo
+			if query == "fail" {
+				return nil, errors.New("Hugging Face недоступен")
+			}
+			return map[string]any{"models": []any{}}, nil
+		},
+	})
+	cookie, _ := login(t, s, nil)
+	auth := func(r *http.Request) { r.AddCookie(cookie) }
+	if w := call(s, "GET", "/api/catalog?q=qwen", "", auth); w.Code != 200 || gotQuery != "qwen" {
+		t.Fatalf("search: %d", w.Code)
+	}
+	if w := call(s, "GET", "/api/catalog?repo=a/b", "", auth); w.Code != 200 || gotRepo != "a/b" {
+		t.Fatalf("files: %d", w.Code)
+	}
+	if w := call(s, "GET", "/api/catalog?q=fail", "", auth); w.Code != 502 {
+		t.Fatalf("failure: %d", w.Code)
+	}
+}

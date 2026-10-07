@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"sync"
 	"time"
 
@@ -40,6 +41,8 @@ type Controller struct {
 	Executable string
 	// Gate lets a version switch wait for the running generation.
 	Gate Reserver
+	// HTTP downloads models (tests point it at a fake Hugging Face).
+	HTTP *http.Client
 
 	mu sync.Mutex
 }

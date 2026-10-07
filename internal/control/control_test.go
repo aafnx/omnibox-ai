@@ -108,7 +108,15 @@ func (r *rig) serve(name string, w http.ResponseWriter, req *http.Request) {
 		}
 		w.Write([]byte(`{"done":true}`))
 	case "/api/pull":
-		w.Write([]byte(`{"status":"success"}`))
+		if body["stream"] != true {
+			http.Error(w, "stream expected", http.StatusBadRequest)
+			return
+		}
+		if body["model"] == "broken:1b" {
+			w.Write([]byte(`{"status":"pulling manifest"}` + "\n" + `{"error":"file does not exist"}` + "\n"))
+			return
+		}
+		w.Write([]byte(`{"status":"pulling manifest"}` + "\n" + `{"status":"pulling abc","total":100,"completed":40}` + "\n" + `{"status":"pulling abc","total":100,"completed":100}` + "\n" + `{"status":"success"}` + "\n"))
 	default:
 		http.NotFound(w, req)
 	}

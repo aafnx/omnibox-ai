@@ -8,7 +8,6 @@ import (
 	"slices"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/engine"
@@ -25,6 +24,7 @@ type Request struct {
 	Filename string            `json:"filename,omitempty"`
 	SHA256   string            `json:"sha256,omitempty"`
 	Version  string            `json:"version,omitempty"`
+	Size     string            `json:"size,omitempty"`
 	EngineID string            `json:"engine,omitempty"`
 }
 
@@ -34,7 +34,7 @@ var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "
 // ParseRequest validates a panel operation body; unknown fields are refused.
 func ParseRequest(body map[string]any) (Request, error) {
 	var r Request
-	allowed := []string{"action", "backend", "settings", "model", "url", "filename", "sha256", "engine", "version"}
+	allowed := []string{"action", "backend", "settings", "model", "url", "filename", "sha256", "engine", "version", "size"}
 	for key, value := range body {
 		if !slices.Contains(allowed, key) {
 			return r, fmt.Errorf("Неизвестное поле: %s", key)
@@ -75,6 +75,8 @@ func ParseRequest(body map[string]any) (Request, error) {
 			r.EngineID = s
 		case "version":
 			r.Version = s
+		case "size":
+			r.Size = s
 		}
 	}
 	if !slices.Contains(Actions, r.Action) {
@@ -164,6 +166,8 @@ func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
 		return c.ollamaLoad(ctx, name, r)
 	case "pull":
 		return c.pull(ctx, name, r.Model)
+	case "download":
+		return c.downloadGGUF(ctx, name, r)
 	case "model-delete":
 		return c.DeleteModel(ctx, name, r.Model)
 	}
@@ -319,24 +323,4 @@ func (c *Controller) ollamaGenerate(ctx context.Context, client *engine.Client, 
 		timeout = StartupTimeout
 	}
 	return client.Post(ctx, "/api/generate", body, nil, timeout)
-}
-
-func (c *Controller) pull(ctx context.Context, name, model string) (string, error) {
-	if name != config.Ollama {
-		return "", errors.New("Скачивание по имени доступно для Ollama.")
-	}
-	if !config.ValidOllamaModel(model) {
-		return "", errors.New("Некорректное имя модели Ollama.")
-	}
-	if !c.running(name) {
-		return "", errors.New("Сначала запустите Ollama. Скачивание само сервер не запускает.")
-	}
-	e, err := c.engine(name)
-	if err != nil {
-		return "", err
-	}
-	if err := c.client(name, e).Post(ctx, "/api/pull", map[string]any{"model": model, "stream": false}, nil, 2*time.Hour); err != nil {
-		return "", err
-	}
-	return "Модель " + model + " скачана.", nil
 }

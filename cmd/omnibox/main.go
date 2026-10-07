@@ -18,6 +18,7 @@ import (
 	"time"
 
 	omnibox "github.com/aafnx/omnibox-ai"
+	"github.com/aafnx/omnibox-ai/internal/catalog"
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/control"
 	"github.com/aafnx/omnibox-ai/internal/engine"
@@ -112,6 +113,7 @@ func serve(args []string, stdout io.Writer) error {
 		return err
 	}
 	manager := &enginemgr.Manager{DataDir: *data}
+	hub := &catalog.Hub{}
 	controller := &control.Controller{Store: store, Services: services, Manager: manager, DataDir: *data, Executable: exe, Gate: api}
 	operations := &control.Operations{Run: controller.Do, Gate: api}
 	handler, err := panel.New(panel.Options{
@@ -122,6 +124,13 @@ func serve(args []string, stdout io.Writer) error {
 			return d
 		},
 		Action: func(body map[string]any) (any, error) {
+			if body["action"] == "cancel" {
+				id, _ := body["id"].(string)
+				if len(body) != 2 || id == "" {
+					return nil, errors.New("Нужен id операции.")
+				}
+				return map[string]any{"ok": true}, operations.Cancel(id)
+			}
 			r, err := control.ParseRequest(body)
 			if err != nil {
 				return nil, err
@@ -143,6 +152,15 @@ func serve(args []string, stdout io.Writer) error {
 				releases = releases[:20]
 			}
 			return releases, err
+		},
+		Catalog: func(ctx context.Context, query, repo string) (any, error) {
+			// Hugging Face is asked only when the owner searches.
+			if repo != "" {
+				files, err := hub.Files(ctx, repo)
+				return map[string]any{"repository": repo, "files": files, "url": "https://huggingface.co/" + repo}, err
+			}
+			models, err := hub.Search(ctx, query)
+			return map[string]any{"models": models, "source": "Hugging Face", "query": query}, err
 		},
 		Storage: func() any { return storage.GetUsage(*data, current()) },
 		StorageAction: func(body map[string]any) (any, error) {
