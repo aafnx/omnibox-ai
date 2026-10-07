@@ -135,6 +135,8 @@ type engineRow struct {
 	SelectedModel string `json:"selected_model"`
 	ActiveContext *int   `json:"active_context"`
 	Pending       bool   `json:"pending"`
+	Restarts      int    `json:"restarts"`
+	GaveUp        string `json:"gave_up"`
 	Errors        []string
 }
 
@@ -174,6 +176,12 @@ func status(svc Service, out io.Writer) error {
 		}
 		if e.Pending {
 			line += " · новые настройки применятся при запуске"
+		}
+		if e.Restarts > 0 {
+			line += fmt.Sprintf(" · автоперезапусков: %d", e.Restarts)
+		}
+		if e.GaveUp != "" {
+			line += " · автоперезапуск прекращён: " + e.GaveUp
 		}
 		fmt.Fprintln(out, line)
 		for _, problem := range e.Errors {

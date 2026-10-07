@@ -20,6 +20,12 @@ type Runtime struct {
 	GPULayers   *int      `json:"gpu_layers,omitempty"`
 	TotalLayers *int      `json:"total_layers,omitempty"`
 	ExitCode    *int      `json:"exit_code,omitempty"`
+	// Automatic restarts since the owner started the engine, the last failure and why the host
+	// gave up restarting.
+	Restarts    int        `json:"restarts,omitempty"`
+	LastFailure string     `json:"last_failure,omitempty"`
+	FailedAt    *time.Time `json:"failed_at,omitempty"`
+	GaveUp      string     `json:"gave_up,omitempty"`
 }
 
 // RuntimePath is the engine's runtime file in the data directory.

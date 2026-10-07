@@ -26,15 +26,16 @@ type Request struct {
 	Version  string            `json:"version,omitempty"`
 	Size     string            `json:"size,omitempty"`
 	EngineID string            `json:"engine,omitempty"`
+	Enabled  string            `json:"enabled,omitempty"`
 }
 
 // Actions the panel may request.
-var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete"}
+var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart"}
 
 // ParseRequest validates a panel operation body; unknown fields are refused.
 func ParseRequest(body map[string]any) (Request, error) {
 	var r Request
-	allowed := []string{"action", "backend", "settings", "model", "url", "filename", "sha256", "engine", "version", "size"}
+	allowed := []string{"action", "backend", "settings", "model", "url", "filename", "sha256", "engine", "version", "size", "enabled"}
 	for key, value := range body {
 		if !slices.Contains(allowed, key) {
 			return r, fmt.Errorf("Неизвестное поле: %s", key)
@@ -77,6 +78,8 @@ func ParseRequest(body map[string]any) (Request, error) {
 			r.Version = s
 		case "size":
 			r.Size = s
+		case "enabled":
+			r.Enabled = s
 		}
 	}
 	if !slices.Contains(Actions, r.Action) {
@@ -170,6 +173,23 @@ func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
 		return c.downloadGGUF(ctx, name, r)
 	case "model-delete":
 		return c.DeleteModel(ctx, name, r.Model)
+	case "auto-restart":
+		on, err := strconv.ParseBool(r.Enabled)
+		if err != nil {
+			return "", errors.New("Нужно enabled: true или false.")
+		}
+		err = c.Store.Update(func(cfg *config.Config) error {
+			e, ok := cfg.Engines[name]
+			if !ok {
+				return fmt.Errorf("Неизвестный движок: %s", name)
+			}
+			e.AutoRestart = on
+			return nil
+		})
+		if on {
+			return label + ": после сбоя перезапускается сам, до 2 раз за 10 минут. Остановка из панели по-прежнему окончательная.", err
+		}
+		return label + ": после сбоя остаётся остановленным.", err
 	}
 	return "", fmt.Errorf("Операция %s ещё не перенесена в Go-версию.", r.Action)
 }

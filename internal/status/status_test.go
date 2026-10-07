@@ -55,6 +55,20 @@ func TestStoppedEnginesAreNeverContacted(t *testing.T) {
 	}
 }
 
+func TestStatusShowsAutoRestartState(t *testing.T) {
+	data := t.TempDir()
+	cfg := config.Default()
+	cfg.Engines[config.Ollama] = &config.Engine{Port: 1, AutoRestart: true, Launch: config.Launch{Settings: map[string]string{}}}
+	engine.WriteRuntime(data, config.Ollama, engine.Runtime{Restarts: 2, LastFailure: "процесс движка завершился с кодом 3", GaveUp: "уже 2 перезапуска за 10 минут"})
+	services := platform.NewFakeServices()
+	services.Set(config.ServiceName(config.Ollama), platform.Stopped)
+	b := &Builder{Config: func() *config.Config { return cfg }, Services: services, DataDir: data}
+	row := b.Build(context.Background(), false).Engines[0]
+	if !row.AutoRestart || row.Restarts != 2 || row.GaveUp == "" || row.LastFailure == "" {
+		t.Fatalf("%+v", row)
+	}
+}
+
 func TestRunningPrismShowsPropsResidencyAndIdle(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"is_sleeping":false,"model_path":"D:\\models\\ornith-Q4_K_M.gguf","default_generation_settings":{"n_ctx":32768}}`))

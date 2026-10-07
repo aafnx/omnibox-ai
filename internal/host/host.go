@@ -12,6 +12,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -30,6 +32,21 @@ const (
 
 // maxLogBytes is the size at which a log stream rotates (a variable for tests).
 var maxLogBytes int64 = 4 << 20
+
+// Automatic restart (F3), when the owner turned it on for the engine: a pause before each
+// attempt and at most maxRestarts attempts in restartWindow. Variables for tests.
+var (
+	restartDelay  = 5 * time.Second
+	restartWindow = 10 * time.Minute
+	maxRestarts   = 2
+)
+
+// outOfMemory matches the engines' messages about VRAM or RAM running out: starting again with
+// the same settings fails the same way, so the host stops trying.
+var outOfMemory = regexp.MustCompile(`(?i)out of memory|cudaMalloc failed|failed to allocate|unable to allocate|ErrorOutOfDeviceMemory|insufficient memory`)
+
+// recentLines is how much engine output the host keeps to judge a failure.
+const recentLines = 40
 
 // ErrExited means the engine process ended by itself, which the service reports as a failure.
 var ErrExited = errors.New("процесс движка завершился")
@@ -77,6 +94,7 @@ type Host struct {
 
 	mu      sync.Mutex
 	runtime engine.Runtime
+	recent  []string
 }
 
 func (h *Host) logger() *Logger {
@@ -95,17 +113,69 @@ func (h *Host) saveRuntime(change func(r *engine.Runtime)) {
 	}
 }
 
-// Run starts the engine from the current config.json and supervises it.
+// Run starts the engine from the current config.json and supervises it. An engine that fails by
+// itself is started again only when its auto_restart is on, within the limits above; a stop of
+// the service ends ctx and with it any restart, including one waiting for its delay.
 func (h *Host) Run(ctx context.Context) error {
 	log := h.logger()
-	err := h.run(ctx)
-	if err != nil {
-		log.Line("host", err.Error())
+	var once sync.Once
+	running := func() {
+		if h.Running != nil {
+			once.Do(h.Running)
+		}
 	}
-	return err
+	// The counters describe this start by the owner.
+	h.saveRuntime(func(r *engine.Runtime) { r.Restarts, r.GaveUp = 0, "" })
+	var attempts []time.Time
+	for {
+		err := h.run(ctx, running)
+		if err != nil {
+			log.Line("host", err.Error())
+		}
+		if ctx.Err() != nil || !errors.Is(err, ErrExited) || !h.autoRestart() {
+			return err
+		}
+		now := time.Now()
+		attempts = slices.DeleteFunc(attempts, func(t time.Time) bool { return now.Sub(t) > restartWindow })
+		reason := ""
+		switch {
+		case h.outOfMemory():
+			reason = "движку не хватило памяти; с теми же настройками запуск повторит ошибку"
+		case len(attempts) >= maxRestarts:
+			reason = fmt.Sprintf("уже %d перезапуска за %d минут", len(attempts), int(restartWindow/time.Minute))
+		}
+		if reason != "" {
+			log.Line("host", "Автоперезапуск прекращён: "+reason+".")
+			h.saveRuntime(func(r *engine.Runtime) { r.GaveUp = reason })
+			return err
+		}
+		attempts = append(attempts, now)
+		h.saveRuntime(func(r *engine.Runtime) { r.Restarts++ })
+		log.Line("host", fmt.Sprintf("Автоперезапуск через %s.", restartDelay))
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-time.After(restartDelay):
+		}
+	}
 }
 
-func (h *Host) run(ctx context.Context) error {
+func (h *Host) autoRestart() bool {
+	cfg, err := config.Load(filepath.Join(h.DataDir, "config.json"))
+	if err != nil {
+		return false
+	}
+	e, ok := cfg.Engines[h.Engine]
+	return ok && e.AutoRestart
+}
+
+func (h *Host) outOfMemory() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.ContainsFunc(h.recent, outOfMemory.MatchString)
+}
+
+func (h *Host) run(ctx context.Context, running func()) error {
 	log := h.logger()
 	cfg, err := config.Load(filepath.Join(h.DataDir, "config.json"))
 	if err != nil {
@@ -146,25 +216,35 @@ func (h *Host) run(ctx context.Context) error {
 		return fmt.Errorf("Не удалось объединить процессы движка: %v", err)
 	}
 	started := time.Now().UTC()
-	h.saveRuntime(func(r *engine.Runtime) { *r = engine.Runtime{Running: true, PID: cmd.Process.Pid, Started: started} })
+	h.mu.Lock()
+	h.recent = nil
+	h.mu.Unlock()
+	h.saveRuntime(func(r *engine.Runtime) {
+		*r = engine.Runtime{Running: true, PID: cmd.Process.Pid, Started: started,
+			Restarts: r.Restarts, LastFailure: r.LastFailure, FailedAt: r.FailedAt}
+	})
 	var pipes sync.WaitGroup
 	pipes.Add(2)
 	go func() { defer pipes.Done(); h.copyLines("out", stdout) }()
 	go func() { defer pipes.Done(); h.copyLines("err", stderr) }()
-	if h.Running != nil {
-		h.Running()
-	}
+	running()
 	exited := make(chan error, 1)
 	go func() { pipes.Wait(); exited <- cmd.Wait() }()
 	var result error
 	select {
 	case err := <-exited:
+		// Children of the engine (Ollama runners) may outlive it and hold VRAM and the port:
+		// they go before anything starts again.
+		tree.kill(cmd)
 		code := cmd.ProcessState.ExitCode()
-		h.saveRuntime(func(r *engine.Runtime) { r.Running, r.ExitCode = false, &code })
 		result = fmt.Errorf("%w с кодом %d: %v", ErrExited, code, err)
 		if err == nil {
 			result = fmt.Errorf("%w с кодом %d", ErrExited, code)
 		}
+		failed := time.Now().UTC()
+		h.saveRuntime(func(r *engine.Runtime) {
+			r.Running, r.ExitCode, r.LastFailure, r.FailedAt = false, &code, result.Error(), &failed
+		})
 	case <-ctx.Done():
 		tree.stop(cmd)
 		select {
@@ -196,6 +276,11 @@ func (h *Host) copyLines(stream string, r io.Reader) {
 					_, prefix, err = reader.ReadLine()
 				}
 			}
+			h.mu.Lock()
+			if h.recent = append(h.recent, text); len(h.recent) > recentLines {
+				h.recent = h.recent[len(h.recent)-recentLines:]
+			}
+			h.mu.Unlock()
 			if gpu, total, ok := engine.ParseOffload(text); ok {
 				h.saveRuntime(func(r *engine.Runtime) { r.GPULayers, r.TotalLayers = &gpu, &total })
 			}

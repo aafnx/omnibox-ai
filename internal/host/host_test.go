@@ -44,11 +44,29 @@ func TestMain(m *testing.M) {
 	case "fail":
 		fmt.Fprintln(os.Stderr, "error: model not found")
 		os.Exit(3)
+	case "crash", "oom":
+		// Counts its starts, leaves a runner behind and fails, as a crashing engine would.
+		f, _ := os.OpenFile(os.Getenv("OMNIBOX_STARTS"), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+		f.WriteString("start\n")
+		f.Close()
+		child := exec.Command(os.Args[0])
+		child.Env = append(os.Environ(), "OMNIBOX_FAKE_ENGINE=child")
+		child.Start()
+		time.Sleep(200 * time.Millisecond)
+		if os.Getenv("OMNIBOX_FAKE_ENGINE") == "oom" {
+			fmt.Fprintln(os.Stderr, "CUDA error: out of memory")
+		}
+		os.Exit(3)
 	}
 	os.Exit(0)
 }
 
 func setup(t *testing.T, mode string) (string, string) {
+	t.Helper()
+	return setupRestart(t, mode, false)
+}
+
+func setupRestart(t *testing.T, mode string, autoRestart bool) (string, string) {
 	t.Helper()
 	data := t.TempDir()
 	heartbeat := filepath.Join(data, "heartbeat")
@@ -60,9 +78,10 @@ func setup(t *testing.T, mode string) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg.Engines[config.PrismML] = &config.Engine{Port: 8801, Launch: config.Launch{Executable: exe,
-		Settings:    map[string]string{"model": filepath.Join(data, "m-Q4_K_M.gguf")},
-		Environment: map[string]string{"OMNIBOX_FAKE_ENGINE": mode, "OMNIBOX_HEARTBEAT": heartbeat}}}
+	cfg.Engines[config.PrismML] = &config.Engine{Port: 8801, AutoRestart: autoRestart, Launch: config.Launch{Executable: exe,
+		Settings: map[string]string{"model": filepath.Join(data, "m-Q4_K_M.gguf")},
+		Environment: map[string]string{"OMNIBOX_FAKE_ENGINE": mode, "OMNIBOX_HEARTBEAT": heartbeat,
+			"OMNIBOX_STARTS": filepath.Join(data, "starts")}}}
 	if err := cfg.Save(filepath.Join(data, "config.json")); err != nil {
 		t.Fatal(err)
 	}
@@ -166,5 +185,84 @@ func TestLogRotationKeepsTwoOlderFiles(t *testing.T) {
 	current, _ := os.ReadFile(filepath.Join(dir, "out.log"))
 	if !bytes.Contains(current, []byte("line 39")) {
 		t.Fatalf("%s", current)
+	}
+}
+
+func starts(data string) int {
+	b, _ := os.ReadFile(filepath.Join(data, "starts"))
+	return bytes.Count(b, []byte("start"))
+}
+
+func fastRestarts(t *testing.T) {
+	old := restartDelay
+	restartDelay = 50 * time.Millisecond
+	t.Cleanup(func() { restartDelay = old })
+}
+
+func TestFailureWithoutAutoRestartStopsAndLeavesNoRunner(t *testing.T) {
+	data, heartbeat := setupRestart(t, "crash", false)
+	if err := (&Host{DataDir: data, Engine: config.PrismML}).Run(context.Background()); !errors.Is(err, ErrExited) {
+		t.Fatalf("%v", err)
+	}
+	if n := starts(data); n != 1 {
+		t.Fatalf("restarted with auto_restart off: %d starts", n)
+	}
+	before, _ := os.ReadFile(heartbeat)
+	time.Sleep(300 * time.Millisecond)
+	if after, _ := os.ReadFile(heartbeat); !bytes.Equal(before, after) {
+		t.Fatal("the runner of a failed engine survived it")
+	}
+	if rt, _ := engine.ReadRuntime(data, config.PrismML); !strings.Contains(rt.LastFailure, "кодом 3") || rt.FailedAt == nil {
+		t.Fatalf("%+v", rt)
+	}
+}
+
+func TestAutoRestartIsLimited(t *testing.T) {
+	fastRestarts(t)
+	data, _ := setupRestart(t, "crash", true)
+	if err := (&Host{DataDir: data, Engine: config.PrismML}).Run(context.Background()); !errors.Is(err, ErrExited) {
+		t.Fatalf("%v", err)
+	}
+	if n := starts(data); n != 1+maxRestarts {
+		t.Fatalf("%d starts", n)
+	}
+	rt, _ := engine.ReadRuntime(data, config.PrismML)
+	if rt.Restarts != maxRestarts || !strings.Contains(rt.GaveUp, "перезапуска") || rt.Running {
+		t.Fatalf("%+v", rt)
+	}
+}
+
+func TestOutOfMemoryIsNotRestarted(t *testing.T) {
+	fastRestarts(t)
+	data, _ := setupRestart(t, "oom", true)
+	(&Host{DataDir: data, Engine: config.PrismML}).Run(context.Background())
+	if n := starts(data); n != 1 {
+		t.Fatalf("restarted after out of memory: %d starts", n)
+	}
+	if rt, _ := engine.ReadRuntime(data, config.PrismML); !strings.Contains(rt.GaveUp, "памяти") {
+		t.Fatalf("%+v", rt)
+	}
+}
+
+func TestStopDuringRestartDelayStaysStopped(t *testing.T) {
+	old := restartDelay
+	restartDelay = time.Minute
+	defer func() { restartDelay = old }()
+	data, _ := setupRestart(t, "crash", true)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- (&Host{DataDir: data, Engine: config.PrismML}).Run(ctx) }()
+	waitFor(t, "the first failure", func() bool {
+		rt, err := engine.ReadRuntime(data, config.PrismML)
+		return err == nil && rt.Restarts == 1
+	})
+	// The owner stops the service while the host waits to restart the engine.
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("a stop is not a failure: %v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if n := starts(data); n != 1 {
+		t.Fatalf("started again after the stop: %d starts", n)
 	}
 }

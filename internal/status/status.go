@@ -53,6 +53,13 @@ type Engine struct {
 	Residency     Residency      `json:"residency"`
 	Idle          Idle           `json:"idle"`
 	Endpoint      string         `json:"endpoint"`
+	// Automatic restart (F3): the setting, restarts since the owner's start, the last failure
+	// and why restarting stopped.
+	AutoRestart bool       `json:"auto_restart"`
+	Restarts    int        `json:"restarts"`
+	LastFailure string     `json:"last_failure"`
+	FailedAt    *time.Time `json:"failed_at"`
+	GaveUp      string     `json:"gave_up"`
 }
 
 // Residency is where the loaded model's weights are.
@@ -134,6 +141,10 @@ func (b *Builder) engine(ctx context.Context, name string, e *config.Engine) Eng
 		Models: []engine.Model{}, Errors: []string{}, Pending: e.Pending, CanRestore: e.CanRestore(),
 		Residency: Residency{Mode: "unknown"}, Idle: Idle{State: "stopped"}, Endpoint: e.BaseURL() + "/v1"}
 	row.Settings = config.View(name, e.Settings)
+	row.AutoRestart = e.AutoRestart
+	if rt, err := engine.ReadRuntime(b.DataDir, name); err == nil {
+		row.Restarts, row.LastFailure, row.FailedAt, row.GaveUp = rt.Restarts, rt.LastFailure, rt.FailedAt, rt.GaveUp
+	}
 	if info, err := b.Services.Query(config.ServiceName(name)); err != nil {
 		row.Errors = append(row.Errors, "Служба: "+err.Error())
 	} else {

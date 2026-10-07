@@ -269,6 +269,29 @@ func TestOllamaLoadKeepsOneModelAndPullNeedsRunningServer(t *testing.T) {
 	}
 }
 
+func TestAutoRestartIsAnExplicitSetting(t *testing.T) {
+	r := newRig(t)
+	if r.store.Get().Engines[config.PrismML].AutoRestart {
+		t.Fatal("auto-restart must be off by default")
+	}
+	req, err := ParseRequest(map[string]any{"action": "auto-restart", "backend": "prismml", "enabled": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.do(req); err != nil || !r.store.Get().Engines[config.PrismML].AutoRestart {
+		t.Fatalf("not turned on: %v", err)
+	}
+	if r.state(config.ServiceName(config.PrismML)) == platform.Running {
+		t.Fatal("turning auto-restart on started the engine")
+	}
+	if _, err := r.do(Request{Action: "auto-restart", Engine: config.PrismML, Enabled: "maybe"}); err == nil {
+		t.Fatal("a wrong value accepted")
+	}
+	if _, err := r.do(Request{Action: "auto-restart", Engine: config.PrismML, Enabled: "false"}); err != nil || r.store.Get().Engines[config.PrismML].AutoRestart {
+		t.Fatalf("not turned off: %v", err)
+	}
+}
+
 func TestParseRequestRejectsUnknownFieldsAndActions(t *testing.T) {
 	if _, err := ParseRequest(map[string]any{"action": "start", "command": "calc.exe"}); err == nil {
 		t.Fatal("unknown field accepted")

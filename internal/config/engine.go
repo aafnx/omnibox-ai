@@ -42,6 +42,9 @@ type Engine struct {
 	ModelsDirectory string `json:"models_directory,omitempty"`
 	// Model is the Ollama model loaded through the panel; PrismML keeps its model in Settings.
 	Model string `json:"model,omitempty"`
+	// AutoRestart lets the engine service start the engine again after it fails by itself.
+	// Off by default; a stop by the owner always stays a stop.
+	AutoRestart bool `json:"auto_restart,omitempty"`
 	Launch
 	// Previous is the last configuration that started successfully; Pending means the current
 	// launch has not started yet. A failed start of a pending change returns to Previous.
