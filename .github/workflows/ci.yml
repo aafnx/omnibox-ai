@@ -29,5 +29,5 @@ jobs:
       - name: PowerShell version
         run: $PSVersionTable.PSVersion.ToString(); if ($PSVersionTable.PSVersion -lt [version]'7.4') { throw 'PowerShell 7.4+ required' }
       - name: Diagnose shared read during atomic replacement
-        run: ./tests/diag_shared_read.ps1
+        run: ./tests/diag_exact.ps1
 
