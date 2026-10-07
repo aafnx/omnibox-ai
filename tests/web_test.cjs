@@ -57,6 +57,12 @@ function run(code){return vm.runInContext(code,context);}
   await run("engineAction({installed:true,label:'PrismML',name:'bonsai',cli:'prismml'},'b1')");await run("engineAction({installed:false,label:'Ollama',cli:'ollama'},'')");await run("removeEngine({label:'PrismML',name:'bonsai'})");
   assert.equal(JSON.stringify(engineCalls),JSON.stringify([{action:'engine-update',backend:'bonsai',version:'b1'},{action:'engine-install',engine:'ollama',version:''},{action:'engine-remove',backend:'bonsai'}]));
   context.__realAction=realAction;run('action=globalThis.__realAction');
+  // Drives and model sizes: one row per drive, warning for a nearly full model drive.
+  run("renderDrives({models:[{engine:'PrismML',bytes:29*1024**3,models:3},{engine:'Ollama',bytes:45*1024**3,models:4}],drives:[{name:'C:',label:'System',total:1000*1024**3,free:400*1024**3,used:600*1024**3,roles:['OmniBox AI'],low:false},{name:'D:',label:'',total:2000*1024**3,free:15*1024**3,used:1985*1024**3,roles:['модели PrismML'],low:true}]})");
+  assert.equal(nodes['storage-models'].textContent,'Модели: PrismML 29.0 ГБ (3) · Ollama 45.0 ГБ (4)');
+  const [driveC,driveD]=nodes['storage-drives'].children;assert.equal(driveC.className,'drive');assert.equal(driveD.className,'drive low');
+  assert.equal(driveC.children[1].value,60);assert.ok(driveD.children[0].children[1].textContent.includes('из 1.95 ТБ'));assert.ok(driveD.children[2].textContent.includes('мало свободного места'));
+  assert.equal(nodes['model-disk'].hidden,false);assert.ok(nodes['model-disk'].textContent.startsWith('Свободно на диске моделей D:: 15.0 ГБ'));
   run("renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'model.gguf');assert.ok(nodes['kpi-model-caption'].textContent.startsWith('PrismML · '));
   // The prism engine is shown as PrismML whatever its historical config key.
   assert.equal(nodes.engines.children[0].querySelector('h2').textContent,'PrismML');assert.equal(run("engineName('unknown')"),'unknown');
@@ -102,5 +108,5 @@ function run(code){return vm.runInContext(code,context);}
   nodes['update-token'].value='one-use-secret';context.fetch=async(path,options)=>{requests.push({path,body:options.body});return{ok:true,status:202,json:async()=>({current:'0.9.4',phase:'checking',message:'Checking',gh_available:true,authenticated:false,code:''})}};
   nodes['update-token-form'].listeners.submit[0]({preventDefault:()=>{}});assert.equal(nodes['update-token'].value,'');await new Promise(setImmediate);
   assert.equal(JSON.parse(requests.at(-1).body).token,'one-use-secret');assert.ok([...store.values()].every(v=>!String(v).includes('secret')));
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update states and one-use token clearing passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

@@ -31,7 +31,7 @@ function schedulePoll() { clearTimeout(pollTimer); if(!loggedIn)return; pollTime
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&loggedIn)refresh(false,true).catch(e=>notice(e.message,true));});
 function backend() { return snapshot?.backends.find(b=>b.name===selectedBackend); }
 function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; $('catalog-results').replaceChildren(); $('catalog-status').textContent=''; renderSettings(); }
-function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates'){refreshUpdateStatus().catch(e=>notice(e.message,true));refreshEngines().catch(e=>notice(e.message,true));} }
+function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='models')refreshStorage(false).catch(()=>{});if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates'){refreshUpdateStatus().catch(e=>notice(e.message,true));refreshEngines().catch(e=>notice(e.message,true));} }
 async function refresh(gpu,snapshotRequested=gpu) {
   if(refreshBusy)return;refreshBusy=true;
   try{
@@ -284,14 +284,33 @@ function formatRequestContent(c){
 }
 async function showRequestContent(id){const c=await api(`/api/request-content?id=${encodeURIComponent(id)}`);$('request-content').textContent=formatRequestContent(c);$('request-content-box').hidden=false;}
 function formatMb(bytes){return `${((bytes||0)/1024**2).toFixed(1)} МБ`;}
+function formatGb(bytes){return (bytes||0)>=1024**4?`${(bytes/1024**4).toFixed(2)} ТБ`:`${((bytes||0)/1024**3).toFixed(1)} ГБ`;}
+// Drives: used/total with the brand bar; a drive that stores models or OmniBox AI warns when nearly full.
+function renderDrives(u){
+  const models=(u.models||[]);
+  $('storage-models').textContent=models.length?`Модели: ${models.map(m=>`${m.engine} ${formatGb(m.bytes)} (${m.models})`).join(' · ')}`:'Модели: —';
+  const list=$('storage-drives');list.replaceChildren();
+  (u.drives||[]).forEach(d=>{
+    const item=document.createElement('div');item.className='drive'+(d.low?' low':'');
+    const head=document.createElement('div');head.className='drive-head';
+    const name=document.createElement('strong');name.textContent=`${d.name}${d.label?' · '+d.label:''}`;
+    const numbers=document.createElement('span');numbers.textContent=`занято ${formatGb(d.used)} из ${formatGb(d.total)} · свободно ${formatGb(d.free)}`;
+    head.append(name,numbers);
+    const bar=document.createElement('progress');bar.max=100;bar.value=d.total?Math.round(d.used/d.total*100):0;bar.setAttribute('aria-label',`Занято на ${d.name}`);
+    const roles=document.createElement('small');roles.className='muted';roles.textContent=[(d.roles||[]).join(', '),d.low?'мало свободного места':''].filter(Boolean).join(' · ');
+    item.append(head,bar,roles);list.append(item);
+  });
+  const prism=models.find(m=>m.engine==='PrismML');const drive=(u.drives||[]).find(d=>(d.roles||[]).some(r=>r.startsWith('модели')));
+  $('model-disk').hidden=!drive;if(drive)$('model-disk').textContent=`Свободно на диске моделей ${drive.name}: ${formatGb(drive.free)}${prism?` · модели PrismML занимают ${formatGb(prism.bytes)}`:''}.`;
+}
 function renderStorage(u){
-  requestLog=u.request_log||'metadata';
+  requestLog=u.request_log||'metadata';renderDrives(u);
   $('storage-summary').textContent=`Журналы: ${formatMb(u.logs_bytes)} (файлов: ${u.log_files}${u.content_bytes?`, содержимое запросов: ${formatMb(u.content_bytes)}`:''}) · резервные копии: ${formatMb(u.backups_bytes)} · обновления: ${formatMb(u.updates_bytes)}${u.engines_bytes?` · движки: ${formatMb(u.engines_bytes)}`:''}${u.temp_bytes?` · временные файлы: ${formatMb(u.temp_bytes)}`:''}`;
   $('storage-warning').hidden=!u.logs_over_limit;$('storage-warning').textContent=`Журналы занимают больше ${u.log_warn_mb} МБ. Сократите срок хранения или удалите устаревшие.`;
   if(!storageDirty){const select=$('log-retention');if(![...select.options].some(o=>o.value===String(u.log_retention_days)))select.add(new Option(`${u.log_retention_days} дн.`,String(u.log_retention_days)));select.value=String(u.log_retention_days);$('log-warn').value=u.log_warn_mb;$('request-log').value=requestLog;}
   if(activity&&snapshot)renderActivity();
 }
-async function refreshStorage(notify){const u=await api('/api/storage');renderStorage(u);if(notify&&u.logs_over_limit)notice(`Журналы занимают ${formatMb(u.logs_bytes)} — больше порога ${u.log_warn_mb} МБ. Настройка хранения — в разделе «Журналы».`,true);return u;}
+async function refreshStorage(notify){const u=await api('/api/storage');renderStorage(u);const low=(u.drives||[]).filter(d=>d.low);if(notify&&low.length)notice(`Мало места на диске ${low.map(d=>`${d.name} (свободно ${formatGb(d.free)})`).join(', ')}.`,true);if(notify&&u.logs_over_limit)notice(`Журналы занимают ${formatMb(u.logs_bytes)} — больше порога ${u.log_warn_mb} МБ. Настройка хранения — в разделе «Журналы».`,true);return u;}
 async function refreshLogs() { if(!snapshot)return; const data=await api('/api/logs');$('logs').replaceChildren();data.logs.forEach(log=>{const h=document.createElement('h3');h.textContent=log.stream;const pre=document.createElement('pre');pre.textContent=log.text;$('logs').append(h,pre);}); }
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();$('login-error').textContent='';const button=e.currentTarget.querySelector('button');button.disabled=true;try{await api('/api/login',{password:$('password').value});$('password').value='';await showDashboard();}catch(error){$('login-error').textContent=error.message;}finally{button.disabled=false;}});
 $('logout').addEventListener('click',()=>api('/api/logout',{}).finally(showLogin));

@@ -78,6 +78,11 @@ summary{cursor:pointer;font-size:13px;font-weight:600}
 .advanced-grid{grid-template-columns:repeat(3,1fr);margin:20px 0}
 .button-row{display:flex;flex-wrap:wrap;gap:8px}
 .info-line{color:var(--ok);font-size:13px;margin:15px 0;white-space:pre-wrap}
+.drive-list{display:grid;gap:12px;margin:14px 0 18px}
+.drive{display:grid;gap:6px}
+.drive-head{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;font-size:13px}
+.drive-head span{color:var(--muted)}
+.drive.low .drive-head span,.drive.low small{color:var(--warn)}
 .engine-manager{display:grid;gap:14px}
 .engine-manage{border:1px solid var(--border);border-radius:var(--radius-s);padding:16px 18px;background:var(--surface2)}
 .engine-manage-head{display:flex;align-items:center;justify-content:space-between;gap:12px}

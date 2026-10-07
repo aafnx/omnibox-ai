@@ -106,6 +106,13 @@ function Start-OmniBoxPanel {
         $listener.TimeoutManager.EntityBody = [TimeSpan]::FromSeconds(10)
     }
     $sessions = @{}; $attempts = @{}; $operations = @{}; $catalog = @{}; $releaseJobs = @{}
+    # Disk usage, drives and model sizes: computed only when the owner opens the view.
+    $storageView = {
+        $usage = Get-AiStorageUsage $Root (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable)
+        $disk = Get-AiDiskOverview $configPath
+        $usage.drives = @($disk.drives); $usage.models = @($disk.models)
+        $usage
+    }
     $telemetryJob=$null;$telemetryCache=$null;$telemetryTime=[DateTime]::MinValue
     $assets = @{ '/inter-400.woff'=@('web/inter-400.woff.base64','font/woff'); '/inter-600.woff'=@('web/inter-600.woff.base64','font/woff'); '/favicon.svg'=@('web/favicon.svg','image/svg+xml'); '/brand-light.svg'=@('web/brand-light.svg','image/svg+xml'); '/brand-dark.svg'=@('web/brand-dark.svg','image/svg+xml'); '/'  = @('web/index.html','text/html; charset=utf-8'); '/app.js' = @('web/app.js','text/javascript; charset=utf-8'); '/style.css' = @('web/style.css','text/css; charset=utf-8') }
     try {
@@ -226,7 +233,7 @@ function Start-OmniBoxPanel {
                         foreach($b in $data.backends){if(($b.service -eq 'Stopped' -or $b.sleeping) -and -not [OmniBox.InferenceStats]::IsActive([string]$b.name)){[OmniBox.InferenceStats]::EndModelSession([string]$b.name)}}
                         Send-AiHttpResponse $context 200 $data
                     }
-                    'GET /api/storage' { Send-AiHttpResponse $context 200 (Get-AiStorageUsage $Root (Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable)) }
+                    'GET /api/storage' { Send-AiHttpResponse $context 200 (& $storageView) }
                     'POST /api/storage' {
                         $body = Read-AiHttpJson $request
                         $config = Get-Content -LiteralPath $configPath -Raw | ConvertFrom-Json -AsHashtable
@@ -239,7 +246,7 @@ function Start-OmniBoxPanel {
                         }
                         elseif ($body.action -eq 'cleanup') { $result = Invoke-AiStorageCleanup $Root $config }
                         else { throw 'Неизвестное действие с журналами.' }
-                        $usage = Get-AiStorageUsage $Root $config; $usage.cleanup = $result
+                        $usage = & $storageView; $usage.cleanup = $result
                         Send-AiHttpResponse $context 200 $usage
                     }
                     'GET /api/request-content' {

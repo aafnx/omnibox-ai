@@ -410,3 +410,80 @@ function Remove-AiEngineModel {
     if ($backend.Contains('active_model') -and $backend.active_model -eq $Model) { $backend.Remove('active_model'); Write-AiConfigFile $ConfigPath $config }
     return "Модель $Model удалена из Ollama."
 }
+
+# Where each engine keeps its models. Ollama without OLLAMA_MODELS uses the profile of the
+# account it runs as; the panel and the engines both run as SYSTEM, so that is this process' profile.
+function Get-AiModelLocations {
+    param($Config)
+    $result = @()
+    foreach ($name in @($Config.backends.Keys | Sort-Object)) {
+        $backend = $Config.backends[$name]
+        $path = ''
+        try {
+            if ($backend.type -eq 'prism') { $path = Get-AiPrismModelDirectory $backend }
+            else {
+                $path = Get-AiXmlEnv (Read-AiServiceXml $backend) 'OLLAMA_MODELS' ''
+                if (-not $path) { $path = Join-Path ([Environment]::GetFolderPath('UserProfile')) '.ollama/models' }
+            }
+        } catch { $path = '' }
+        $result += @{ name = $name; engine = Get-AiEngineName $Config $name; type = $backend.type; path = $path }
+    }
+    return $result
+}
+
+function Get-AiModelFolderSize {
+    param([string]$Type, [string]$Path)
+    $size = @{ bytes = 0L; models = 0 }
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Container)) { return $size }
+    if ($Type -eq 'prism') {
+        foreach ($file in @(Get-ChildItem -LiteralPath $Path -File -Filter '*.gguf' -ErrorAction SilentlyContinue)) { $size.bytes += $file.Length; if ($file.Name -notmatch '(?i)mmproj|projector') { $size.models++ } }
+        return $size
+    }
+    # Ollama: blobs hold the weights, one manifest per installed model tag.
+    foreach ($file in @(Get-ChildItem -LiteralPath $Path -File -Recurse -Force -ErrorAction SilentlyContinue)) { $size.bytes += $file.Length }
+    $manifests = Join-Path $Path 'manifests'
+    if (Test-Path -LiteralPath $manifests -PathType Container) { $size.models = @(Get-ChildItem -LiteralPath $manifests -File -Recurse -ErrorAction SilentlyContinue).Count }
+    return $size
+}
+
+# Fixed drives with total, used and free space, the roles they play for OmniBox AI and model sizes.
+# Computed on request only (login, the Logs tab, ai storage).
+function Get-AiDiskOverview {
+    param([string]$ConfigPath)
+    $config = Read-AiConfig $ConfigPath
+    $models = @()
+    foreach ($location in Get-AiModelLocations $config) {
+        $size = Get-AiModelFolderSize $location.type $location.path
+        $models += @{ name = $location.name; engine = $location.engine; path = $location.path; bytes = $size.bytes; models = $size.models }
+    }
+    $places = @(@{ role = 'OmniBox AI'; path = Get-AiInstallRoot $ConfigPath }) + @($models | Where-Object { $_.path } | ForEach-Object { @{ role = "модели $($_.engine)"; path = $_.path } })
+    $drives = @()
+    $all = @(Get-AiFixedDrives)
+    foreach ($drive in $all) {
+        $root = $drive.root
+        $roles = @()
+        foreach ($place in $places) {
+            $full = [IO.Path]::GetFullPath($place.path)
+            # The deepest mount point containing the path is the drive that stores it.
+            $owner = @($all | Where-Object { $full.StartsWith($_.root, [StringComparison]::OrdinalIgnoreCase) } | Sort-Object { $_.root.Length } -Descending | Select-Object -First 1)
+            if ($owner.Count -and $owner[0].root -eq $root) { $roles += $place.role }
+        }
+        $used = $drive.total - $drive.free
+        $low = $drive.free -lt 20GB -or $drive.free -lt ($drive.total * 0.1)
+        $drives += [ordered]@{ name = $drive.name; label = $drive.label; total = $drive.total; free = $drive.free; used = $used; roles = $roles; low = [bool]($low -and $roles.Count) }
+    }
+    return @{ drives = $drives; models = $models }
+}
+
+function Get-AiFixedDrives {
+    $result = @()
+    foreach ($drive in [IO.DriveInfo]::GetDrives()) {
+        try {
+            if (-not $drive.IsReady -or $drive.DriveType -ne [IO.DriveType]::Fixed -or $drive.TotalSize -lt 1GB) { continue }
+            $root = $drive.RootDirectory.FullName
+            if (-not $root.EndsWith([IO.Path]::DirectorySeparatorChar)) { $root += [IO.Path]::DirectorySeparatorChar }
+            $result += @{ name = $drive.Name.TrimEnd('\'); label = [string]$drive.VolumeLabel; root = $root; total = [long]$drive.TotalSize; free = [long]$drive.AvailableFreeSpace }
+        } catch { }
+    }
+    return $result
+}
