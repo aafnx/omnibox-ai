@@ -34,6 +34,7 @@ import (
 )
 
 func main() {
+	platform.ConsoleUTF8()
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }
 

@@ -1,0 +1,54 @@
+name: Release
+
+# The owner starts a release from the Actions tab once VERSION and CHANGELOG.md are in main.
+on:
+  workflow_dispatch:
+    inputs:
+      prerelease:
+        description: Mark as a pre-release (not offered as the latest version)
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Check, test and build
+        run: |
+          version="$(cat VERSION)"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+          if gh release view "v$version" >/dev/null 2>&1; then echo "Release v$version already exists"; exit 1; fi
+          go vet ./...
+          go test ./...
+          mkdir -p out/windows out/linux
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o out/windows/omnibox.exe ./cmd/omnibox
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o out/linux/omnibox ./cmd/omnibox
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Sign
+        run: echo "::warning::No code signing certificate yet; the Windows binary is not signed."
+      - name: Package
+        run: |
+          (cd out/windows && zip -q ../../omnibox-windows-amd64.zip omnibox.exe)
+          tar -czf omnibox-linux-amd64.tar.gz -C out/linux omnibox
+          sha256sum omnibox-windows-amd64.zip omnibox-linux-amd64.tar.gz install.ps1 install.sh > SHA256SUMS
+          # Release notes: this version's section of CHANGELOG.md.
+          awk -v v="$VERSION" '$0 ~ "^## "v" " {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
+      - name: Publish
+        run: |
+          flags=""
+          if [ "${{ inputs.prerelease }}" = "true" ]; then flags="--prerelease"; fi
+          gh release create "v$VERSION" --target "$GITHUB_SHA" --title "OmniBox AI $VERSION" --notes-file notes.md $flags \
+            omnibox-windows-amd64.zip omnibox-linux-amd64.tar.gz SHA256SUMS install.ps1 install.sh
+        env:
+          GH_TOKEN: ${{ github.token }}

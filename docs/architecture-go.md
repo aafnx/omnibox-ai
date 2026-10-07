@@ -228,7 +228,7 @@ PowerShell-версия (`src/`, `install.ps1`, `dist/`) удалена из `ma
 
 ## 8. Установка, обновление и выпуски
 
-- **Выпуски — GitHub Releases** (закрывает E3): `omnibox-windows-amd64.zip`, `omnibox-linux-amd64.tar.gz` и `SHA256SUMS`. `dist/` в `main` больше не нужен после перехода.
+- **Выпуски — GitHub Releases** (закрывает E3): `omnibox-windows-amd64.zip`, `omnibox-linux-amd64.tar.gz`, `SHA256SUMS`, `install.ps1` и `install.sh`. Их собирает и публикует workflow `release.yml`, запускаемый владельцем вручную, когда `VERSION` и `CHANGELOG.md` в `main` готовы. `dist/` в `main` больше не нужен после перехода.
 - **Установка и обновление одной командой** (требование владельца). Один скрипт-загрузчик для обоих случаев:
   - Windows: `install.ps1` работает и во встроенном Windows PowerShell 5.1, поэтому PowerShell 7 больше не нужен. Запуск одной строкой, как сейчас: через `gh` (репозиторий закрытый) скачивается загрузчик, он скачивает последний выпуск (или указанную версию), сверяет SHA256 и запускает `omnibox install`. Если OmniBox уже установлен, та же строка обновляет его с сохранением всех настроек;
   - Linux и WSL2: `install.sh` с тем же поведением;
