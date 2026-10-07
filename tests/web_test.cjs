@@ -119,6 +119,10 @@ function run(code){return vm.runInContext(code,context);}
   // API settings: queue fields, no engine choice; /v1 serves the running engine.
   run("gateway={enabled:true,base_url:'https://llm.fnx.red/v1',require_key:true,has_key:true,queue_depth:4,queue_timeout_seconds:60,public_origin:'https://llm.fnx.red',trusted_proxies:['192.168.1.10','192.168.1.11']};renderGatewayForm()");
   assert.equal(nodes['api-queue-depth'].value,4);assert.equal(nodes['api-queue-timeout'].value,60);
+  // Presets: built-in ones cannot be deleted; own ones can.
+  run("renderPresets({presets:[{name:'Код 32k',builtin:true,settings:{context:'32768'}},{name:'Мой',builtin:false,settings:{context:'65536'}}]})");
+  assert.equal(nodes['preset-choice'].children.length,2);assert.equal(nodes['preset-delete'].disabled,true);
+  assert.ok(nodes['preset-choice'].children[0].text.includes('context=32768'));
   // F3: the engine card explains automatic restarts and why they stopped.
   assert.ok(run("restartText({})").includes('Не больше 2 раз'));
   const restartLine=run("restartText({restarts:2,last_failure:'процесс движка завершился с кодом 3',gave_up:'уже 2 перезапуска за 10 минут'})");
@@ -136,5 +140,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, no-key warning, auto-restart status, self-update and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, no-key warning, presets, auto-restart status, self-update and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

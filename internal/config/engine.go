@@ -45,6 +45,8 @@ type Engine struct {
 	// AutoRestart lets the engine service start the engine again after it fails by itself.
 	// Off by default; a stop by the owner always stays a stop.
 	AutoRestart bool `json:"auto_restart,omitempty"`
+	// Presets are the owner's saved launch settings by name (see presets.go).
+	Presets map[string]map[string]string `json:"presets,omitempty"`
 	Launch
 	// Previous is the last configuration that started successfully; Pending means the current
 	// launch has not started yet. A failed start of a pending change returns to Previous.
