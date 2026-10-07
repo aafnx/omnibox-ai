@@ -89,6 +89,10 @@ func TestEnterThroughInstallUsesDefaults(t *testing.T) {
 	if !strings.Contains(r.out.String(), "не установлен") {
 		t.Fatalf("engine failure not reported:\n%s", r.out)
 	}
+	// The secrets come before the engine download, which may be long or interrupted.
+	if out := r.out.String(); strings.Index(out, "API key:") > strings.Index(out, "не установлен") {
+		t.Fatalf("secrets shown after the engines:\n%s", out)
+	}
 }
 
 func TestAnswersAreUsed(t *testing.T) {
@@ -210,6 +214,9 @@ func TestUpdateSwitchesServicesAndRollsBack(t *testing.T) {
 	after, _ := os.ReadFile(r.configPath())
 	if !bytes.Equal(before, after) {
 		t.Fatal("an update changed the settings")
+	}
+	if !strings.Contains(r.out.String(), "ai password reset") {
+		t.Fatalf("update does not say where the password is:\n%s", r.out)
 	}
 	r.Version = "0.18.2"
 	os.WriteFile(r.Source, []byte("binary v3"), 0o755)

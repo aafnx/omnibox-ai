@@ -451,19 +451,25 @@ func (i *Installer) fresh(ctx context.Context) error {
 	if err != nil {
 		return i.rollback(err)
 	}
-	// Committed. Engines are downloaded afterwards: a slow or failed download leaves a working
-	// panel, where the engines can be installed later.
-	if a.engines {
-		i.installEngines(ctx, a.models)
-	}
+	// Committed. The secrets are shown first: an engine download can be long or interrupted,
+	// and the panel works without engines.
 	i.say("")
-	i.say("Готово: OmniBox AI %s.", i.Version)
+	i.say("Установлено: OmniBox AI %s.", i.Version)
 	i.say("Панель: http://%s:%d", healthHost(a.hosts), a.port)
+	if a.publicOrigin != "" {
+		i.say("Через NAS: %s", a.publicOrigin)
+	}
 	i.say("Пароль панели: %s", password)
 	i.say("API для клиентов (Base URL): %s", a.apiURL)
 	i.say("API key: %s", key)
 	i.say("Пароль и ключ показаны один раз и нигде не сохранены. Сохраните их в менеджере паролей; пароль можно сменить в панели.")
-	i.say("Команда ai (в новом окне терминала, от имени администратора): ai status, ai help; забытый пароль — ai password reset.")
+	i.say("Команда ai (в новом окне терминала, от имени администратора): ai status, ai help; забытый пароль — ai password reset, новый ключ — ai key new.")
+	if a.engines {
+		i.say("")
+		i.installEngines(ctx, a.models)
+	}
+	i.say("")
+	i.say("Готово.")
 	if runtime.GOOS != "windows" {
 		i.say("Откройте в межсетевом экране TCP-порт %d для локальной сети.", a.port)
 	}
@@ -566,6 +572,7 @@ func (i *Installer) update(ctx context.Context) error {
 	}
 	i.pruneVersions()
 	i.say("Готово: OmniBox AI %s. Работающий движок перейдёт на новую версию при следующем запуске.", i.Version)
+	i.say("Пароль панели и API key не изменились. Забыли — ai password reset или ai key new (от имени администратора) покажут новые.")
 	return nil
 }
 
