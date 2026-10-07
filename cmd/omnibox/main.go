@@ -160,7 +160,8 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 	controller := &control.Controller{Store: store, Services: services, Manager: manager, DataDir: *data, Executable: exe, Gate: api}
 	operations := &control.Operations{Run: controller.Do, Gate: api}
 	handler, err := panel.New(panel.Options{
-		Config: current,
+		Config:  current,
+		LogPath: filepath.Join(*data, "logs", "panel.log"),
 		Status: func(ctx context.Context, gpu bool) any {
 			d := builder.Build(ctx, gpu)
 			d.Operations = operations.List()

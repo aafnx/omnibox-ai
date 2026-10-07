@@ -3,14 +3,19 @@ package panel
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -61,6 +66,8 @@ type Options struct {
 	GatewayAction func(body map[string]any) (any, error)
 	// SetPassword stores a new panel password hash.
 	SetPassword func(p config.Password) error
+	// LogPath is the panel's own log: internal failures are written there, not shown in full.
+	LogPath string
 }
 
 type session struct {
@@ -77,6 +84,10 @@ type attempt struct {
 type asset struct {
 	body        []byte
 	contentType string
+	etag        string
+	// immutable assets (fonts, images) may be kept by the browser; the page, script and styles
+	// are always revalidated, so an update reaches the browser at once.
+	immutable bool
 }
 
 // Server is the panel HTTP handler.
@@ -85,6 +96,7 @@ type Server struct {
 	cookie   string
 	assets   map[string]asset
 	mu       sync.Mutex
+	logMu    sync.Mutex
 	sessions map[string]*session
 	attempts map[string]*attempt
 }
@@ -116,7 +128,9 @@ func New(opt Options) (*Server, error) {
 				return nil, err
 			}
 		}
-		s.assets[route] = asset{body, f[1]}
+		sum := sha256.Sum256(body)
+		s.assets[route] = asset{body: body, contentType: f[1], etag: `"` + hex.EncodeToString(sum[:8]) + `"`,
+			immutable: f[1] == "font/woff" || f[1] == "image/svg+xml"}
 	}
 	return s, nil
 }
@@ -124,7 +138,8 @@ func New(opt Options) (*Server, error) {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		if v := recover(); v != nil {
-			s.json(w, http.StatusInternalServerError, map[string]any{"error": "Внутренняя ошибка панели."})
+			s.logf("panic %s %s: %v", r.Method, r.URL.Path, v)
+			s.json(w, http.StatusInternalServerError, map[string]any{"error": internalMessage})
 		}
 	}()
 	cfg := s.opt.Config()
@@ -147,7 +162,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if a, ok := s.assets[path]; ok && r.Method == http.MethodGet {
-		s.write(w, http.StatusOK, a.contentType, a.body)
+		s.static(w, r, a)
 		return
 	}
 	t, err := requestTransport(r, &cfg.Panel)
@@ -230,7 +245,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		s.json(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		s.fail(w, r, err)
 	case route == "POST /api/password" && s.opt.SetPassword != nil:
 		s.changePassword(w, r, t, key, cfg)
 	case route == "GET /api/storage" && s.opt.Storage != nil:
@@ -244,7 +259,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		s.json(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		s.fail(w, r, err)
 	case route == "POST /api/actions" && s.opt.Action != nil:
 		body, err := readJSON(r)
 		if err == nil {
@@ -254,7 +269,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
-		s.json(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		s.fail(w, r, err)
 	case route == "POST /api/logout":
 		s.mu.Lock()
 		delete(s.sessions, key)
@@ -405,17 +420,87 @@ func (s *Server) json(w http.ResponseWriter, status int, value any) {
 	s.write(w, status, "application/json; charset=utf-8", bytes.TrimRight(buf.Bytes(), "\n"))
 }
 
+const internalMessage = "Внутренняя ошибка панели. Подробности записаны в журнал панели (panel.log в каталоге журналов)."
+
+// fail answers a refused request: a check the owner can fix is 400 with its message; a failure of
+// the system (disk, network, files) is 500 with a general message, and its details go to the
+// panel log, since they may name paths and internals.
+func (s *Server) fail(w http.ResponseWriter, r *http.Request, err error) {
+	if internalError(err) {
+		s.logf("%s %s: %v", r.Method, r.URL.Path, err)
+		s.json(w, http.StatusInternalServerError, map[string]any{"error": internalMessage})
+		return
+	}
+	s.json(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+}
+
+func internalError(err error) bool {
+	var path *fs.PathError
+	var link *os.LinkError
+	var sys *os.SyscallError
+	var op *net.OpError
+	var u *url.Error
+	return errors.As(err, &path) || errors.As(err, &link) || errors.As(err, &sys) || errors.As(err, &op) || errors.As(err, &u)
+}
+
+// logf appends a line to the panel log, which rotates at 1 MiB and keeps two older copies.
+func (s *Server) logf(format string, args ...any) {
+	if s.opt.LogPath == "" {
+		return
+	}
+	s.logMu.Lock()
+	defer s.logMu.Unlock()
+	if info, err := os.Stat(s.opt.LogPath); err == nil && info.Size() >= panelLogLimit {
+		_ = os.Remove(s.opt.LogPath + ".2")
+		_ = os.Rename(s.opt.LogPath+".1", s.opt.LogPath+".2")
+		_ = os.Rename(s.opt.LogPath, s.opt.LogPath+".1")
+	}
+	if err := os.MkdirAll(filepath.Dir(s.opt.LogPath), 0o755); err != nil {
+		return
+	}
+	f, err := os.OpenFile(s.opt.LogPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	fmt.Fprintf(f, "%s %s\n", s.opt.Now().UTC().Format(time.RFC3339), fmt.Sprintf(format, args...))
+}
+
+const panelLogLimit = 1 << 20
+
+// static serves an embedded file with an ETag, so a revalidation costs a 304 and an update is
+// picked up on the next load.
+func (s *Server) static(w http.ResponseWriter, r *http.Request, a asset) {
+	h := w.Header()
+	h.Set("ETag", a.etag)
+	cache := "no-cache"
+	if a.immutable {
+		cache = "public, max-age=604800"
+	}
+	if match := r.Header.Get("If-None-Match"); match != "" && strings.Contains(match, a.etag) {
+		s.headers(h, a.contentType, cache)
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	s.headers(h, a.contentType, cache)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(a.body)
+}
+
 // write sends a response with the panel's security headers.
 func (s *Server) write(w http.ResponseWriter, status int, contentType string, body []byte) {
-	h := w.Header()
+	s.headers(w.Header(), contentType, "no-store")
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
+func (s *Server) headers(h http.Header, contentType, cache string) {
 	h.Set("Content-Type", contentType)
-	h.Set("Cache-Control", "no-store")
+	h.Set("Cache-Control", cache)
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-	w.WriteHeader(status)
-	_, _ = w.Write(body)
 }
 
 // changePassword replaces the panel password after checking the current one, and ends every

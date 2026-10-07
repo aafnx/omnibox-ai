@@ -21,6 +21,7 @@ import (
 
 var (
 	engineLog  = regexp.MustCompile(`^(?:out|err|host)\.log(?:\.\d+)?$`)
+	panelLog   = regexp.MustCompile(`^panel\.log(?:\.\d+)?$`)
 	requestLog = regexp.MustCompile(`^(?:requests|content)\.jsonl(?:\.\d+)?$`)
 	contentLog = regexp.MustCompile(`^content\.jsonl(?:\.\d+)?$`)
 	staging    = regexp.MustCompile(`^\.staging-[0-9a-f]{32}$`)
@@ -104,9 +105,9 @@ func matching(dir string, pattern *regexp.Regexp, dirs bool) []file {
 	return out
 }
 
-// logFiles are every engine log and the request journals, including rotated copies.
+// logFiles are every engine log, the panel log and the request journals, including rotated copies.
 func logFiles(data string) []file {
-	var out []file
+	out := matching(logsDir(data), panelLog, false)
 	for _, name := range config.EngineNames {
 		out = append(out, matching(filepath.Join(logsDir(data), "engines", name), engineLog, false)...)
 	}
