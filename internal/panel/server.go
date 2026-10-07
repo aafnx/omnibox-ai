@@ -68,6 +68,8 @@ type Options struct {
 	SetPassword func(p config.Password) error
 	// LogPath is the panel's own log: internal failures are written there, not shown in full.
 	LogPath string
+	// SessionsPath keeps the sign-ins across a restart of the service.
+	SessionsPath string
 }
 
 type session struct {
@@ -132,6 +134,7 @@ func New(opt Options) (*Server, error) {
 		s.assets[route] = asset{body: body, contentType: f[1], etag: `"` + hex.EncodeToString(sum[:8]) + `"`,
 			immutable: f[1] == "font/woff" || f[1] == "image/svg+xml"}
 	}
+	s.loadSessions()
 	return s, nil
 }
 
@@ -273,6 +276,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case route == "POST /api/logout":
 		s.mu.Lock()
 		delete(s.sessions, key)
+		s.saveSessionsLocked()
 		s.mu.Unlock()
 		http.SetCookie(w, s.sessionCookie("", -1, t.secure))
 		s.json(w, http.StatusOK, map[string]any{"ok": true})
@@ -367,6 +371,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request, t transport, cfg 
 	}
 	id, csrf := newNonce(), newNonce()
 	s.sessions[sessionKey(id)] = &session{csrf: csrf, secure: t.secure, expires: now.Add(sessionLifetime)}
+	s.saveSessionsLocked()
 	s.mu.Unlock()
 	http.SetCookie(w, s.sessionCookie(id, int(sessionLifetime/time.Second), t.secure))
 	s.json(w, http.StatusOK, map[string]any{"csrf": csrf})
@@ -552,6 +557,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request, t transp
 			delete(s.sessions, k)
 		}
 	}
+	s.saveSessionsLocked()
 	s.mu.Unlock()
 	s.json(w, http.StatusOK, map[string]any{"ok": true})
 }
@@ -561,4 +567,5 @@ func (s *Server) EndSessions() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	clear(s.sessions)
+	s.saveSessionsLocked()
 }
