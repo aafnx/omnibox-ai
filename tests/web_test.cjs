@@ -176,6 +176,14 @@ function run(code){return vm.runInContext(code,context);}
   assert.deepEqual(JSON.parse(bodies[deleteBefore]),{action:'model-delete',backend:'prismml',model:'/m/b-Q8_0.gguf'});
   nodes['model-choice'].options=[{value:'/m/a-Q4_K_M.gguf'},{value:'/m/b-Q8_0.gguf'}];nodes.alias.value='a-q4_k_m';run("aliasModel='/m/a-Q4_K_M.gguf'");
   second[0].listeners.click[0]();assert.equal(nodes['model-choice'].value,'/m/b-Q8_0.gguf');assert.equal(nodes.alias.value,'b-q8_0');
+  // A model download brings its projector: F16 first, then BF16; the vision field offers the
+  // download for a model without its projector.
+  assert.equal(run("pickProjector([{name:'m-Q4.gguf'},{name:'mmproj-BF16.gguf',projector:true},{name:'mmproj-F16.gguf',projector:true,url:'u',filename:'r-mmproj-F16.gguf',bytes:900}]).name"),'mmproj-F16.gguf');
+  assert.equal(run("JSON.stringify(projectorFields(pickProjector([{name:'mmproj-BF16.gguf',projector:true,url:'u',filename:'f',bytes:5}])))"),'{"mmproj_url":"u","mmproj_filename":"f","mmproj_sha256":"","mmproj_size":"5"}');
+  assert.equal(run("pickProjector([{name:'m.gguf'}])"),null);
+  nodes['model-choice'].value='/m/a.gguf';nodes.mmproj.value='auto';run("installedModels=[{id:'/m/a.gguf',name:'a.gguf',source:'https://huggingface.co/u/a-GGUF'}];renderProjectorHint()");
+  assert.equal(nodes['mmproj-download'].hidden,false);assert.ok(nodes['mmproj-hint'].textContent.includes('не найден'));
+  run("installedModels=[{id:'/m/a.gguf',name:'a.gguf',projector:'/m/a-mmproj-F16.gguf'}];renderProjectorHint()");assert.equal(nodes['mmproj-download'].hidden,true);
   // The API name follows the model unless the owner typed their own.
   nodes['model-choice'].value='/m/Old-Q4.gguf';run("aliasModel='/m/Old-Q4.gguf'");nodes.alias.value='old-q4';nodes['model-choice'].value='/m/Ternary-Bonsai-2-27B-PQ2_0.gguf';
   run("followModelAlias()");assert.equal(nodes.alias.value,'ternary-bonsai-2-27b-pq2_0');
@@ -228,5 +236,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, VRAM overflow warning, base preset, toasts and history, API name from the model, installed models, log retention in hours, inline progress, capability icons with tooltips, unload from the model card, start and shutdown, sleep and wake, model test, presets, auto-restart status, update check and saved token, self-update and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, VRAM overflow warning, base preset, toasts and history, API name from the model, installed models, log retention in hours, inline progress, capability icons with tooltips, unload from the model card, start and shutdown, sleep and wake, model test, presets, auto-restart status, update check and saved token, projector with the model, self-update and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

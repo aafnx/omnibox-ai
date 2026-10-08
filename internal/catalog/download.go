@@ -37,6 +37,9 @@ type Download struct {
 	Idle time.Duration
 	// Progress receives bytes done and total (0 if unknown).
 	Progress func(done, total int64)
+	// Projector downloads a vision projector (mmproj): its name must say so, a model's must not,
+	// so a projector never shows up among the models.
+	Projector bool
 }
 
 type partMeta struct {
@@ -84,7 +87,10 @@ var contentRange = regexp.MustCompile(`^bytes (\d+)-(\d+)/(\d+|\*)$`)
 
 // Run downloads the file and moves it into place after checking size, GGUF header and SHA256.
 func (d *Download) Run(ctx context.Context) error {
-	if !FileName.MatchString(d.Filename) || strings.Contains(d.Filename, "..") || projector.MatchString(d.Filename) {
+	if !FileName.MatchString(d.Filename) || strings.Contains(d.Filename, "..") || projector.MatchString(d.Filename) != d.Projector {
+		if d.Projector {
+			return errors.New("Имя файла проектора: латиница, цифры, дефис, подчёркивание, без пути, со словом mmproj.")
+		}
 		return errors.New("Имя GGUF: латиница, цифры, дефис, подчёркивание, без пути и projector.")
 	}
 	target := filepath.Join(d.Dir, d.Filename)

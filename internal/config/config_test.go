@@ -251,6 +251,15 @@ func TestProjectorSetting(t *testing.T) {
 			t.Fatalf("accepted %v", bad)
 		}
 	}
+	// The stored setting passes the check config.json gets on every save.
+	for _, ok := range []string{"off", "/m/gemma-mmproj-F16.gguf"} {
+		if err := checkStored(PrismML, "mmproj", ok); err != nil && FullyQualified("/m") {
+			t.Fatalf("%s: %v", ok, err)
+		}
+	}
+	if checkStored(PrismML, "mmproj", "relative-mmproj.gguf") == nil || checkStored(PrismML, "mmproj", "/m/model.gguf") == nil {
+		t.Fatal("a wrong stored projector passed")
+	}
 	if v := View(PrismML, map[string]string{}); v["mmproj"] != "auto" {
 		t.Fatalf("%v", v)
 	}

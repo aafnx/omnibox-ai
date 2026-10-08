@@ -8,8 +8,10 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -22,14 +24,13 @@ import (
 // DownloadIdle aborts a download that receives nothing for this long.
 var DownloadIdle = 2 * time.Minute
 
-// downloadGGUF fetches a model file for PrismML from a Hugging Face link, with resume.
+// downloadGGUF fetches a model file for PrismML from a Hugging Face link, with resume, and the
+// model's vision projector (mmproj) in the same operation when the request names one. A request
+// with only a projector (ForModel) gives an installed model vision; when that model is the one
+// selected, the projector is chosen in its settings for the next start.
 func (c *Controller) downloadGGUF(ctx context.Context, name string, r Request) (string, error) {
 	if name != config.PrismML {
 		return "", errors.New("GGUF скачивается для PrismML; для Ollama используйте скачивание по имени.")
-	}
-	u, err := catalog.ModelURL(r.URL)
-	if err != nil {
-		return "", err
 	}
 	e, err := c.engine(name)
 	if err != nil {
@@ -42,25 +43,77 @@ func (c *Controller) downloadGGUF(ctx context.Context, name string, r Request) (
 	if dir == "" {
 		return "", errors.New("Не задан каталог моделей PrismML.")
 	}
-	var size int64
-	if r.Size != "" {
-		if size, err = strconv.ParseInt(r.Size, 10, 64); err != nil || size < 0 {
-			return "", errors.New("Размер файла — целое число байт.")
+	model := r.URL != "" && !config.ProjectorFile.MatchString(r.Filename)
+	var done []string
+	if model {
+		if err := c.fetchGGUF(ctx, dir, r.URL, r.Filename, r.SHA256, r.Size, false); err != nil {
+			return "", err
+		}
+		done = append(done, r.Filename)
+	} else if r.URL != "" {
+		// Only a projector: the request's own file is it.
+		r.ProjectorURL, r.ProjectorFilename, r.ProjectorSHA256, r.ProjectorSize = r.URL, r.Filename, r.SHA256, r.Size
+	}
+	if r.ProjectorURL != "" {
+		path := filepath.Join(dir, r.ProjectorFilename)
+		if _, err := os.Stat(path); err != nil {
+			if err := c.fetchGGUF(ctx, dir, r.ProjectorURL, r.ProjectorFilename, r.ProjectorSHA256, r.ProjectorSize, true); err != nil {
+				if model {
+					return "", fmt.Errorf("Модель %s скачана, проектор изображений — нет: %v", r.Filename, err)
+				}
+				return "", err
+			}
+		}
+		done = append(done, r.ProjectorFilename+" (проектор изображений)")
+		if r.ForModel != "" && r.ForModel == e.Settings["model"] && e.Settings["mmproj"] != path {
+			err := c.Locked(func() error {
+				cur, err := c.engine(name)
+				if err != nil {
+					return err
+				}
+				prepared, err := c.prepare(name, cur, map[string]string{"mmproj": path})
+				if err != nil {
+					return err
+				}
+				return c.Save(name, prepared)
+			})
+			if err != nil {
+				return "", err
+			}
+			return "Скачано: " + strings.Join(done, ", ") + ". Проектор выбран в настройках модели и подключится при следующем запуске сервера.", nil
 		}
 	}
-	if r.SHA256 != "" && !sha256Hex(r.SHA256) {
-		return "", errors.New("SHA256 должен содержать 64 hex-символа.")
+	if len(done) == 0 {
+		return "", errors.New("Нечего скачивать: нужна ссылка на GGUF.")
+	}
+	return "Скачано: " + strings.Join(done, ", ") + ". Выберите модель в настройках; сама она не загружалась.", nil
+}
+
+// fetchGGUF downloads one file from a Hugging Face link into dir and remembers its repository.
+func (c *Controller) fetchGGUF(ctx context.Context, dir, link, filename, sum, sizeText string, projector bool) error {
+	u, err := catalog.ModelURL(link)
+	if err != nil {
+		return err
+	}
+	var size int64
+	if sizeText != "" {
+		if size, err = strconv.ParseInt(sizeText, 10, 64); err != nil || size < 0 {
+			return errors.New("Размер файла — целое число байт.")
+		}
+	}
+	if sum != "" && !sha256Hex(sum) {
+		return errors.New("SHA256 должен содержать 64 hex-символа.")
 	}
 	if free, ok := storage.FreeSpace(dir); ok && size > 0 && free < size+(1<<30) {
-		return "", fmt.Errorf("Недостаточно места на диске моделей: свободно %.1f ГБ, нужно %.1f ГБ.", float64(free)/(1<<30), float64(size)/(1<<30))
+		return fmt.Errorf("Недостаточно места на диске моделей: свободно %.1f ГБ, нужно %.1f ГБ.", float64(free)/(1<<30), float64(size)/(1<<30))
 	}
-	d := &catalog.Download{URL: u, Dir: dir, Filename: r.Filename, SHA256: r.SHA256, Size: size, HTTP: c.HTTP, Idle: DownloadIdle,
+	d := &catalog.Download{URL: u, Dir: dir, Filename: filename, SHA256: sum, Size: size, HTTP: c.HTTP, Idle: DownloadIdle, Projector: projector,
 		Progress: func(done, total int64) { Progress(ctx, done, total) }}
 	if err := d.Run(ctx); err != nil {
-		return "", err
+		return err
 	}
-	c.recordSource(filepath.Join(dir, r.Filename), u)
-	return "Скачано: " + r.Filename + ". Выберите модель в настройках; сама она не загружалась.", nil
+	c.recordSource(filepath.Join(dir, filename), u)
+	return nil
 }
 
 func sha256Hex(s string) bool {

@@ -170,6 +170,14 @@ func checkStored(engine, key, value string) error {
 			return errors.New("model: полный путь к GGUF.")
 		}
 		return nil
+	case "mmproj":
+		if value == "off" {
+			return nil
+		}
+		if strings.ContainsAny(value, "\"\r\n") || !FullyQualified(value) || !ProjectorFile.MatchString(modelStem(value)) {
+			return errors.New("mmproj: off или полный путь к проектору mmproj.")
+		}
+		return nil
 	case "alias":
 		if !aliasPattern.MatchString(value) {
 			return errors.New("Имя API-модели: латиница, цифры, точка, дефис или подчёркивание, до 80 символов.")

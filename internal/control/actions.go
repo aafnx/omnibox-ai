@@ -28,6 +28,13 @@ type Request struct {
 	Size     string            `json:"size,omitempty"`
 	EngineID string            `json:"engine,omitempty"`
 	Enabled  string            `json:"enabled,omitempty"`
+	// A model download can bring its vision projector (mmproj) in the same operation; ForModel
+	// names the installed model a projector is downloaded for.
+	ProjectorURL      string `json:"-"`
+	ProjectorFilename string `json:"-"`
+	ProjectorSHA256   string `json:"-"`
+	ProjectorSize     string `json:"-"`
+	ForModel          string `json:"-"`
 	// Token is the GitHub token of a self-update: kept in memory only, never listed or logged.
 	Token string `json:"-"`
 }
@@ -38,7 +45,8 @@ var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "
 // ParseRequest validates a panel operation body; unknown fields are refused.
 func ParseRequest(body map[string]any) (Request, error) {
 	var r Request
-	allowed := []string{"action", "backend", "settings", "model", "url", "filename", "sha256", "engine", "version", "size", "enabled", "token"}
+	allowed := []string{"action", "backend", "settings", "model", "url", "filename", "sha256", "engine", "version", "size", "enabled", "token",
+		"mmproj_url", "mmproj_filename", "mmproj_sha256", "mmproj_size", "for_model"}
 	for key, value := range body {
 		if !slices.Contains(allowed, key) {
 			return r, fmt.Errorf("Неизвестное поле: %s", key)
@@ -85,6 +93,16 @@ func ParseRequest(body map[string]any) (Request, error) {
 			r.Enabled = s
 		case "token":
 			r.Token = strings.TrimSpace(s)
+		case "mmproj_url":
+			r.ProjectorURL = s
+		case "mmproj_filename":
+			r.ProjectorFilename = s
+		case "mmproj_sha256":
+			r.ProjectorSHA256 = s
+		case "mmproj_size":
+			r.ProjectorSize = s
+		case "for_model":
+			r.ForModel = s
 		}
 	}
 	if !slices.Contains(Actions, r.Action) {
