@@ -256,6 +256,10 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 			models, err := hub.Search(ctx, query)
 			return map[string]any{"models": models, "source": "Hugging Face", "query": query}, err
 		},
+		Models: func(ctx context.Context, name string) (any, error) {
+			models, err := controller.InstalledModels(ctx, name)
+			return map[string]any{"backend": name, "models": models}, err
+		},
 		Gateway: func() any { return gateway.SettingsView(current(), api.KeyUsage()) },
 		GatewayAction: func(body map[string]any) (any, error) {
 			key, err := gateway.UpdateSettings(store, body)

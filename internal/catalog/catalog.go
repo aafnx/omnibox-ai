@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -54,6 +55,9 @@ func (h *Hub) get(ctx context.Context, path string, out any) error {
 		return fmt.Errorf("Hugging Face недоступен: %v", err)
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return errors.New("Hugging Face: репозиторий не найден.")
+	}
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("Hugging Face ответил %d.", resp.StatusCode)
 	}
@@ -67,31 +71,87 @@ type Model struct {
 	URL       string `json:"url"`
 	Downloads int64  `json:"downloads"`
 	Gated     bool   `json:"gated"`
+	// Capabilities are what the repository's tags and task say: reasoning, tools, vision, moe.
+	Capabilities []string `json:"capabilities"`
 }
 
-// Search finds GGUF repositories, most downloaded first.
+var moeName = regexp.MustCompile(`(?i)-A\d+(?:\.\d+)?B\b|\bMoE\b`)
+
+// searchLimit is how many repositories a search shows.
+const searchLimit = 12
+
+// Search finds GGUF repositories, most downloaded first. Hugging Face's GGUF filter can come back
+// empty for a common name, so an empty answer is asked again by library, then without a filter,
+// keeping the repositories tagged or named GGUF.
 func (h *Hub) Search(ctx context.Context, query string) ([]Model, error) {
 	if len([]rune(query)) < 2 || len([]rune(query)) > 100 || strings.ContainsFunc(query, func(r rune) bool { return r < 0x20 }) {
 		return nil, errors.New("Запрос поиска: от 2 до 100 символов.")
 	}
-	var items []struct {
-		ID        string `json:"id"`
-		Downloads int64  `json:"downloads"`
-		Gated     any    `json:"gated"`
-	}
-	q := url.Values{"search": {query}, "filter": {"gguf"}, "limit": {"12"}, "sort": {"downloads"}, "direction": {"-1"}}
-	if err := h.get(ctx, "?"+q.Encode(), &items); err != nil {
-		return nil, err
+	attempts := []url.Values{
+		{"search": {query}, "filter": {"gguf"}, "limit": {"20"}, "sort": {"downloads"}, "direction": {"-1"}},
+		{"search": {query}, "library": {"gguf"}, "limit": {"20"}, "sort": {"downloads"}, "direction": {"-1"}},
+		{"search": {query}, "limit": {"100"}, "sort": {"downloads"}, "direction": {"-1"}},
 	}
 	out := []Model{}
-	for _, it := range items {
-		if !repoPattern.MatchString(it.ID) || strings.Contains(it.ID, "..") {
-			continue
+	for i, q := range attempts {
+		var items []struct {
+			ID          string   `json:"id"`
+			Downloads   int64    `json:"downloads"`
+			Gated       any      `json:"gated"`
+			Tags        []string `json:"tags"`
+			PipelineTag string   `json:"pipeline_tag"`
 		}
-		gated := it.Gated != nil && it.Gated != false
-		out = append(out, Model{ID: it.ID, Name: it.ID, URL: h.base() + "/" + it.ID, Downloads: it.Downloads, Gated: gated})
+		if err := h.get(ctx, "?"+q.Encode(), &items); err != nil {
+			if i == 0 {
+				return nil, err
+			}
+			break
+		}
+		for _, it := range items {
+			if !repoPattern.MatchString(it.ID) || strings.Contains(it.ID, "..") || len(out) >= searchLimit {
+				continue
+			}
+			if i == len(attempts)-1 && !strings.Contains(strings.ToLower(it.ID), "gguf") && !slices.Contains(it.Tags, "gguf") {
+				continue
+			}
+			gated := it.Gated != nil && it.Gated != false
+			out = append(out, Model{ID: it.ID, Name: it.ID, URL: h.base() + "/" + it.ID, Downloads: it.Downloads, Gated: gated,
+				Capabilities: capabilities(it.ID, it.PipelineTag, it.Tags)})
+		}
+		if len(out) > 0 {
+			break
+		}
 	}
 	return out, nil
+}
+
+// capabilities reads a repository's task and tags; names say MoE (35B-A3B) and reasoning (R1).
+func capabilities(id, task string, tags []string) []string {
+	has := func(names ...string) bool {
+		for _, t := range tags {
+			for _, n := range names {
+				if strings.EqualFold(t, n) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	l := strings.ToLower(id)
+	out := []string{}
+	if has("reasoning", "thinking", "chain-of-thought") || strings.Contains(l, "thinking") || strings.Contains(l, "-r1") || strings.Contains(l, "reason") {
+		out = append(out, "reasoning")
+	}
+	if has("tool-use", "tools", "function-calling", "function_calling", "agent") {
+		out = append(out, "tools")
+	}
+	if task == "image-text-to-text" || task == "visual-question-answering" || has("vision", "multimodal", "image-text-to-text") {
+		out = append(out, "vision")
+	}
+	if has("moe", "mixture-of-experts") || moeName.MatchString(id) {
+		out = append(out, "moe")
+	}
+	return out
 }
 
 // File is one GGUF file of a repository.

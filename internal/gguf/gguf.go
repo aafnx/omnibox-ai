@@ -28,6 +28,13 @@ type Meta struct {
 	// KVLayers are the layers with a KV cache: hybrid models (Qwen3.5/3.6, Qwen3-Next) keep it
 	// only in every full_attention_interval-th layer, the rest use linear attention.
 	KVLayers int `json:"kv_layers"`
+	// Name and SizeLabel are the author's (general.name, general.size_label such as 27B).
+	Name      string `json:"name,omitempty"`
+	SizeLabel string `json:"size_label,omitempty"`
+	// Thinking and Tools are what the chat template supports: reasoning before the answer and
+	// tool (function) calls.
+	Thinking bool `json:"thinking"`
+	Tools    bool `json:"tools"`
 }
 
 // Header limits: a damaged or hostile file cannot make the reader allocate much.
@@ -165,8 +172,15 @@ func parse(in io.Reader) (Meta, error) {
 		if err != nil {
 			return Meta{}, errFormat
 		}
-		if key == "general.architecture" {
+		switch key {
+		case "general.architecture":
 			m.Arch = s
+		case "general.name":
+			m.Name = s
+		case "general.size_label":
+			m.SizeLabel = s
+		case "tokenizer.chat_template":
+			m.Thinking, m.Tools = templateFeatures(s)
 		}
 		numbers[key] = n
 	}
@@ -194,6 +208,17 @@ func parse(in io.Reader) (Meta, error) {
 		m.KVLayers = (m.Blocks + n - 1) / n
 	}
 	return m, nil
+}
+
+// templateFeatures reads what a Jinja chat template handles: thinking blocks (<think>, Qwen's
+// enable_thinking, gpt-oss channels) and tool calls.
+func templateFeatures(t string) (thinking, tools bool) {
+	l := strings.ToLower(t)
+	for _, s := range []string{"<think>", "enable_thinking", "reasoning_content", "<|channel|>", "thinking"} {
+		thinking = thinking || strings.Contains(l, s)
+	}
+	tools = strings.Contains(l, "tools") && (strings.Contains(l, "tool_call") || strings.Contains(l, "function"))
+	return thinking, tools
 }
 
 // cacheBytes is the size of one cached value by KV cache type (llama.cpp block formats).

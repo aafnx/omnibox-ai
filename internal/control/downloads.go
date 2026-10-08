@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"sync/atomic"
 	"time"
@@ -58,6 +59,7 @@ func (c *Controller) downloadGGUF(ctx context.Context, name string, r Request) (
 	if err := d.Run(ctx); err != nil {
 		return "", err
 	}
+	c.recordSource(filepath.Join(dir, r.Filename), u)
 	return "Скачано: " + r.Filename + ". Выберите модель в настройках; сама она не загружалась.", nil
 }
 

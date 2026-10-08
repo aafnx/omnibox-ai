@@ -67,6 +67,8 @@ type Options struct {
 	Releases func(ctx context.Context, engine string) (any, error)
 	// Catalog searches Hugging Face (query) or lists a repository's GGUF files (repo).
 	Catalog func(ctx context.Context, query, repo string) (any, error)
+	// Models lists an engine's installed models with their capabilities and sources.
+	Models func(ctx context.Context, engine string) (any, error)
 	// Gateway shows the API settings; GatewayAction saves them or creates a key.
 	Gateway       func() any
 	GatewayAction func(body map[string]any) (any, error)
@@ -262,6 +264,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result, err := s.opt.Catalog(r.Context(), q.Get("q"), q.Get("repo"))
 		if err != nil {
 			s.json(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+			return
+		}
+		s.json(w, http.StatusOK, result)
+	case route == "GET /api/models" && s.opt.Models != nil:
+		result, err := s.opt.Models(r.Context(), r.URL.Query().Get("backend"))
+		if err != nil {
+			s.fail(w, r, err)
 			return
 		}
 		s.json(w, http.StatusOK, result)

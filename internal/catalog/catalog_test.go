@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -256,5 +257,33 @@ func TestSearchAndFiles(t *testing.T) {
 	}
 	if _, err := h.Files(context.Background(), "../etc"); err == nil {
 		t.Fatal("bad repo accepted")
+	}
+}
+
+func TestSearchFallsBackWhenTheGGUFFilterIsEmpty(t *testing.T) {
+	var asked []url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		asked = append(asked, q)
+		switch {
+		case q.Get("filter") == "gguf", q.Get("library") == "gguf":
+			json.NewEncoder(w).Encode([]any{})
+		default:
+			json.NewEncoder(w).Encode([]map[string]any{
+				{"id": "google/gemma-3-27b-it", "tags": []string{"transformers"}},
+				{"id": "unsloth/gemma-3-27b-it-GGUF", "downloads": 900, "pipeline_tag": "image-text-to-text", "tags": []string{"gguf"}},
+				{"id": "someone/gemma-3n-tools", "tags": []string{"gguf", "tool-use"}},
+				{"id": "x/Qwen3-30B-A3B-Thinking-GGUF", "tags": []string{"gguf"}},
+			})
+		}
+	}))
+	defer srv.Close()
+	models, err := (&Hub{Base: srv.URL}).Search(context.Background(), "gemma")
+	if err != nil || len(asked) != 3 || len(models) != 3 || models[0].ID != "unsloth/gemma-3-27b-it-GGUF" {
+		t.Fatalf("%+v %v %v", models, err, asked)
+	}
+	if !slices.Equal(models[0].Capabilities, []string{"vision"}) || !slices.Equal(models[1].Capabilities, []string{"tools"}) ||
+		!slices.Equal(models[2].Capabilities, []string{"reasoning", "moe"}) {
+		t.Fatalf("%+v", models)
 	}
 }

@@ -150,3 +150,18 @@ func TestProbes(t *testing.T) {
 		t.Fatal("an engine answering 401 is not ready")
 	}
 }
+
+func TestModelFamilyProjectorAndOllamaSource(t *testing.T) {
+	if f := family("unsloth-gemma-3-27b-it-GGUF-gemma-3-27b-it-Q4_K_M.gguf"); f != "unsloth-gemma-3-27b-it-GGUF-gemma-3-27b-it" {
+		t.Fatal(f)
+	}
+	projectors := []string{"unsloth-gemma-3-27b-it-GGUF-mmproj-F16.gguf"}
+	if !hasProjector("unsloth-gemma-3-27b-it-GGUF-gemma-3-27b-it-Q4_K_M.gguf", projectors) || hasProjector("Qwen3-8B-Q4_K_M.gguf", projectors) {
+		t.Fatal("projector match")
+	}
+	for in, want := range map[string]string{"qwen3:8b": "https://ollama.com/library/qwen3", "hf.co/unsloth/Qwen3-8B-GGUF:Q4_K_M": "https://huggingface.co/unsloth/Qwen3-8B-GGUF", "user/model:tag": "https://ollama.com/user/model"} {
+		if got := OllamaSource(in); got != want {
+			t.Fatalf("%s: %s", in, got)
+		}
+	}
+}
