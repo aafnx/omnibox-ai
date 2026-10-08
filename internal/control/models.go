@@ -92,23 +92,29 @@ func modelChanges(name string, e *config.Engine, path string, prefs map[string]s
 	changes["alias"] = ""
 	maps.Copy(changes, prefs)
 	changes["model"] = path
-	if v, ok := prefs["gpu_layers"]; ok {
-		if _, own := prefs["placement"]; !own {
-			n, _ := strconv.Atoi(v)
-			switch {
-			case n == 0:
-				changes["placement"] = "cpu"
-			case n < 99:
-				changes["placement"] = "hybrid"
-			default:
-				changes["placement"] = "gpu"
-			}
-		}
-	}
+	derivePlacement(changes, prefs)
 	if changes["placement"] == "cpu" {
 		delete(changes, "kv_offload")
 	}
 	return changes
+}
+
+// derivePlacement turns the owner's GPU layers into the placement the form expects: the base
+// preset's "gpu" would otherwise put every layer back on the GPU.
+func derivePlacement(changes, own map[string]string) {
+	v, ok := own["gpu_layers"]
+	if _, set := own["placement"]; !ok || set {
+		return
+	}
+	n, _ := strconv.Atoi(v)
+	switch {
+	case n == 0:
+		changes["placement"] = "cpu"
+	case n < 99:
+		changes["placement"] = "hybrid"
+	default:
+		changes["placement"] = "gpu"
+	}
 }
 
 // SaveModelPrefs validates and stores a local model's settings; an empty map forgets them.
@@ -117,8 +123,9 @@ func SaveModelPrefs(store *config.Store, key string, settings map[string]string,
 	if !ok || name == "cloud" {
 		return errors.New("Нужна локальная модель.")
 	}
-	for k := range settings {
-		if k == "model" || k == "mmproj" {
+	for k, v := range settings {
+		// The projector can only be switched off for a model, never pointed at a file.
+		if k == "model" || (k == "mmproj" && v != "off" && v != "") {
 			return errors.New("Настройки модели не выбирают сам файл модели.")
 		}
 	}
@@ -133,6 +140,7 @@ func SaveModelPrefs(store *config.Store, key string, settings map[string]string,
 	}
 	merged := config.BaseSettings(name)
 	maps.Copy(merged, clean)
+	derivePlacement(merged, clean)
 	next, err := config.Apply(name, map[string]string{}, merged, nil)
 	if err != nil {
 		return err

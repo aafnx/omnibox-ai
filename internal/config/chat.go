@@ -145,7 +145,7 @@ func (c *Config) validateModels() error {
 			return errors.New("Некорректные настройки модели в config.json.")
 		}
 		for k, v := range p.Settings {
-			if k == "model" || k == "mmproj" {
+			if k == "model" || (k == "mmproj" && v != "off") {
 				return errors.New("Настройки модели не выбирают сам файл модели.")
 			}
 			if k == "placement" || k == "idle_minutes" {
