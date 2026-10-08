@@ -15,7 +15,7 @@ themes.forEach(t=>$(`theme-${t}`).addEventListener('click',()=>{theme=t;applyThe
 // One switch: top right of the login screen, inside the top bar of the dashboard.
 function placeThemeSwitch(inDashboard){const target=inDashboard?$('topbar-actions'):document.body;if(target)target.append($('theme-switch'));}
 themeMedia.addEventListener('change',()=>{if(theme==='system')applyTheme(theme);});
-const fields = {placement:'placement',context:'context',idle_minutes:'idle',alias:'alias',gpu_layers:'gpu-layers',n_cpu_moe:'n-cpu-moe',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch',kv_offload:'kv-offload',threads:'threads',load_mode:'load-mode',reasoning:'reasoning',reasoning_effort:'reasoning-effort',reasoning_budget:'reasoning-budget',temperature:'temperature',top_k:'top-k',top_p:'top-p',min_p:'min-p',repeat_penalty:'repeat-penalty',presence_penalty:'presence-penalty',frequency_penalty:'frequency-penalty',max_tokens:'max-tokens',seed:'seed'};
+const fields = {placement:'placement',context:'context',idle_minutes:'idle',alias:'alias',mmproj:'mmproj',gpu_layers:'gpu-layers',n_cpu_moe:'n-cpu-moe',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch',kv_offload:'kv-offload',threads:'threads',load_mode:'load-mode',reasoning:'reasoning',reasoning_effort:'reasoning-effort',reasoning_budget:'reasoning-budget',temperature:'temperature',top_k:'top-k',top_p:'top-p',min_p:'min-p',repeat_penalty:'repeat-penalty',presence_penalty:'presence-penalty',frequency_penalty:'frequency-penalty',max_tokens:'max-tokens',seed:'seed'};
 const labels = {'engine-install':'Установка движка','engine-update':'Обновление движка','engine-remove':'Удаление движка','model-delete':'Удаление модели',start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление','auto-restart':'Автоперезапуск','self-update':'Обновление программы','preset-save':'Сохранение пресета','preset-delete':'Удаление пресета','preset-apply':'Применение пресета','model-test':'Тест модели',sleep:'Сон ПК',autostart:'Автозапуск','start-engine':'Модель при старте',shutdown:'Выключение OmniBox',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
 async function api(path, body) {
   const response = await fetch(path, {method:body === undefined?'GET':'POST',credentials:'same-origin',headers:body === undefined?{}:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:body === undefined?undefined:JSON.stringify(body)});
@@ -180,7 +180,7 @@ function renderSettings() {
   $('model-hint').textContent=b.type==='prismml'?'GGUF из каталога модели на ПК.':'Для списка моделей Ollama должна быть запущена.';
   $('placement').querySelectorAll('option').forEach(o=>o.hidden=b.type==='ollama'&&['gpu','hybrid'].includes(o.value));
   $('placement-hint').textContent=b.type==='ollama'?'Ollama: RAM/CPU или автоматическое распределение. Полностью VRAM гарантировать нельзя.':'VRAM: попытка загрузить все слои на GPU; RAM + VRAM: число слоёв задаётся ниже. Для MoE-моделей больше VRAM выберите VRAM и задайте «Слои MoE в RAM». При нехватке памяти запуск откатится.';
-  Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');aliasModel=$('model-choice').value;
+  ensureProjectorOption(s.mmproj);Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');aliasModel=$('model-choice').value;renderProjectorHint();
   document.querySelectorAll('.prism-field').forEach(el=>el.hidden=b.type!=='prismml');applySettingsMode();syncKvOffload();
   $('settings-status').textContent=b.pending?'Есть сохранённые настройки. Они ещё не применены к работающему серверу.':b.type==='ollama'?'Серверные значения по умолчанию. Параметры внешнего клиента могут их переопределить.':'При ошибке запуска с новыми настройками выполняется откат.';
   $('restore').disabled=!b.can_restore;
@@ -206,7 +206,7 @@ function renderPresets(b){
 // The estimate reads only the GGUF header and is asked for by the owner, never by a timer.
 let lastEstimate=null;
 async function estimatePlacement(){
-  const q=new URLSearchParams({model:$('model-choice').value,context:$('context').value.trim(),cache_key:$('cache-key').value,cache_value:$('cache-value').value});
+  const q=new URLSearchParams({model:$('model-choice').value,context:$('context').value.trim(),cache_key:$('cache-key').value,cache_value:$('cache-value').value,mmproj:$('mmproj').value||'auto'});
   $('estimate').textContent='Оценка…';$('estimate-apply').hidden=true;
   try{lastEstimate=await api(`/api/estimate?${q}`);$('estimate').textContent=lastEstimate.text;$('estimate-apply').hidden=lastEstimate.placement!=='hybrid';}
   catch(e){lastEstimate=null;$('estimate').textContent=e.message;}
@@ -304,9 +304,16 @@ const capabilityLabels={reasoning:'Рассуждения',tools:'Инструм
 const capabilityHints={reasoning:'Шаблон модели умеет размышлять перед ответом (thinking)',tools:'Шаблон модели поддерживает вызов инструментов (function calling)',vision:'Есть проектор изображений (mmproj)',moe:'Mixture of Experts: на токен работает часть весов'};
 function capabilityBadges(list){const row=document.createElement('div');row.className='capabilities';(list||[]).forEach(c=>{const b=document.createElement('span');b.className=`capability ${c}`;b.textContent=capabilityLabels[c]||c;b.title=capabilityHints[c]||'';row.append(b);});return row;}
 function contextText(n){return n>=1024?`${Math.round(n/1024)}K контекст`:n?`${n} контекст`:'';}
+// Vision projectors (mmproj) of the models directory, from the installed models listing.
+let projectors=[],installedModels=[];
+function ensureProjectorOption(value){const select=$('mmproj');if(!value||value==='auto'||value==='off')return;if(![...(select.options||[])].some(o=>o.value===value))select.add(new Option(value.split(/[\\/]/).pop(),value));}
+function renderProjectorOptions(){const select=$('mmproj');const keep=select.value;const fixed=[...(select.options||[])].filter(o=>o.value==='auto'||o.value==='off');select.replaceChildren(...fixed);
+  projectors.forEach(p=>select.add(new Option(`${p.name} · ${formatGb(p.bytes)}`,p.id)));ensureProjectorOption(keep);select.value=keep||'auto';renderProjectorHint();}
+function renderProjectorHint(){const m=installedModels.find(x=>x.id===$('model-choice').value);const v=$('mmproj').value;
+  $('mmproj-hint').textContent=v==='off'?'Изображения не принимаются.':v!=='auto'?'Изображения принимаются с выбранным проектором.':m?.projector?`Найден проектор ${m.projector.split(/[\\/]/).pop()}: модель принимает изображения.`:'Проектор этой модели не найден: изображения не принимаются. Скачайте mmproj из её репозитория в «Добавить модель».';}
 let installedBusy=false;
 async function refreshInstalled(){const b=backend();if(!b||installedBusy)return;installedBusy=true;$('installed-status').textContent='Читаем модели…';
-  try{const data=await api(`/api/models?backend=${encodeURIComponent(b.name)}`);renderInstalled(data.models||[]);}
+  try{const data=await api(`/api/models?backend=${encodeURIComponent(b.name)}`);installedModels=data.models||[];projectors=data.projectors||[];renderInstalled(installedModels);if(b.type==='prismml')renderProjectorOptions();}
   catch(e){$('installed-models').replaceChildren();$('installed-status').textContent=e.message;}
   finally{installedBusy=false;}}
 function renderInstalled(models){const b=backend();$('installed-models').replaceChildren();
@@ -334,8 +341,8 @@ async function searchCatalog(query) {
   }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
 }
 async function showCatalogFiles(repository) {
-  try{const data=await catalogRequest('files',repository);$('catalog-results').replaceChildren();$('catalog-results').append(sourceLink(`${repository} · описание и лицензия ↗`,data.url));if(!data.files.length)$('catalog-status').textContent='Подходящие текстовые GGUF не найдены.';
-  data.files.forEach(f=>{const row=document.createElement('article');row.className='catalog-file';const title=document.createElement('strong');title.textContent=f.name;const meta=document.createElement('span');meta.className='muted';meta.textContent=`${f.bytes?(f.bytes/1024**3).toFixed(2)+' ГБ':'Размер не указан'}${f.prism_only?' · нужен PrismML':''}${f.split?' · многотомный файл':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent='Скачать на ПК';const b=backend();const tag=`hf.co/${repository}:${f.name}`;button.disabled=f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200));button.addEventListener('click',()=>{const b=backend();if(!b||f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200))){notice('Этот файл не поддерживается выбранным движком.',true);return;}const body=b.type==='prismml'?{action:'download',backend:selectedBackend,url:f.url,filename:f.filename,sha256:f.sha256,size:f.bytes?String(f.bytes):''}:{action:'pull',backend:selectedBackend,model:tag};action(body).catch(e=>notice(e.message,true));});row.append(title,meta,button);$('catalog-results').append(row);});
+  try{const data=await catalogRequest('files',repository);$('catalog-results').replaceChildren();$('catalog-results').append(sourceLink(`${repository} · описание и лицензия ↗`,data.url));if(!data.files.length)$('catalog-status').textContent='Подходящие GGUF не найдены.';
+  data.files.forEach(f=>{const row=document.createElement('article');row.className='catalog-file';const title=document.createElement('strong');title.textContent=f.name;const meta=document.createElement('span');meta.className='muted';meta.textContent=`${f.projector?'Проектор изображений (mmproj) — даёт модели этого репозитория зрение · ':''}${f.bytes?(f.bytes/1024**3).toFixed(2)+' ГБ':'Размер не указан'}${f.prism_only?' · нужен PrismML':''}${f.split?' · многотомный файл':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent=f.projector?'Скачать проектор':'Скачать на ПК';const b=backend();const tag=`hf.co/${repository}:${f.name}`;button.disabled=f.split||(b.type==='ollama'&&(f.prism_only||f.projector||tag.length>200));button.addEventListener('click',()=>{const b=backend();if(!b||f.split||(b.type==='ollama'&&(f.prism_only||f.projector||tag.length>200))){notice('Этот файл не поддерживается выбранным движком.',true);return;}const body=b.type==='prismml'?{action:'download',backend:selectedBackend,url:f.url,filename:f.filename,sha256:f.sha256,size:f.bytes?String(f.bytes):''}:{action:'pull',backend:selectedBackend,model:tag};action(body).catch(e=>notice(e.message,true));});row.append(title,meta,button);$('catalog-results').append(row);});
   }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
 }
 // Engine versions come from GitHub only when the owner asks; installs run as panel operations.
@@ -476,8 +483,9 @@ $('settings-form').addEventListener('submit',e=>{e.preventDefault();action({acti
 $('apply').addEventListener('click',()=>{if($('settings-form').reportValidity())action({action:'apply',backend:selectedBackend,settings:collectSettings()}).catch(e=>notice(e.message,true));});
 $('estimate-button').addEventListener('click',()=>estimatePlacement());
 $('estimate-apply').addEventListener('click',applyEstimate);
-$('model-choice').addEventListener('change',followModelAlias);
-['model-choice','context','cache-key','cache-value','placement'].forEach(id=>$(id).addEventListener('change',checkFit));
+$('model-choice').addEventListener('change',()=>{followModelAlias();renderProjectorHint();});
+$('mmproj').addEventListener('change',renderProjectorHint);
+['model-choice','context','cache-key','cache-value','placement','mmproj'].forEach(id=>$(id).addEventListener('change',checkFit));
 $('fit-base').addEventListener('click',()=>action({action:'preset-apply',backend:selectedBackend,model:'Базовый'}).then(()=>{$('fit-warning').hidden=true;}).catch(e=>notice(e.message,true)));
 $('test-model').addEventListener('click',()=>action({action:'model-test'}).catch(e=>notice(e.message,true)));
 $('preset-choice').addEventListener('change',()=>{const b=backend();if(b)renderPresets(b);});

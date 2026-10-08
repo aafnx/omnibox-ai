@@ -233,3 +233,25 @@ func TestAPINameFollowsTheModel(t *testing.T) {
 		t.Fatalf("given name: %v", s)
 	}
 }
+
+func TestProjectorSetting(t *testing.T) {
+	known := []string{"/m/gemma-Q4_K_M.gguf", "/m/gemma-mmproj-F16.gguf"}
+	s, err := Apply(PrismML, map[string]string{"model": known[0]}, map[string]string{"mmproj": known[1]}, known)
+	if err != nil || s["mmproj"] != known[1] {
+		t.Fatalf("%v %v", s, err)
+	}
+	if s, _ := Apply(PrismML, s, map[string]string{"mmproj": "auto"}, known); s["mmproj"] != "" {
+		t.Fatalf("auto kept a path: %v", s)
+	}
+	if s, _ := Apply(PrismML, s, map[string]string{"mmproj": "off"}, known); s["mmproj"] != "off" {
+		t.Fatalf("%v", s)
+	}
+	for _, bad := range []map[string]string{{"mmproj": "/etc/passwd"}, {"mmproj": known[0]}, {"model": known[1]}} {
+		if _, err := Apply(PrismML, nil, bad, known); err == nil {
+			t.Fatalf("accepted %v", bad)
+		}
+	}
+	if v := View(PrismML, map[string]string{}); v["mmproj"] != "auto" {
+		t.Fatalf("%v", v)
+	}
+}

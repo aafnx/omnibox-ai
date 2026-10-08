@@ -210,7 +210,7 @@ func checkStored(engine, key, value string) error {
 func Apply(engine string, current map[string]string, changes map[string]string, knownModels []string) (map[string]string, error) {
 	allowed := []string{"context", "idle_minutes", "placement"}
 	if engine == PrismML {
-		allowed = append(allowed, "model", "alias", "gpu_layers", "n_cpu_moe", "cache_key", "cache_value", "flash_attention", "batch", "ubatch", "kv_offload")
+		allowed = append(allowed, "model", "alias", "mmproj", "gpu_layers", "n_cpu_moe", "cache_key", "cache_value", "flash_attention", "batch", "ubatch", "kv_offload")
 		for _, o := range PrismOptions {
 			allowed = append(allowed, o.Key)
 		}
@@ -259,7 +259,7 @@ func Apply(engine string, current map[string]string, changes map[string]string, 
 		return next, nil
 	}
 	if v, ok := changes["model"]; ok {
-		if !slices.Contains(knownModels, v) {
+		if !slices.Contains(knownModels, v) || ProjectorFile.MatchString(modelStem(v)) {
 			return nil, errors.New("Выбери существующий GGUF из каталога моделей; произвольные пути запрещены.")
 		}
 		// The API name follows the model unless the owner gave it one of their own.
@@ -269,6 +269,20 @@ func Apply(engine string, current map[string]string, changes map[string]string, 
 			}
 		}
 		next["model"] = v
+	}
+	// The vision projector: auto (the model's own, the default), off, or a projector file the panel
+	// listed; a projector path is never taken from anywhere else.
+	if v, ok := changes["mmproj"]; ok {
+		switch {
+		case v == "" || v == "auto":
+			delete(next, "mmproj")
+		case v == "off":
+			next["mmproj"] = "off"
+		case slices.Contains(knownModels, v) && ProjectorFile.MatchString(modelStem(v)):
+			next["mmproj"] = v
+		default:
+			return nil, errors.New("Проектор изображений: авто, выключено или файл mmproj из каталога моделей.")
+		}
 	}
 	if v, ok := changes["alias"]; ok && strings.TrimSpace(v) == "" {
 		next["alias"] = AutoAlias(next["model"])
@@ -405,6 +419,7 @@ func View(engine string, s map[string]string) map[string]any {
 	model := s["model"]
 	v["model"] = model
 	v["alias"] = get("alias", AutoAlias(model))
+	v["mmproj"] = get("mmproj", "auto")
 	gpu := get("gpu_layers", "99")
 	v["gpu_layers"] = gpu
 	if n, _ := strconv.Atoi(gpu); n == 0 {
@@ -481,6 +496,9 @@ func hasAlias(changes map[string]string) bool {
 	v, ok := changes["alias"]
 	return ok && strings.TrimSpace(v) != ""
 }
+
+// ProjectorFile matches vision projector (mmproj) file names: they are not models.
+var ProjectorFile = regexp.MustCompile(`(?i)mmproj|projector`)
 
 func modelStem(path string) string {
 	if i := strings.LastIndexAny(path, `\/`); i >= 0 {

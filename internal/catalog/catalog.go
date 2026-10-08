@@ -163,6 +163,8 @@ type File struct {
 	Filename  string `json:"filename"`
 	Split     bool   `json:"split"`
 	PrismOnly bool   `json:"prism_only"`
+	// Projector files (mmproj) are not models: they give a model of the same repository vision.
+	Projector bool `json:"projector"`
 }
 
 // Files lists a repository's GGUF files with download links pinned to the current revision,
@@ -190,10 +192,10 @@ func (h *Hub) Files(ctx context.Context, repo string) ([]File, error) {
 	}
 	out := []File{}
 	for _, s := range info.Siblings {
-		if !strings.HasSuffix(s.Name, ".gguf") || projector.MatchString(s.Name) || strings.Contains(s.Name, "..") || strings.HasPrefix(s.Name, "/") {
+		if !strings.HasSuffix(s.Name, ".gguf") || strings.Contains(s.Name, "..") || strings.HasPrefix(s.Name, "/") {
 			continue
 		}
-		f := File{Name: s.Name, Bytes: s.Size, Split: splitPattern.MatchString(s.Name), PrismOnly: prismOnly.MatchString(s.Name)}
+		f := File{Name: s.Name, Bytes: s.Size, Split: splitPattern.MatchString(s.Name), PrismOnly: prismOnly.MatchString(s.Name), Projector: projector.MatchString(s.Name)}
 		if s.LFS != nil && regexp.MustCompile(`^[a-f0-9]{64}$`).MatchString(s.LFS.SHA256) {
 			f.SHA256 = s.LFS.SHA256
 		}

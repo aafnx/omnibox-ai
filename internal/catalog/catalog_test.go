@@ -246,13 +246,14 @@ func TestSearchAndFiles(t *testing.T) {
 		t.Fatal("short query accepted")
 	}
 	files, err := h.Files(context.Background(), "Qwen/Qwen3-8B-GGUF")
-	if err != nil || len(files) != 3 {
+	if err != nil || len(files) != 4 {
 		t.Fatalf("%+v %v", files, err)
 	}
 	if files[0].URL != "https://huggingface.co/Qwen/Qwen3-8B-GGUF/resolve/0123456789abcdef0123456789abcdef01234567/Qwen3-8B-Q4_K_M.gguf" || files[0].Filename != "Qwen-Qwen3-8B-GGUF-Qwen3-8B-Q4_K_M.gguf" || *files[0].Bytes != 5000 {
 		t.Fatalf("%+v", files[0])
 	}
-	if !files[1].Split || !files[2].PrismOnly {
+	// A vision projector is offered, marked: it gives the repository's model vision.
+	if files[0].Projector || !files[1].Projector || files[1].Filename != "Qwen-Qwen3-8B-GGUF-mmproj-F16.gguf" || !files[2].Split || !files[3].PrismOnly {
 		t.Fatalf("%+v", files)
 	}
 	if _, err := h.Files(context.Background(), "../etc"); err == nil {

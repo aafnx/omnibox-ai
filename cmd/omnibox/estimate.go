@@ -71,7 +71,17 @@ func (s estimator) Estimate(ctx context.Context, q url.Values) (any, error) {
 		return "f16"
 	}
 	vram, measured := s.vram(ctx)
-	est := gguf.Place(meta, model.Bytes, context, cache("cache_key"), cache("cache_value"), vram, s.RAM())
+	weights := model.Bytes
+	mmproj := q.Get("mmproj")
+	if mmproj == "" {
+		mmproj = e.Settings["mmproj"]
+	}
+	if p := engine.ProjectorFor(model.ID, mmproj); p != "" {
+		if info, err := os.Stat(p); err == nil {
+			weights += info.Size() // the projector sits in VRAM next to the model
+		}
+	}
+	est := gguf.Place(meta, weights, context, cache("cache_key"), cache("cache_value"), vram, s.RAM())
 	if !measured {
 		est.Text += " VRAM не определена (nvidia-smi не ответил); расчёт для 16 ГБ."
 	}
@@ -105,6 +115,12 @@ func (s estimator) Tune(name string, e *config.Engine, base map[string]string) (
 	if err != nil {
 		return out, " Модель не найдена: контекст 32k."
 	}
+	size := info.Size()
+	if p := engine.ProjectorFor(path, e.Settings["mmproj"]); p != "" {
+		if pi, err := os.Stat(p); err == nil {
+			size += pi.Size()
+		}
+	}
 	meta, err := gguf.Read(path)
 	if err != nil {
 		return out, " Заголовок GGUF не прочитан: контекст 32k."
@@ -120,7 +136,7 @@ func (s estimator) Tune(name string, e *config.Engine, base map[string]string) (
 			continue
 		}
 		tried = true
-		if est := gguf.Place(meta, info.Size(), n, "q8_0", "q8_0", budget, ram); est.Placement == "gpu" {
+		if est := gguf.Place(meta, size, n, "q8_0", "q8_0", budget, ram); est.Placement == "gpu" {
 			out["context"] = strconv.Itoa(n)
 			return out, fmt.Sprintf(" Контекст %d: веса и KV-кеш в VRAM (≈ %s из %s).", n, gb(est.VRAMNeeded), gb(vram))
 		}
@@ -132,7 +148,7 @@ func (s estimator) Tune(name string, e *config.Engine, base map[string]string) (
 	if n > 0 {
 		out["context"] = strconv.Itoa(n)
 	}
-	est := gguf.Place(meta, info.Size(), n, "q8_0", "q8_0", budget, ram)
+	est := gguf.Place(meta, size, n, "q8_0", "q8_0", budget, ram)
 	switch {
 	case est.MoE:
 		// Experts are most of a MoE layer: moving a layer's experts frees a little less than the

@@ -27,7 +27,7 @@ import (
 )
 
 const (
-	bodyLimit       = 8 << 20
+	bodyLimit       = 32 << 20 // images for vision models come base64-encoded in the request
 	maxInFlight     = 32
 	requestTimeout  = 30 * time.Minute
 	resolveCacheTTL = time.Second

@@ -36,3 +36,11 @@ func TestContentSearchAndSessionExport(t *testing.T) {
 		t.Fatal("a bad session exported")
 	}
 }
+
+func TestInlineImagesAreNotStored(t *testing.T) {
+	photo := strings.Repeat("QUJD", 20000)
+	got := dropImages(`{"messages":[{"content":[{"type":"text","text":"что на фото?"},{"type":"image_url","image_url":{"url":"data:image/jpeg;base64,` + photo + `"}}]}]}`)
+	if strings.Contains(got, photo) || !strings.Contains(got, "что на фото?") || !strings.Contains(got, "data:image/jpeg;base64,[изображение 58 КБ не сохранено]") {
+		t.Fatal(got)
+	}
+}

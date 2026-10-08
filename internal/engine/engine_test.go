@@ -165,3 +165,34 @@ func TestModelFamilyProjectorAndOllamaSource(t *testing.T) {
 		}
 	}
 }
+
+func TestVisionProjectorIsPassedToPrismML(t *testing.T) {
+	dir := t.TempDir()
+	model := filepath.Join(dir, "unsloth-gemma-3-27b-it-GGUF-gemma-3-27b-it-Q4_K_M.gguf")
+	mmproj := filepath.Join(dir, "unsloth-gemma-3-27b-it-GGUF-mmproj-F16.gguf")
+	other := filepath.Join(dir, "Qwen3-8B-Q4_K_M.gguf")
+	for _, f := range []string{model, mmproj, other} {
+		os.WriteFile(f, []byte("GGUF"), 0o644)
+	}
+	if ProjectorFor(model, "") != mmproj || ProjectorFor(model, "auto") != mmproj || ProjectorFor(model, "off") != "" || ProjectorFor(other, "auto") != "" {
+		t.Fatal("projector choice")
+	}
+	if ProjectorFor(other, mmproj) != mmproj || ProjectorFor(other, filepath.Join(dir, "gone-mmproj.gguf")) != "" {
+		t.Fatal("explicit projector")
+	}
+	if ps := Projectors(dir); len(ps) != 1 || ps[0].ID != mmproj {
+		t.Fatalf("%+v", ps)
+	}
+	if models, _ := PrismModels(dir); len(models) != 2 {
+		t.Fatalf("a projector listed as a model: %+v", models)
+	}
+	e := &config.Engine{Port: 8801}
+	cmd, err := Build(config.PrismML, e, config.Launch{Executable: "/x/llama-server", Settings: map[string]string{"model": model}})
+	if err != nil || !strings.Contains(strings.Join(cmd.Args, " "), "--mmproj "+mmproj) {
+		t.Fatalf("%v %v", cmd.Args, err)
+	}
+	cmd, _ = Build(config.PrismML, e, config.Launch{Executable: "/x/llama-server", Settings: map[string]string{"model": model, "mmproj": "off"}})
+	if strings.Contains(strings.Join(cmd.Args, " "), "--mmproj") {
+		t.Fatalf("off still passes a projector: %v", cmd.Args)
+	}
+}

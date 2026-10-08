@@ -54,6 +54,9 @@ func prismArgs(e *config.Engine, s map[string]string) []string {
 		}
 	}
 	add("-m", "model")
+	if p := ProjectorFor(s["model"], s["mmproj"]); p != "" {
+		args = append(args, "--mmproj", p)
+	}
 	add("--alias", "alias")
 	add("-c", "context")
 	add("-ngl", "gpu_layers")
