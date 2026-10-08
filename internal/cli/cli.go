@@ -37,7 +37,7 @@ const usage = `ai — управление OmniBox AI на этом компью
   ai off                     выключить всё: движки, панель и API
   ai autostart [on|off]      запуск OmniBox вместе с системой; без аргумента — текущее
   ai autostart model <prismml|ollama|off>   какая модель запускается при старте системы
-  ai uninstall               удалить программу; данные и модели — по вашему ответу
+  ai uninstall               удалить OmniBox полностью: службы, программу, данные и модели
   ai version                 версия`
 
 // Run executes one command and returns the process exit code.

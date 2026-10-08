@@ -45,6 +45,10 @@ func ServiceName(engine string) string { return "omnibox-" + engine }
 // PanelService is the service of the panel itself.
 const PanelService = "omnibox"
 
+// UpdateService is the temporary service that installs an update started from the panel: the
+// installer restarts the panel, so it cannot run inside it.
+const UpdateService = "omnibox-update"
+
 // Default ports: the panel and /v1 share one port for the NAS; engines listen on loopback next to it.
 const (
 	DefaultPanelPort = 8800
