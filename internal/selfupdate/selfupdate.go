@@ -36,12 +36,18 @@ type Updater struct {
 	API  string
 	GOOS string
 	HTTP *http.Client
+	// Expires is when the token stops working, as GitHub reports it for expiring tokens.
+	Expires string
 }
 
 // Release is the version to install and its files.
 type Release struct {
 	Tag    string
 	Assets map[string]string // name → API URL
+	// Notes and Published describe the release for the "check for updates" answer.
+	Notes     string
+	Published time.Time
+	URL       string
 }
 
 // Version is the tag without "v".
@@ -100,6 +106,7 @@ func (u *Updater) Find(ctx context.Context, version string) (Release, error) {
 		return Release{}, fmt.Errorf("GitHub недоступен: %v", err)
 	}
 	defer resp.Body.Close()
+	u.Expires = resp.Header.Get("GitHub-Authentication-Token-Expiration")
 	switch resp.StatusCode {
 	case http.StatusOK:
 	case http.StatusUnauthorized, http.StatusForbidden:
@@ -113,8 +120,11 @@ func (u *Updater) Find(ctx context.Context, version string) (Release, error) {
 		return Release{}, fmt.Errorf("GitHub ответил %d.", resp.StatusCode)
 	}
 	var body struct {
-		Tag    string `json:"tag_name"`
-		Assets []struct {
+		Tag       string    `json:"tag_name"`
+		Body      string    `json:"body"`
+		Published time.Time `json:"published_at"`
+		HTMLURL   string    `json:"html_url"`
+		Assets    []struct {
 			Name string `json:"name"`
 			URL  string `json:"url"`
 		} `json:"assets"`
@@ -125,7 +135,10 @@ func (u *Updater) Find(ctx context.Context, version string) (Release, error) {
 	if !versionPattern.MatchString(body.Tag) {
 		return Release{}, fmt.Errorf("Неожиданный тег выпуска: %q.", body.Tag)
 	}
-	r := Release{Tag: body.Tag, Assets: map[string]string{}}
+	r := Release{Tag: body.Tag, Assets: map[string]string{}, Notes: strings.TrimSpace(body.Body), Published: body.Published, URL: body.HTMLURL}
+	if len(r.Notes) > 8000 {
+		r.Notes = r.Notes[:8000] + "…"
+	}
 	for _, a := range body.Assets {
 		r.Assets[a.Name] = a.URL
 	}

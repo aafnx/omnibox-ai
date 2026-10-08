@@ -116,12 +116,23 @@ function run(code){return vm.runInContext(code,context);}
   // Updates: the panel shows the version and the one command that installs and updates.
   run("renderUpdateInfo()");assert.equal(nodes['update-version'].textContent,'Установлена версия 0.18.0.');assert.equal(nodes['update-commands'].children.length,3);
   assert.equal(nodes['update-commands'].children[0].children[1].children[0].textContent,'ai update');assert.ok(nodes['update-commands'].children[1].children[1].children[0].textContent.includes('install.ps1'));
-  // Self-update from the panel: the token is sent once and cleared from the page; the result of
-  // the last update is shown after the panel comes back.
-  nodes['update-token'].value=' ghp_secret ';nodes['update-target'].value='';const updateBefore=requests.length;
-  nodes['self-update-form'].listeners.submit[0]({preventDefault:()=>{}});await new Promise(r=>setTimeout(r,0));
-  assert.equal(nodes['update-token'].value,'');assert.equal(requests[updateBefore],'/api/actions');
-  assert.deepEqual(JSON.parse(bodies[updateBefore]),{action:'self-update',token:'ghp_secret'});
+  // Updates from the panel: without a saved token the check is off and the token form is open,
+  // with a link to GitHub's prefilled form; the token is sent once and cleared from the page.
+  run("renderUpdateToken({current:'0.20.2',token:false,token_link:'https://github.com/settings/personal-access-tokens/new?name=OmniBox&contents=read&expires_in=365'})");
+  assert.equal(nodes['update-check'].disabled,true);assert.equal(nodes['update-token-box'].open,true);assert.ok(nodes['update-token-link'].href.includes('contents=read'));
+  nodes['update-token'].value=' github_pat_secret ';const tokenBefore=requests.length;
+  nodes['update-token-form'].listeners.submit[0]({preventDefault:()=>{}});await new Promise(r=>setTimeout(r,0));
+  assert.equal(nodes['update-token'].value,'');assert.equal(requests[tokenBefore],'/api/update');
+  assert.deepEqual(JSON.parse(bodies[tokenBefore]),{action:'save-token',token:'github_pat_secret'});
+  run("renderUpdateToken({current:'0.20.2',token:true,token_expires:'2027-10-08 10:00:00 UTC',token_link:'x'})");
+  assert.equal(nodes['update-check'].disabled,false);assert.equal(nodes['update-token-forget'].hidden,false);assert.ok(nodes['update-token-summary'].textContent.startsWith('GitHub token для обновлений: сохранён · действует до'));
+  // Check first, then update to the version found; another version is installed only by name.
+  const checkBefore=requests.length;nodes['update-check'].listeners.click[0]();await new Promise(r=>setTimeout(r,0));
+  assert.deepEqual(JSON.parse(bodies[checkBefore]),{action:'check'});
+  context.window.confirm=()=>true;nodes['update-install'].dataset.version='0.20.3';const installBefore=requests.length;
+  nodes['update-install'].listeners.click[0]();await new Promise(r=>setTimeout(r,0));assert.deepEqual(JSON.parse(bodies[installBefore]),{action:'self-update',version:'0.20.3'});
+  nodes['update-target'].value='0.20.1';const otherBefore=requests.length;nodes['self-update-form'].listeners.submit[0]({preventDefault:()=>{}});await new Promise(r=>setTimeout(r,0));
+  assert.deepEqual(JSON.parse(bodies[otherBefore]),{action:'self-update',version:'0.20.1'});
   run("snapshot={...snapshot,last_update:{ok:false,from:'0.19.0',version:'0.20.0',message:'Панель не ответила. Изменения отменены.',time:'2026-10-07T12:00:00Z'}};renderUpdateInfo()");
   assert.equal(nodes['last-update'].hidden,false);assert.ok(nodes['last-update'].textContent.includes('не удалось (0.19.0 → 0.20.0)'),nodes['last-update'].textContent);
   // Downloads show progress and can be canceled; other operations cannot.
@@ -217,5 +228,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, VRAM overflow warning, base preset, toasts and history, API name from the model, installed models, log retention in hours, inline progress, capability icons with tooltips, unload from the model card, start and shutdown, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, VRAM overflow warning, base preset, toasts and history, API name from the model, installed models, log retention in hours, inline progress, capability icons with tooltips, unload from the model card, start and shutdown, sleep and wake, model test, presets, auto-restart status, update check and saved token, self-update and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

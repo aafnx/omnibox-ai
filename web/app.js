@@ -50,7 +50,7 @@ function schedulePoll() { clearTimeout(pollTimer); if(!loggedIn)return; pollTime
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&loggedIn)refresh(false,true).catch(e=>notice(e.message,true));});
 function backend() { return snapshot?.backends.find(b=>b.name===selectedBackend); }
 function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; $('catalog-results').replaceChildren(); $('catalog-status').textContent=''; renderSettings(); checkFit(); if(activeTab==='models')refreshInstalled().catch(()=>{}); }
-function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='models'){refreshStorage(false).catch(()=>{});checkFit();refreshInstalled().catch(()=>{});}if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates'){renderUpdateInfo();refreshEngines().catch(e=>notice(e.message,true));} }
+function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='models'){refreshStorage(false).catch(()=>{});checkFit();refreshInstalled().catch(()=>{});}if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates'){renderUpdateInfo();refreshUpdate().catch(e=>notice(e.message,true));refreshEngines().catch(e=>notice(e.message,true));} }
 async function refresh(gpu,snapshotRequested=gpu) {
   if(refreshBusy)return;refreshBusy=true;
   try{
@@ -562,10 +562,32 @@ function renderUpdateInfo(){
  if(last)$('last-update').textContent=`Последнее обновление из панели${last.time?' '+new Date(last.time).toLocaleString('ru-RU'):''}: ${last.ok?'успешно':'не удалось'}${last.from?' ('+last.from+' → '+last.version+')':''}. ${last.message} Подробности — logs/update.log.`;
  $('update-commands').replaceChildren(...updateCommands.map(([label,command])=>copyRow(label,command)));
 }
-$('self-update-form').addEventListener('submit',e=>{e.preventDefault();
- // The token leaves the page at once: it is sent for this download and never kept.
- const token=$('update-token').value.trim(),version=$('update-target').value.trim();$('update-token').value='';
- action({action:'self-update',token,...(version?{version}:{})}).catch(err=>notice(err.message,true));});
+// Updates: check first, then update to the release found; the token is saved on the PC for this.
+let updateState=null;
+function renderUpdateToken(info){updateState=info;$('update-token-link').href=info.token_link||'#';$('update-token-forget').hidden=!info.token;$('update-check').disabled=!info.token;
+  const until=info.token_expires?` · действует до ${new Date(info.token_expires.replace(' UTC','Z').replace(' ','T')).toLocaleDateString('ru-RU')}`:'';
+  $('update-token-summary').textContent=info.token?`GitHub token для обновлений: сохранён${until}`:'GitHub token для обновлений: не задан — создайте его';
+  $('update-token-box').open=!info.token;}
+async function refreshUpdate(){const info=await api('/api/update');renderUpdateToken(info);return info;}
+async function checkUpdate(){$('update-check').disabled=true;$('update-summary').textContent='Спрашиваем GitHub…';$('update-result').hidden=false;$('update-install').hidden=true;$('update-notes').hidden=true;$('update-release-link').hidden=true;
+  try{const r=await api('/api/update',{action:'check'});
+    $('update-summary').textContent=r.newer?`Доступна версия ${r.latest}${r.published?' от '+new Date(r.published).toLocaleDateString('ru-RU'):''} (установлена ${r.current}).`:`Установлена последняя версия ${r.current}.`;
+    $('update-notes').textContent=r.notes||'';$('update-notes').hidden=!r.newer||!r.notes;$('update-release-link').href=r.url||'#';$('update-release-link').hidden=!r.url;
+    $('update-install').hidden=!r.newer;$('update-install').textContent=`Обновить до ${r.latest}`;$('update-install').dataset.version=r.latest;}
+  catch(e){$('update-summary').textContent=e.message;notice(e.message,true);}
+  finally{$('update-check').disabled=!updateState?.token;}}
+$('update-check').addEventListener('click',()=>checkUpdate());
+$('update-install').addEventListener('click',()=>{const version=$('update-install').dataset.version;if(!window.confirm(`Обновить OmniBox AI до ${version}? Панель перезапустится примерно через минуту; при сбое вернётся текущая версия.`))return;
+  action({action:'self-update',version}).then(()=>{$('update-install').hidden=true;}).catch(err=>notice(err.message,true));});
+$('update-token-form').addEventListener('submit',async e=>{e.preventDefault();
+  // The token leaves the page at once: the field is cleared whatever GitHub answers.
+  const token=$('update-token').value.trim();$('update-token').value='';if(!token){notice('Вставьте GitHub token.',true);return;}
+  try{renderUpdateToken(await api('/api/update',{action:'save-token',token}));notice('Токен проверен на GitHub и сохранён. Теперь можно проверить обновления.');}catch(err){notice(err.message,true);}});
+$('update-token-forget').addEventListener('click',async()=>{if(!window.confirm('Удалить сохранённый GitHub token? Обновление из панели станет недоступно до нового токена.'))return;
+  try{renderUpdateToken(await api('/api/update',{action:'forget-token'}));$('update-result').hidden=true;notice('Токен удалён с ПК.');}catch(err){notice(err.message,true);}});
+$('self-update-form').addEventListener('submit',e=>{e.preventDefault();const version=$('update-target').value.trim();
+  if(!window.confirm(`Установить OmniBox AI ${version}? Это может быть откат на более раннюю версию.`))return;
+  action({action:'self-update',version}).catch(err=>notice(err.message,true));});
 $('password-form').addEventListener('submit',async e=>{
  e.preventDefault();const current=$('password-current').value,next=$('password-new').value,repeat=$('password-repeat').value;
  // The fields are cleared whatever the result: passwords never stay in the page.

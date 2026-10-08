@@ -89,3 +89,16 @@ func TestAiUpdateStopsWithoutAToken(t *testing.T) {
 		t.Fatalf("extra arguments: %d", code)
 	}
 }
+
+func TestAiUpdateCheckOnlyTells(t *testing.T) {
+	var installed string
+	var out, errOut bytes.Buffer
+	u := testUpdater(t, releaseServer(t, "v0.20.0"), &installed)
+	if code := runUpdate([]string{"--check"}, u, &out, &errOut); code != 0 || installed != "" || !strings.Contains(out.String(), "Доступна версия 0.20.0 (установлена 0.19.0)") {
+		t.Fatalf("%d %q %s %s", code, installed, out.String(), errOut.String())
+	}
+	out.Reset()
+	if code := runUpdate([]string{"--check"}, testUpdater(t, releaseServer(t, "v0.19.0"), &installed), &out, &errOut); code != 0 || !strings.Contains(out.String(), "последняя версия 0.19.0") {
+		t.Fatalf("%d %s", code, out.String())
+	}
+}

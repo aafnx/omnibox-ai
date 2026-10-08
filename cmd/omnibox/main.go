@@ -273,7 +273,9 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 			}
 			return out, err
 		},
-		Gateway: func() any { return gateway.SettingsView(current(), api.KeyUsage()) },
+		Update:       func() any { return updates.UpdateInfo() },
+		UpdateAction: updates.Action,
+		Gateway:      func() any { return gateway.SettingsView(current(), api.KeyUsage()) },
 		GatewayAction: func(body map[string]any) (any, error) {
 			key, err := gateway.UpdateSettings(store, body)
 			if err != nil {

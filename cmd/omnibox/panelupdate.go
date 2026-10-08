@@ -36,7 +36,8 @@ func updateResultPath(data string) string { return filepath.Join(data, "run", "u
 func updatesDir(data string) string       { return filepath.Join(data, "updates") }
 
 // panelUpdate downloads and checks a release for the panel's "update" button and starts the
-// temporary installer service. The token is used for this download only.
+// temporary installer service, with the token saved for updates (updatetoken.go) unless the
+// request brings one.
 type panelUpdate struct {
 	Services   platform.Services
 	Data       string
@@ -47,7 +48,11 @@ type panelUpdate struct {
 
 func (p *panelUpdate) Start(ctx context.Context, token, version string) (string, error) {
 	if token == "" {
-		return "", errors.New("Нужен GitHub token с правом чтения репозитория aafnx/omnibox-ai; он используется для этого скачивания и не сохраняется.")
+		t, ok := loadToken(p.Data)
+		if !ok {
+			return "", tokenMissing
+		}
+		token = t.Token
 	}
 	if s, err := p.Services.Query(updateService); err == nil && s.State == platform.Running {
 		return "", errors.New("Обновление уже выполняется.")
