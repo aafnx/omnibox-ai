@@ -60,6 +60,13 @@ func run(args []string, stdout, stderr io.Writer) int {
 		if len(args) > 1 && args[1] == "update" {
 			return runUpdate(args[2:], defaultUpdater(), stdout, stderr)
 		}
+		if len(args) > 1 && (args[1] == "on" || args[1] == "off" || args[1] == "autostart") {
+			if err := runPower(args[1], args[2:], stdout); err != nil {
+				fmt.Fprintln(stderr, err)
+				return 1
+			}
+			return 0
+		}
 		if len(args) > 1 && args[1] == "uninstall" {
 			if err := runUninstall(args[2:], os.Stdin, stdout); err != nil {
 				fmt.Fprintln(stderr, err)
@@ -201,6 +208,11 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 				d.LastUpdate = r
 			}
 			d.Network = platform.Adapters()
+			system := map[string]any{"autostart": false, "start_engine": current().Panel.StartEngine}
+			if s, err := services.Query(config.PanelService); err == nil {
+				system["autostart"] = s.StartType == "Automatic"
+			}
+			d.System = system
 			return d
 		},
 		Action: func(body map[string]any) (any, error) {
@@ -329,6 +341,9 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 	}
 	fmt.Fprintf(stdout, "OmniBox AI %s: панель на порту %d\n", omnibox.Version, cfg.Panel.Port)
 	running()
+	bootStart(*data, current(), platform.BootTime(), func(engine string) {
+		_, _ = operations.Start(control.Request{Action: "start", Engine: engine})
+	})
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -414,6 +429,24 @@ func programDirOf(exe string) string {
 		return filepath.Dir(bin)
 	}
 	return platform.ProgramDir()
+}
+
+// runPower is "ai on", "ai off" and "ai autostart": they work also while the service is stopped,
+// so they talk to the operating system's services directly, as the administrator who typed them.
+func runPower(command string, args []string, out io.Writer) error {
+	if !platform.IsAdmin() {
+		return errors.New("Нужны права администратора (Windows) или root (Linux).")
+	}
+	data := platform.DataDir()
+	p := power{Services: platform.NewServices(), Service: local.Dial(data), Out: out, Wait: 500 * time.Millisecond, Timeout: 90 * time.Second,
+		Config: func() (*config.Config, error) { return config.Load(filepath.Join(data, "config.json")) }}
+	switch command {
+	case "on":
+		return p.On(args)
+	case "off":
+		return p.Off(args)
+	}
+	return p.Autostart(args)
 }
 
 // shimDir is where the ai command is placed.

@@ -95,6 +95,8 @@ type Dashboard struct {
 	LastUpdate any `json:"last_update,omitempty"`
 	// Network lists the adapters with their MAC addresses, for Wake-on-LAN.
 	Network any `json:"network,omitempty"`
+	// System is whether OmniBox starts with the computer and which engine starts with it.
+	System any `json:"system,omitempty"`
 }
 
 // Build computes the dashboard; engines are checked in parallel with short probes.

@@ -136,6 +136,17 @@ func (s SystemServices) Remove(name string, timeout time.Duration) error {
 	return err
 }
 
+func (s SystemServices) SetAutomatic(name string, on bool) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	verb := "disable"
+	if on {
+		verb = "enable"
+	}
+	_, err := systemctl(ctx, verb, name+".service")
+	return err
+}
+
 // IsAdmin reports whether the process runs as root.
 func IsAdmin() bool { return os.Geteuid() == 0 }
 

@@ -75,6 +75,9 @@ type Panel struct {
 	TrustedProxies []string `json:"trusted_proxies,omitempty"`
 	Password       Password `json:"password"`
 	SSHTarget      string   `json:"ssh_target,omitempty"`
+	// StartEngine is started when the computer boots (if OmniBox starts with it) and by
+	// "ai on"; empty means no engine starts by itself. Off by default.
+	StartEngine string `json:"start_engine,omitempty"`
 }
 
 // Password is a PBKDF2-SHA256 hash (base64), never the password itself.
@@ -269,6 +272,9 @@ func (p *Panel) validate() error {
 	}
 	if p.SSHTarget != "" && !sshPattern.MatchString(p.SSHTarget) {
 		return errors.New("ssh_target: user@host без параметров.")
+	}
+	if p.StartEngine != "" && p.StartEngine != PrismML && p.StartEngine != Ollama {
+		return errors.New("start_engine: prismml, ollama или пусто.")
 	}
 	if len(p.TrustedProxies) > 20 {
 		return errors.New("trusted_proxies: до 20 адресов NAS.")

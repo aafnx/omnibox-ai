@@ -33,7 +33,7 @@ type Request struct {
 }
 
 // Actions the panel may request.
-var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart", "self-update", "preset-save", "preset-delete", "preset-apply", "model-test", "sleep"}
+var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart", "self-update", "preset-save", "preset-delete", "preset-apply", "model-test", "sleep", "autostart", "start-engine", "shutdown"}
 
 // ParseRequest validates a panel operation body; unknown fields are refused.
 func ParseRequest(body map[string]any) (Request, error) {
@@ -121,6 +121,49 @@ func scalar(v any) (string, error) {
 
 // Do runs a panel operation and returns the message shown to the owner.
 func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
+	switch r.Action {
+	case "autostart":
+		on, err := strconv.ParseBool(r.Enabled)
+		if err != nil {
+			return "", errors.New("Нужно enabled: true или false.")
+		}
+		if err := c.Services.SetAutomatic(config.PanelService, on); err != nil {
+			return "", err
+		}
+		if on {
+			return "OmniBox будет запускаться вместе с системой.", nil
+		}
+		return "OmniBox больше не запускается вместе с системой; включить его — ai on.", nil
+	case "start-engine":
+		name := r.EngineID
+		if name != "" && !slices.Contains(config.EngineNames, name) {
+			return "", errors.New("Нужен engine: prismml, ollama или пусто.")
+		}
+		err := c.Store.Update(func(cfg *config.Config) error {
+			if _, ok := cfg.Engines[name]; name != "" && !ok {
+				return fmt.Errorf("%s не установлен.", config.Label(name))
+			}
+			cfg.Panel.StartEngine = name
+			return nil
+		})
+		if name == "" {
+			return "Модель при старте не запускается.", err
+		}
+		return config.Label(name) + " с выбранной моделью будет запускаться при старте системы и командой ai on.", err
+	case "shutdown":
+		// Engines first, under the lock like any stop; the panel itself goes a moment later, so
+		// the owner still gets the answer.
+		if err := c.Locked(c.StopAll); err != nil {
+			return "", err
+		}
+		go func() {
+			time.Sleep(SleepDelay)
+			if err := c.Services.Stop(config.PanelService, StopTimeout); err != nil {
+				c.say("Не удалось остановить службу OmniBox: %v", err)
+			}
+		}()
+		return "OmniBox выключается: движки остановлены, панель и API остановятся через несколько секунд. Включить снова — ai on (или перезагрузка, если включён автозапуск).", nil
+	}
 	if r.Action == "sleep" {
 		if c.Sleep == nil {
 			return "", errors.New("Сон недоступен в этом режиме.")

@@ -43,6 +43,8 @@ type Services interface {
 	Change(spec ServiceSpec) error
 	// Executable is the program a service runs.
 	Executable(name string) (string, error)
+	// SetAutomatic makes a service start with the system, or only when started.
+	SetAutomatic(name string, on bool) error
 }
 
 // FakeServices is an in-memory service manager for tests.
@@ -152,6 +154,20 @@ func (f *FakeServices) Change(spec ServiceSpec) error {
 	start := s.info.StartType
 	s.spec = spec
 	s.info.StartType = start
+	return nil
+}
+
+func (f *FakeServices) SetAutomatic(name string, on bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.services[name]
+	if !ok {
+		return fmt.Errorf("служба %s не установлена", name)
+	}
+	s.spec.Automatic, s.info.StartType = on, "Manual"
+	if on {
+		s.info.StartType = "Automatic"
+	}
 	return nil
 }
 
