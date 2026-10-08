@@ -283,6 +283,9 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 			case "cleanup":
 				r := storage.Cleanup(*data, current(), time.Now())
 				result = &r
+			case "purge":
+				r := storage.RemoveLogs(*data)
+				result = &r
 			default:
 				return nil, errors.New("Неизвестное действие с журналами.")
 			}

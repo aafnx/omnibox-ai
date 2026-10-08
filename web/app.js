@@ -415,7 +415,7 @@ function renderDrives(u){
   (u.drives||[]).forEach(d=>{
     const item=document.createElement('div');item.className='drive'+(d.low?' low':'');
     const head=document.createElement('div');head.className='drive-head';
-    const name=document.createElement('strong');name.textContent=`${d.name}${d.label?' · '+d.label:''}`;
+    const name=document.createElement('strong');name.textContent=`${d.name}${d.label?' · '+d.label:''}${d.kind==='removable'?' · съёмный':d.kind==='network'?' · сетевой':''}`;
     const numbers=document.createElement('span');numbers.textContent=`занято ${formatGb(d.used)} из ${formatGb(d.total)} · свободно ${formatGb(d.free)}`;
     head.append(name,numbers);
     const bar=document.createElement('progress');bar.max=100;bar.value=d.total?Math.round(d.used/d.total*100):0;bar.setAttribute('aria-label',`Занято на ${d.name}`);
@@ -429,11 +429,19 @@ function renderModelDisk(){
   const place=(diskUsage?.models||[]).find(m=>m.name===selectedBackend);const drive=place&&(diskUsage.drives||[]).find(d=>d.name===place.drive);
   $('model-disk').hidden=!drive;if(drive)$('model-disk').textContent=`Свободно на диске моделей ${drive.name}: ${formatGb(drive.free)} · модели ${place.engine} занимают ${formatGb(place.bytes)}.`;
 }
+// Retention: preset values, or the owner's own number of hours or days.
+function showRetention(hours,days){const select=$('log-retention');const preset=hours>0?`h${hours}`:days>0?`d${days}`:'0';
+  const known=[...(select.options||[])].some(o=>o.value===preset);select.value=known?preset:'custom';
+  if(!known){$('log-retention-value').value=hours||days;$('log-retention-unit').value=hours>0?'hours':'days';}
+  $('log-retention-custom').hidden=select.value!=='custom';}
+function retentionBody(){const v=$('log-retention').value;
+  if(v==='custom'){const n=Number($('log-retention-value').value);return $('log-retention-unit').value==='hours'?{log_retention_hours:n}:{log_retention_days:n};}
+  if(v.startsWith('h'))return {log_retention_hours:Number(v.slice(1))};return {log_retention_days:Number(v.replace('d',''))};}
 function renderStorage(u){
   requestLog=u.request_log||'metadata';renderDrives(u);
   $('storage-summary').textContent=`Журналы: ${formatMb(u.logs_bytes)} (файлов: ${u.log_files}${u.content_bytes?`, содержимое запросов: ${formatMb(u.content_bytes)}`:''})${u.engines_bytes?` · движки: ${formatMb(u.engines_bytes)}`:''}${u.temp_bytes?` · временные файлы: ${formatMb(u.temp_bytes)}`:''}`;
   $('storage-warning').hidden=!u.logs_over_limit;$('storage-warning').textContent=`Журналы занимают больше ${u.log_warn_mb} МБ. Сократите срок хранения или удалите устаревшие.`;
-  if(!storageDirty){const select=$('log-retention');if(![...select.options].some(o=>o.value===String(u.log_retention_days)))select.add(new Option(`${u.log_retention_days} дн.`,String(u.log_retention_days)));select.value=String(u.log_retention_days);$('log-warn').value=u.log_warn_mb;$('request-log').value=requestLog;}
+  if(!storageDirty){showRetention(u.log_retention_hours||0,u.log_retention_days||0);$('log-warn').value=u.log_warn_mb;$('request-log').value=requestLog;}
   if(activity&&snapshot)renderActivity();
 }
 async function refreshStorage(notify){const u=await api('/api/storage');renderStorage(u);const low=(u.drives||[]).filter(d=>d.low);if(notify&&low.length)notice(`Мало места на диске ${low.map(d=>`${d.name} (свободно ${formatGb(d.free)})`).join(', ')}.`,true);if(notify&&u.logs_over_limit)notice(`Журналы занимают ${formatMb(u.logs_bytes)} — больше порога ${u.log_warn_mb} МБ. Настройка хранения — в разделе «Журналы».`,true);return u;}
@@ -485,9 +493,12 @@ $('download-form').addEventListener('submit',e=>{e.preventDefault();const b=back
 $('refresh-logs').addEventListener('click',()=>refreshLogs().catch(e=>notice(e.message,true)));
 $('placement').addEventListener('change',()=>syncKvOffload(true));
 $('storage-form').addEventListener('input',()=>storageDirty=true);
-$('storage-form').addEventListener('submit',async e=>{e.preventDefault();if(requestLog==='content'&&$('request-log').value==='metadata'&&!window.confirm('Выключить запись содержимого? Уже сохранённые запросы и ответы будут удалены.'))return;try{const u=await api('/api/storage',{action:'save',log_retention_days:Number($('log-retention').value),log_warn_mb:Number($('log-warn').value),request_log:$('request-log').value});$('request-content-box').hidden=true;storageDirty=false;renderStorage(u);notice('Настройки хранения журналов сохранены.');}catch(error){notice(error.message,true);}});
+$('storage-form').addEventListener('submit',async e=>{e.preventDefault();if(requestLog==='content'&&$('request-log').value==='metadata'&&!window.confirm('Выключить запись содержимого? Уже сохранённые запросы и ответы будут удалены.'))return;try{const u=await api('/api/storage',{action:'save',...retentionBody(),log_warn_mb:Number($('log-warn').value),request_log:$('request-log').value});$('request-content-box').hidden=true;storageDirty=false;renderStorage(u);notice('Настройки хранения журналов сохранены.');}catch(error){notice(error.message,true);}});
 $('content-search-form').addEventListener('submit',e=>{e.preventDefault();searchContent().catch(err=>notice(err.message,true));});
 $('request-content-close').addEventListener('click',()=>{$('request-content-box').hidden=true;$('request-content').textContent='';});
+$('log-retention').addEventListener('change',()=>{$('log-retention-custom').hidden=$('log-retention').value!=='custom';});
+$('storage-purge').addEventListener('click',async()=>{if(!window.confirm('Удалить все журналы: движков, панели и запросов (с содержимым)? Файлы, которые сейчас пишет работающий движок, останутся до следующей ротации.'))return;
+  try{const u=await api('/api/storage',{action:'purge'});renderStorage(u);notice(`Удалено файлов журналов: ${u.cleanup.removed}, освобождено ${formatMb(u.cleanup.freed_bytes)}.${u.cleanup.busy?` Заняты и остались: ${u.cleanup.busy}.`:''}`);}catch(error){notice(error.message,true);}});
 $('storage-clean').addEventListener('click',async()=>{try{const u=await api('/api/storage',{action:'cleanup'});renderStorage(u);notice(`Удалено файлов: ${u.cleanup.removed}, освобождено ${formatMb(u.cleanup.freed_bytes)}.`);}catch(error){notice(error.message,true);}});
 $('mode-basic').addEventListener('click',()=>setSettingsMode('basic'));$('mode-pro').addEventListener('click',()=>setSettingsMode('pro'));
 $('api-settings-form').addEventListener('input',()=>gatewayDirty=true);

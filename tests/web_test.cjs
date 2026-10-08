@@ -37,11 +37,18 @@ function run(code){return vm.runInContext(code,context);}
   nodes.placement.value='gpu';run("syncKvOffload(true)");assert.equal(nodes['kv-offload'].value,'on');assert.equal(nodes['kv-offload'].disabled,false);
   nodes['kv-offload'].value='off';run("syncKvOffload(false)");assert.equal(nodes['kv-offload'].value,'off');
   // Disk usage: warning only above the configured log volume; unknown retention values stay selectable.
-  nodes['log-retention'].options=[{value:'30'}];nodes['log-retention'].add=o=>nodes['log-retention'].options.push(o);
+  nodes['log-retention'].options=['h6','d1','d7','d30','0','custom'].map(value=>({value}));
   run("renderStorage({logs_bytes:5*1024**2,log_files:4,temp_bytes:0,log_retention_days:30,log_warn_mb:200,logs_over_limit:false})");
   assert.equal(nodes['storage-warning'].hidden,true);assert.ok(nodes['storage-summary'].textContent.includes('5.0 МБ (файлов: 4)'));assert.equal(nodes['log-warn'].value,200);
+  assert.equal(nodes['log-retention'].value,'d30');assert.equal(nodes['log-retention-custom'].hidden,true);
   run("renderStorage({logs_bytes:300*1024**2,log_files:9,temp_bytes:0,log_retention_days:45,log_warn_mb:200,logs_over_limit:true})");
-  assert.equal(nodes['storage-warning'].hidden,false);assert.ok(nodes['storage-warning'].textContent.includes('200 МБ'));assert.equal(nodes['log-retention'].value,'45');
+  assert.equal(nodes['storage-warning'].hidden,false);assert.ok(nodes['storage-warning'].textContent.includes('200 МБ'));
+  assert.equal(nodes['log-retention'].value,'custom');assert.equal(nodes['log-retention-value'].value,45);assert.equal(nodes['log-retention-unit'].value,'days');
+  // Retention in hours: the 6-hour preset, or the owner's own hours.
+  run("renderStorage({logs_bytes:0,log_files:0,log_retention_hours:6,log_retention_days:0,log_warn_mb:200})");assert.equal(nodes['log-retention'].value,'h6');
+  assert.equal(run("JSON.stringify(retentionBody())"),'{"log_retention_hours":6}');
+  nodes['log-retention'].value='custom';nodes['log-retention-value'].value='12';nodes['log-retention-unit'].value='hours';assert.equal(run("JSON.stringify(retentionBody())"),'{"log_retention_hours":12}');
+  nodes['log-retention'].value='d1';assert.equal(run("JSON.stringify(retentionBody())"),'{"log_retention_days":1}');
   // Request content: openable only in content mode; messages, reasoning and the answer are shown as text.
   assert.equal(run("contentCell({id:'a'})").textContent,'—');run("requestLog='content'");assert.equal(run("contentCell({id:'a'})").children[0].textContent,'Открыть');run("requestLog='metadata'");
   const shown=run("formatRequestContent({model:'m',route:'/v1/chat/completions',started:new Date().toISOString(),status:200,truncated:false,request:{messages:[{role:'user',content:'hi'}]},reasoning_text:'think',response_text:'answer'})");
@@ -196,5 +203,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, VRAM overflow warning, base preset, toasts and history, API name from the model, installed models, start and shutdown, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, VRAM overflow warning, base preset, toasts and history, API name from the model, installed models, log retention in hours, start and shutdown, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

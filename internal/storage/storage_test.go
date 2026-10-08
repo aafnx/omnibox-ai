@@ -160,3 +160,36 @@ func TestCleanupRemovesStalePartialDownloads(t *testing.T) {
 		}
 	}
 }
+
+func TestRetentionInHoursAndRemovingAllLogs(t *testing.T) {
+	data := t.TempDir()
+	logs := filepath.Join(data, "logs")
+	os.MkdirAll(filepath.Join(logs, "requests"), 0o755)
+	old, fresh := filepath.Join(logs, "panel.log.1"), filepath.Join(logs, "panel.log")
+	os.WriteFile(old, []byte("old"), 0o644)
+	os.WriteFile(fresh, []byte("new"), 0o644)
+	os.WriteFile(filepath.Join(logs, "requests", "requests.jsonl"), []byte("{}"), 0o644)
+	os.WriteFile(filepath.Join(logs, "notes.txt"), []byte("mine"), 0o644)
+	now := time.Now()
+	os.Chtimes(old, now.Add(-7*time.Hour), now.Add(-7*time.Hour))
+	cfg := config.Default()
+	cfg.Panel.Hosts = []string{"localhost"}
+	b64 := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	cfg.Panel.Password = config.Password{Salt: b64, Hash: b64, Iterations: 210000}
+	cfg.Storage.LogRetentionHours = 6
+	if r := Cleanup(data, cfg, now); r.Removed != 1 || fileExists(old) || !fileExists(fresh) {
+		t.Fatalf("%+v", r)
+	}
+	store := config.NewStore(filepath.Join(data, "config.json"), cfg)
+	if err := Save(data, store, map[string]any{"log_retention_days": float64(1)}); err != nil || store.Get().Storage.LogRetentionHours != 0 || store.Get().Storage.LogRetention() != 24*time.Hour {
+		t.Fatalf("%v %+v", err, store.Get().Storage)
+	}
+	if err := Save(data, store, map[string]any{"log_retention_hours": float64(9000)}); err == nil {
+		t.Fatal("more than a year of hours accepted")
+	}
+	if r := RemoveLogs(data); r.Removed != 2 || fileExists(fresh) || !fileExists(filepath.Join(logs, "notes.txt")) {
+		t.Fatalf("%+v", r)
+	}
+}
+
+func fileExists(path string) bool { _, err := os.Stat(path); return err == nil }
