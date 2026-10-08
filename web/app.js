@@ -16,7 +16,7 @@ themes.forEach(t=>$(`theme-${t}`).addEventListener('click',()=>{theme=t;applyThe
 function placeThemeSwitch(inDashboard){const target=inDashboard?$('topbar-actions'):document.body;if(target)target.append($('theme-switch'));}
 themeMedia.addEventListener('change',()=>{if(theme==='system')applyTheme(theme);});
 const fields = {placement:'placement',context:'context',idle_minutes:'idle',alias:'alias',gpu_layers:'gpu-layers',n_cpu_moe:'n-cpu-moe',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch',kv_offload:'kv-offload',threads:'threads',load_mode:'load-mode',reasoning:'reasoning',reasoning_effort:'reasoning-effort',reasoning_budget:'reasoning-budget',temperature:'temperature',top_k:'top-k',top_p:'top-p',min_p:'min-p',repeat_penalty:'repeat-penalty',presence_penalty:'presence-penalty',frequency_penalty:'frequency-penalty',max_tokens:'max-tokens',seed:'seed'};
-const labels = {'engine-install':'Установка движка','engine-update':'Обновление движка','engine-remove':'Удаление движка','model-delete':'Удаление модели',start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление','auto-restart':'Автоперезапуск','self-update':'Обновление программы','preset-save':'Сохранение пресета','preset-delete':'Удаление пресета','preset-apply':'Применение пресета','model-test':'Тест модели',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
+const labels = {'engine-install':'Установка движка','engine-update':'Обновление движка','engine-remove':'Удаление движка','model-delete':'Удаление модели',start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление','auto-restart':'Автоперезапуск','self-update':'Обновление программы','preset-save':'Сохранение пресета','preset-delete':'Удаление пресета','preset-apply':'Применение пресета','model-test':'Тест модели',sleep:'Сон ПК',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
 async function api(path, body) {
   const response = await fetch(path, {method:body === undefined?'GET':'POST',credentials:'same-origin',headers:body === undefined?{}:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:body === undefined?undefined:JSON.stringify(body)});
   const data = await response.json();
@@ -43,7 +43,7 @@ async function refresh(gpu,snapshotRequested=gpu) {
   if(!selectedBackend)selectedBackend=data.default_backend;
   $('model-backend').value=selectedBackend;
   if(!settingsDirty)renderSettings();
-  gateway=apiConfig;if(!gatewayDirty)renderGatewayForm();if(!$('connections').contains(document.activeElement))renderConnections();
+  gateway=apiConfig;renderWake();if(!gatewayDirty)renderGatewayForm();if(!$('connections').contains(document.activeElement))renderConnections();
   renderActivity();
   if(monitoringActive())renderTelemetry(await api('/api/telemetry'));
   else if(snapshotRequested)await requestTelemetrySnapshot();
@@ -225,6 +225,9 @@ function renderKeys(){
     b.addEventListener('click',()=>{if(!window.confirm(`Отозвать ключ «${k.name}»? Клиент с ним сразу потеряет доступ.`))return;saveGateway({action:'revoke',id:k.id}).catch(e=>notice(e.message,true));});
     td.append(b);tr.append(td);return tr;}));
 }
+function renderWake(){
+  $('wake-adapters').replaceChildren(...(snapshot?.network||[]).map(a=>copyRow(`MAC для Wake-on-LAN · ${a.name} · ${a.ipv4}`,a.mac)));
+}
 function renderConnections() {
   if(!snapshot||!gateway)return;$('connections').replaceChildren();if(!gateway.enabled)return;
   // /v1 serves whichever engine runs; only one runs at a time.
@@ -358,6 +361,10 @@ $('stop-all').addEventListener('click',()=>{
   const running=snapshot?.backends.some(b=>b.service==='Running'||b.service==='StartPending');
   if(running&&!window.confirm('Остановить все серверы? Текущая генерация будет прервана, модель выгрузится из памяти.'))return;
   action({action:'stopall'}).catch(e=>notice(e.message,true));
+});
+$('sleep-pc').addEventListener('click',()=>{
+  if(!window.confirm('Перевести ПК в сон? Панель и API станут недоступны до пробуждения по Wake-on-LAN или кнопкой питания.'))return;
+  action({action:'sleep'}).catch(e=>notice(e.message,true));
 });
 $('model-backend').addEventListener('change',e=>chooseBackend(e.target.value));
 $('settings-form').addEventListener('input',()=>{settingsDirty=true;formRevision++;});$('settings-form').addEventListener('change',()=>{settingsDirty=true;formRevision++;});

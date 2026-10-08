@@ -48,6 +48,8 @@ type Controller struct {
 	SelfUpdate func(ctx context.Context, token, version string) (string, error)
 	// Test measures the running model with a short fixed request.
 	Test func(ctx context.Context) (string, error)
+	// Sleep puts the computer to sleep.
+	Sleep func() error
 
 	mu sync.Mutex
 }
