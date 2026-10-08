@@ -99,7 +99,7 @@ func (o *Operations) Start(r Request) (string, error) {
 	}
 	// engine-update is not guarded: its download may take minutes, and it takes the gate itself
 	// right before a running engine restarts.
-	guarded := o.Gate != nil && slices.Contains([]string{"start", "stop", "restart", "stopall", "apply", "restore", "load", "unload", "engine-remove"}, r.Action)
+	guarded := o.Gate != nil && slices.Contains([]string{"start", "stop", "restart", "stopall", "apply", "restore", "load", "unload", "engine-remove", "preset-apply"}, r.Action)
 	if guarded && !o.Gate.BeginControl(slices.Contains([]string{"stop", "stopall", "unload", "engine-remove"}, r.Action)) {
 		return "", ErrGenerating
 	}

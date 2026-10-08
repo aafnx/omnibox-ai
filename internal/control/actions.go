@@ -32,7 +32,7 @@ type Request struct {
 }
 
 // Actions the panel may request.
-var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart", "self-update"}
+var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart", "self-update", "preset-save", "preset-delete", "preset-apply"}
 
 // ParseRequest validates a panel operation body; unknown fields are refused.
 func ParseRequest(body map[string]any) (Request, error) {
@@ -187,6 +187,46 @@ func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
 		return c.downloadGGUF(ctx, name, r)
 	case "model-delete":
 		return c.DeleteModel(ctx, name, r.Model)
+	case "preset-save", "preset-delete":
+		err := c.Store.Update(func(cfg *config.Config) error {
+			e, ok := cfg.Engines[name]
+			if !ok {
+				return fmt.Errorf("Неизвестный движок: %s", name)
+			}
+			if r.Action == "preset-save" {
+				return e.SavePreset(name, r.Model)
+			}
+			return e.DeletePreset(name, r.Model)
+		})
+		if r.Action == "preset-save" {
+			return fmt.Sprintf("%s: текущие настройки сохранены как пресет «%s».", label, strings.TrimSpace(r.Model)), err
+		}
+		return fmt.Sprintf("%s: пресет «%s» удалён.", label, r.Model), err
+	case "preset-apply":
+		// A preset is a settings form filled in advance: applied to a running engine with the
+		// usual rollback, saved for the next start of a stopped one.
+		var message string
+		err := c.Locked(func() error {
+			e, err := c.engine(name)
+			if err != nil {
+				return err
+			}
+			p, ok := e.FindPreset(name, r.Model)
+			if !ok {
+				return fmt.Errorf("Пресета «%s» нет.", r.Model)
+			}
+			prepared, err := c.prepare(name, e, p.Settings)
+			if err != nil {
+				return err
+			}
+			if s, err := c.Services.Query(config.ServiceName(name)); err != nil || s.State != platform.Running {
+				message = fmt.Sprintf("%s: пресет «%s» сохранён для следующего запуска.", label, p.Name)
+				return c.Save(name, prepared)
+			}
+			message = fmt.Sprintf("%s: пресет «%s» применён. Движок готов.", label, p.Name)
+			return c.Apply(name, "restart", &prepared)
+		})
+		return message, err
 	case "auto-restart":
 		on, err := strconv.ParseBool(r.Enabled)
 		if err != nil {

@@ -225,6 +225,36 @@ func TestSaveKeepsRunningEngineAndStartRefusesPendingChange(t *testing.T) {
 	}
 }
 
+func TestPresetIsSavedAndAppliedWithRollback(t *testing.T) {
+	r := newRig(t)
+	if _, err := r.do(Request{Action: "save", Engine: config.PrismML, Settings: map[string]string{"context": "65536"}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.do(Request{Action: "preset-save", Engine: config.PrismML, Model: "Длинный"}); err != nil {
+		t.Fatal(err)
+	}
+	// On a stopped engine a preset waits for the next start.
+	if _, err := r.do(Request{Action: "preset-apply", Engine: config.PrismML, Model: "Код 32k"}); err != nil {
+		t.Fatal(err)
+	}
+	if e := r.store.Get().Engines[config.PrismML]; e.Settings["context"] != "32768" || r.state(config.PrismML) == platform.Running {
+		t.Fatalf("%v %s", e.Settings, r.state(config.PrismML))
+	}
+	if _, err := r.do(Request{Action: "restart", Engine: config.PrismML}); err != nil {
+		t.Fatal(err)
+	}
+	// On a running engine it restarts it, keeping the model.
+	if _, err := r.do(Request{Action: "preset-apply", Engine: config.PrismML, Model: "Длинный"}); err != nil {
+		t.Fatal(err)
+	}
+	if r.launched[config.PrismML]["context"] != "65536" || !strings.Contains(r.launched[config.PrismML]["model"], "good") {
+		t.Fatalf("%v", r.launched[config.PrismML])
+	}
+	if _, err := r.do(Request{Action: "preset-apply", Engine: config.PrismML, Model: "нет такого"}); err == nil {
+		t.Fatal("an unknown preset applied")
+	}
+}
+
 func TestStoppedEngineStaysStoppedAfterRestore(t *testing.T) {
 	r := newRig(t)
 	if _, err := r.do(Request{Action: "save", Engine: config.PrismML, Settings: map[string]string{"model": r.model("next-Q2_0.gguf")}}); err != nil {
