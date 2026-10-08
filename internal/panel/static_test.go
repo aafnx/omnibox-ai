@@ -107,6 +107,15 @@ func TestPanelIsInstallable(t *testing.T) {
 			t.Fatalf("%s: %d", icon.Src, r.Code)
 		}
 	}
+	// Tab icons for browsers without SVG icons, and the /favicon.ico every browser asks for.
+	for _, path := range []string{"/favicon.ico", "/favicon-32.png"} {
+		if r := call(s, "GET", path, "", nil); r.Code != 200 || r.Header().Get("Content-Type") != "image/png" || !bytes.HasPrefix(r.Body.Bytes(), []byte("\x89PNG")) {
+			t.Fatalf("%s: %d", path, r.Code)
+		}
+	}
+	if page := call(s, "GET", "/", "", nil).Body.String(); !strings.Contains(page, `href="/favicon-32.png"`) || !strings.Contains(page, `href="/favicon.svg"`) {
+		t.Fatal("the page does not link its tab icons")
+	}
 	if !strings.Contains(call(s, "GET", "/", "", nil).Body.String(), `rel="manifest"`) {
 		t.Fatal("the page does not link the manifest")
 	}

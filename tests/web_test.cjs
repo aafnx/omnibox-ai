@@ -85,8 +85,11 @@ function run(code){return vm.runInContext(code,context);}
   // Stopping everything interrupts generation, so a running server needs confirmation.
   let asked=0;context.window.confirm=()=>{asked++;return false;};const sent=requests.length;
   nodes['stop-all'].listeners.click[0]();await new Promise(setImmediate);assert.equal(asked,1);assert.equal(requests.length,sent);
+  // The model in memory can be unloaded from its card.
+  assert.equal(nodes['kpi-unload'].hidden,false);context.window.confirm=()=>true;const unloadBefore=requests.length;nodes['kpi-unload'].listeners.click[0]();await new Promise(r=>setTimeout(r,0));
+  assert.deepEqual(JSON.parse(bodies[unloadBefore]),{action:'unload',backend:'prismml'});
   // A sleeping engine shows no model in memory.
-  run("snapshot.backends[0].sleeping=true;renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'Нет');assert.ok(nodes['kpi-model-caption'].textContent.includes('выгружена'));
+  run("snapshot.backends[0].sleeping=true;renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'Нет');assert.ok(nodes['kpi-model-caption'].textContent.includes('выгружена'));assert.equal(nodes['kpi-unload'].hidden,true);
   run("snapshot.backends[0].sleeping=false");
   run("snapshot.backends[0].service='Stopped';renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'Нет');
   nodes['stop-all'].listeners.click[0]();await new Promise(setImmediate);assert.equal(asked,1);assert.ok(requests.length>sent);
@@ -152,7 +155,10 @@ function run(code){return vm.runInContext(code,context);}
   // Installed models: every model with its capabilities and source; the one in use cannot be deleted.
   run("selectedBackend='prismml';renderInstalled([{id:'/m/a-Q4_K_M.gguf',name:'a-Q4_K_M.gguf',bytes:5*1024**3,quant:'Q4_K_M',params:'27B',context:131072,capabilities:['reasoning','tools'],source:'https://huggingface.co/u/a-GGUF',selected:true,in_use:true},{id:'/m/b-Q8_0.gguf',name:'b-Q8_0.gguf',bytes:1024**3,quant:'Q8_0',capabilities:['vision'],source:'https://huggingface.co/models?search=b',source_search:true,selected:false,in_use:false}])");
   const rows=nodes['installed-models'].children;assert.equal(rows.length,2);assert.ok(nodes['installed-status'].textContent.startsWith('Моделей: 2'));
-  assert.equal(rows[0].children[1].textContent,'27B · Q4_K_M · 5.0 ГБ · 128K контекст');assert.deepEqual(rows[0].children[2].children.map(c=>c.textContent),['Рассуждения','Инструменты']);
+  assert.equal(rows[0].children[1].textContent,'27B · Q4_K_M · 5.0 ГБ');
+  // Capabilities are icons with a tooltip; the trained context is a badge of its own.
+  const badges=rows[0].children[2].children;assert.deepEqual(badges.map(c=>c.className),['capability reasoning','capability tools','capability context']);
+  assert.ok(badges[0].dataset.tip.startsWith('Рассуждения:'));assert.ok(badges[0].innerHTML.includes('<svg'));assert.equal(badges[0].attributes['aria-label'],badges[0].dataset.tip);assert.equal(badges[2].textContent,'128K');
   const firstActions=rows[0].children[3].children;assert.equal(firstActions.some(b=>b.textContent==='Выбрать'),false);assert.equal(firstActions.find(b=>b.textContent==='Удалить').disabled,true);
   const second=rows[1].children[3].children;assert.equal(second[1].textContent,'Найти на Hugging Face ↗');
   context.window.confirm=()=>true;const deleteBefore=requests.length;second.find(b=>b.textContent==='Удалить').listeners.click[0]();await new Promise(r=>setTimeout(r,0));
@@ -211,5 +217,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, VRAM overflow warning, base preset, toasts and history, API name from the model, installed models, log retention in hours, inline progress, start and shutdown, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, VRAM overflow warning, base preset, toasts and history, API name from the model, installed models, log retention in hours, inline progress, capability icons with tooltips, unload from the model card, start and shutdown, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

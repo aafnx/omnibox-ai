@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/aafnx/omnibox-ai/internal/catalog"
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/engine"
 	"github.com/aafnx/omnibox-ai/internal/gguf"
@@ -163,4 +164,24 @@ func (s estimator) Tune(name string, e *config.Engine, base map[string]string) (
 		out["placement"] = "cpu"
 		return out, " Модель не помещается в VRAM: только RAM."
 	}
+}
+
+// FileFit tells, before a download, whether a model file runs on this PC and with what: only its
+// size and MoE are known then, so it is a rough verdict; «Базовый» fits the exact settings later.
+func FileFit(size int64, moe bool, vram, ram int64) catalog.Fit {
+	const gib = int64(1) << 30
+	budget := vram - desktopVRAM - gib // the CUDA context and compute buffers
+	spare := ram - 6*gib               // what Windows and programs leave of the RAM
+	gb := func(b int64) string { return fmt.Sprintf("%.1f ГБ", float64(b)/float64(gib)) }
+	switch {
+	case size+3*gib/2 <= budget:
+		return catalog.Fit{Level: "gpu", Text: "Целиком в VRAM: «Базовый» даст длинный контекст (32k и больше)."}
+	case size+gib/2 <= budget:
+		return catalog.Fit{Level: "short", Text: "В VRAM с коротким контекстом (8–16k): «Базовый» подберёт его."}
+	case moe && size <= budget+spare:
+		return catalog.Fit{Level: "moe", Text: fmt.Sprintf("Больше VRAM (%s), но это MoE: «Базовый» вынесет экспертов в RAM — скорость остаётся хорошей.", gb(vram))}
+	case size <= budget+spare:
+		return catalog.Fit{Level: "hybrid", Text: fmt.Sprintf("Больше VRAM (%s): часть слоёв уйдёт в RAM, генерация в разы медленнее. Лучше квантизация меньше.", gb(vram))}
+	}
+	return catalog.Fit{Level: "none", Text: fmt.Sprintf("Не поместится: %s больше, чем VRAM и свободная RAM этого ПК.", gb(size))}
 }

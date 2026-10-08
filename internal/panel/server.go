@@ -136,6 +136,9 @@ func New(opt Options) (*Server, error) {
 		"/icon-512.png":          {"icon-512.png", "image/png"},
 		"/icon-maskable-512.png": {"icon-maskable-512.png", "image/png"},
 		"/apple-touch-icon.png":  {"apple-touch-icon.png", "image/png"},
+		// Tab icons: browsers that skip SVG icons take the PNG; /favicon.ico is asked for anyway.
+		"/favicon-32.png": {"favicon-32.png", "image/png"},
+		"/favicon.ico":    {"favicon-32.png", "image/png"},
 	}
 	s.assets = map[string]asset{}
 	for route, f := range files {

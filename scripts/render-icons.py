@@ -33,3 +33,5 @@ render(192, 1.0).save("web/icon-192.png", optimize=True)
 render(512, 1.0).save("web/icon-512.png", optimize=True)
 render(512, 0.62).save("web/icon-maskable-512.png", optimize=True)
 render(180, 1.0).save("web/apple-touch-icon.png", optimize=True)
+# Browser tab icons: PNG for browsers that skip SVG icons, and /favicon.ico serves the 32 px one.
+render(32, 1.0).save("web/favicon-32.png", optimize=True)

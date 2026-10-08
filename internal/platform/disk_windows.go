@@ -17,10 +17,7 @@ func Drives() []Drive {
 		return nil
 	}
 	var out []Drive
-	for _, root := range strings.Split(windows.UTF16ToString(buf[:n]), "\x00") {
-		if root == "" {
-			continue
-		}
+	for _, root := range driveRoots(buf[:n]) {
 		path, _ := windows.UTF16PtrFromString(root)
 		kind := map[uint32]string{windows.DRIVE_FIXED: "fixed", windows.DRIVE_REMOVABLE: "removable", windows.DRIVE_REMOTE: "network", windows.DRIVE_RAMDISK: "fixed"}[windows.GetDriveType(path)]
 		if kind == "" {

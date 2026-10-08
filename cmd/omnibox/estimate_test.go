@@ -133,3 +133,17 @@ func TestBasePresetFitsTheContextToVRAM(t *testing.T) {
 		}
 	}
 }
+
+func TestFileFitBeforeDownload(t *testing.T) {
+	const gb = int64(1) << 30
+	vram, ram := 16*gb, 32*gb
+	for _, c := range []struct {
+		size int64
+		moe  bool
+		want string
+	}{{7 * gb, false, "gpu"}, {13 * gb, false, "short"}, {20 * gb, true, "moe"}, {20 * gb, false, "hybrid"}, {66 * gb, false, "none"}} {
+		if f := FileFit(c.size, c.moe, vram, ram); f.Level != c.want || f.Text == "" {
+			t.Fatalf("%d GB moe=%v: %+v", c.size/gb, c.moe, f)
+		}
+	}
+}
