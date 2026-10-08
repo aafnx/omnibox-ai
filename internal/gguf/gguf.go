@@ -25,6 +25,9 @@ type Meta struct {
 	KeyLength   int    `json:"key_length"`
 	ValueLength int    `json:"value_length"`
 	Experts     int    `json:"expert_count"`
+	// KVLayers are the layers with a KV cache: hybrid models (Qwen3.5/3.6, Qwen3-Next) keep it
+	// only in every full_attention_interval-th layer, the rest use linear attention.
+	KVLayers int `json:"kv_layers"`
 }
 
 // Header limits: a damaged or hostile file cannot make the reader allocate much.
@@ -185,6 +188,10 @@ func parse(in io.Reader) (Meta, error) {
 	}
 	if m.Blocks <= 0 {
 		return Meta{}, errors.New("в GGUF нет числа слоёв")
+	}
+	m.KVLayers = m.Blocks
+	if n := get("full_attention_interval"); n > 1 {
+		m.KVLayers = (m.Blocks + n - 1) / n
 	}
 	return m, nil
 }

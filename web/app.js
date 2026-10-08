@@ -30,8 +30,8 @@ function monitoringActive(){return activity?.active||snapshot?.backends.some(b=>
 function schedulePoll() { clearTimeout(pollTimer); if(!loggedIn)return; pollTimer=setTimeout(async()=>{ if(!document.hidden) { try { await refresh(false); } catch(e) { notice(e.message,true); } } schedulePoll(); },document.hidden?10000:(monitoringActive()||snapshot?.operations?.some(o=>o.state==='running')||pendingActions.size?3000:10000)); }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&loggedIn)refresh(false,true).catch(e=>notice(e.message,true));});
 function backend() { return snapshot?.backends.find(b=>b.name===selectedBackend); }
-function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; $('catalog-results').replaceChildren(); $('catalog-status').textContent=''; renderSettings(); }
-function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='models')refreshStorage(false).catch(()=>{});if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates'){renderUpdateInfo();refreshEngines().catch(e=>notice(e.message,true));} }
+function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; $('catalog-results').replaceChildren(); $('catalog-status').textContent=''; renderSettings(); checkFit(); }
+function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='models'){refreshStorage(false).catch(()=>{});checkFit();}if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates'){renderUpdateInfo();refreshEngines().catch(e=>notice(e.message,true));} }
 async function refresh(gpu,snapshotRequested=gpu) {
   if(refreshBusy)return;refreshBusy=true;
   try{
@@ -173,7 +173,7 @@ function renderSettings() {
   renderModelDisk();
   $('download-hint').textContent=prism?'Скачайте GGUF по прямой ссылке Hugging Face. Формат Bonsai PQ2 поддерживает только PrismML.':'Укажите имя и тег из библиотеки Ollama. Сначала запустите сервер Ollama.';
 }
-function presetText(p){return Object.entries(p.settings||{}).map(([k,v])=>`${k}=${v}`).join(', ');}
+function presetText(p){if(p.auto)return 'под модель и видеокарту: Flash Attention, KV-кеш q8_0, контекст до 128k в VRAM';return Object.entries(p.settings||{}).map(([k,v])=>`${k}=${v}`).join(', ');}
 function renderPresets(b){
   const list=b.presets||[];const select=$('preset-choice');const old=select.value;select.replaceChildren();
   list.forEach(p=>select.add(new Option(`${p.name}${p.builtin?'':' · свой'} — ${presetText(p)}`,p.name)));
@@ -187,7 +187,16 @@ async function estimatePlacement(){
   $('estimate').textContent='Оценка…';$('estimate-apply').hidden=true;
   try{lastEstimate=await api(`/api/estimate?${q}`);$('estimate').textContent=lastEstimate.text;$('estimate-apply').hidden=lastEstimate.placement!=='hybrid';}
   catch(e){lastEstimate=null;$('estimate').textContent=e.message;}
+  renderFit();
 }
+// Settings that put everything on the GPU but do not fit spill into shared memory: Windows keeps
+// them working, many times slower. Checked when the owner opens or edits the form.
+function renderFit(){const b=backend();const gpu=['gpu','auto'].includes($('placement').value);
+  const over=b?.type==='prismml'&&gpu&&lastEstimate&&lastEstimate.placement!=='gpu';
+  $('fit-warning').hidden=!over;if(over)$('fit-text').textContent=`Эти настройки не помещаются в ${(lastEstimate.vram_total/1024**3).toFixed(1)} ГБ VRAM: веса ${(lastEstimate.weights_bytes/1024**3).toFixed(1)} ГБ + KV-кеш ${(lastEstimate.kv_cache_bytes/1024**3).toFixed(1)} ГБ. Видеодрайвер вынесет часть в RAM, и генерация замедлится в разы. Пресет «Базовый» подберёт контекст и кеш под эту модель.`;}
+let fitTimer=null;
+function checkFit(){clearTimeout(fitTimer);const b=backend();if(b?.type!=='prismml'||!$('model-choice').value||activeTab!=='models'){$('fit-warning').hidden=true;return;}
+  fitTimer=setTimeout(()=>estimatePlacement().catch(()=>{}),300);}
 function applyEstimate(){if(!lastEstimate)return;$('placement').value='hybrid';$('gpu-layers').value=lastEstimate.gpu_layers;syncKvOffload();notice(`Подставлено: ${lastEstimate.gpu_layers} слоёв на GPU. Сохраните или примените настройки.`);}
 function restartText(b){
   const rule='Не больше 2 раз за 10 минут и не при нехватке памяти. Остановка из панели или ai stop не отменяется.';
@@ -404,6 +413,8 @@ $('settings-form').addEventListener('submit',e=>{e.preventDefault();action({acti
 $('apply').addEventListener('click',()=>{if($('settings-form').reportValidity())action({action:'apply',backend:selectedBackend,settings:collectSettings()}).catch(e=>notice(e.message,true));});
 $('estimate-button').addEventListener('click',()=>estimatePlacement());
 $('estimate-apply').addEventListener('click',applyEstimate);
+['model-choice','context','cache-key','cache-value','placement'].forEach(id=>$(id).addEventListener('change',checkFit));
+$('fit-base').addEventListener('click',()=>action({action:'preset-apply',backend:selectedBackend,model:'Базовый'}).then(()=>{$('fit-warning').hidden=true;}).catch(e=>notice(e.message,true)));
 $('test-model').addEventListener('click',()=>action({action:'model-test'}).catch(e=>notice(e.message,true)));
 $('preset-choice').addEventListener('change',()=>{const b=backend();if(b)renderPresets(b);});
 $('preset-apply').addEventListener('click',()=>action({action:'preset-apply',backend:selectedBackend,model:$('preset-choice').value}).catch(e=>notice(e.message,true)));

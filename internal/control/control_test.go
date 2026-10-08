@@ -519,3 +519,28 @@ func TestOperationsKeepRecentFinishedAndReportFailures(t *testing.T) {
 		t.Fatalf("%d %+v", len(list), list[0])
 	}
 }
+
+func TestBasePresetIsFittedAndCannotBeDeleted(t *testing.T) {
+	r := newRig(t)
+	var tuned string
+	r.c.Tune = func(name string, e *config.Engine, s map[string]string) (map[string]string, string) {
+		tuned = e.Settings["model"]
+		s["context"] = "65536"
+		return s, " Контекст 65536."
+	}
+	msg, err := r.do(Request{Action: "preset-apply", Engine: config.PrismML, Model: config.BasePreset})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := r.store.Get().Engines[config.PrismML]
+	if !strings.Contains(tuned, "good") || e.Settings["context"] != "65536" || e.Settings["cache_key"] != "q8_0" || e.Settings["flash_attention"] != "on" ||
+		e.Settings["batch"] != "2048" || !strings.Contains(msg, "Контекст 65536") {
+		t.Fatalf("%v %q", e.Settings, msg)
+	}
+	if _, err := r.do(Request{Action: "preset-delete", Engine: config.PrismML, Model: config.BasePreset}); err == nil {
+		t.Fatal("the base preset was deleted")
+	}
+	if _, err := r.do(Request{Action: "preset-save", Engine: config.PrismML, Model: config.BasePreset}); err == nil {
+		t.Fatal("an own preset took the base preset's name")
+	}
+}

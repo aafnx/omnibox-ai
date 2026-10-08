@@ -17,6 +17,22 @@ type Preset struct {
 	Name     string            `json:"name"`
 	Builtin  bool              `json:"builtin"`
 	Settings map[string]string `json:"settings"`
+	// Auto presets are fitted to the selected model and the GPU when applied.
+	Auto bool `json:"auto,omitempty"`
+}
+
+// BasePreset is the starting point on the owner's PC (RTX 5080, 16 GB VRAM): Flash Attention,
+// a q8_0 KV cache and full batches, with the context fitted to the model when applied.
+const BasePreset = "Базовый"
+
+// BaseSettings are the base preset's form values before fitting. A dense model's layers all go
+// to the GPU and no MoE experts to RAM, so values left by an earlier preset do not linger.
+func BaseSettings(engine string) map[string]string {
+	if engine == Ollama {
+		return map[string]string{"context": "32768", "placement": "auto"}
+	}
+	return map[string]string{"placement": "gpu", "context": "32768", "flash_attention": "on", "cache_key": "q8_0", "cache_value": "q8_0",
+		"batch": "2048", "ubatch": "512", "n_cpu_moe": "0"}
 }
 
 // MaxPresets is how many own presets an engine keeps.
@@ -24,15 +40,17 @@ const MaxPresets = 20
 
 var presetName = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N} ._+-]{0,39}$`)
 
-// BuiltinPresets are the presets every engine has: long code sessions, long chats and RAM only.
+// BuiltinPresets are the presets every engine has: the base one, long code sessions, long chats
+// and RAM only.
 func BuiltinPresets(engine string) []Preset {
 	out := []Preset{
+		{Name: BasePreset, Builtin: true, Auto: engine == PrismML, Settings: BaseSettings(engine)},
 		{Name: "Код 32k", Builtin: true, Settings: map[string]string{"context": "32768"}},
 		{Name: "Чат 128k", Builtin: true, Settings: map[string]string{"context": "131072"}},
 		{Name: "CPU", Builtin: true, Settings: map[string]string{"placement": "cpu"}},
 	}
 	if engine == PrismML {
-		out[0].Settings["placement"] = "gpu"
+		out[1].Settings["placement"] = "gpu"
 	}
 	return out
 }

@@ -102,3 +102,26 @@ func TestPlaceRecommendsLayers(t *testing.T) {
 		t.Fatal(over.Text)
 	}
 }
+
+func TestHybridAttentionKeepsKVInFewLayers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "qwen.gguf")
+	os.WriteFile(path, header([]any{
+		"general.architecture", "qwen35",
+		"qwen35.block_count", uint32(64),
+		"qwen35.full_attention_interval", uint32(4),
+		"qwen35.attention.head_count", uint32(24),
+		"qwen35.attention.head_count_kv", uint32(4),
+		"qwen35.attention.key_length", uint32(256),
+		"qwen35.attention.value_length", uint32(256),
+	}), 0o644)
+	m, err := Read(path)
+	if err != nil || m.KVLayers != 16 {
+		t.Fatalf("%+v %v", m, err)
+	}
+	const gb = int64(1 << 30)
+	full := m
+	full.KVLayers = 0
+	if h, f := Place(m, 10*gb, 65536, "q8_0", "q8_0", 16*gb, 32*gb), Place(full, 10*gb, 65536, "q8_0", "q8_0", 16*gb, 32*gb); h.KVCache*4 != f.KVCache {
+		t.Fatalf("hybrid %d, full %d", h.KVCache, f.KVCache)
+	}
+}

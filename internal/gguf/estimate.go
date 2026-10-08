@@ -37,7 +37,11 @@ func Place(m Meta, fileBytes int64, context int, cacheKey, cacheValue string, vr
 	}
 	e := Estimate{Weights: fileBytes, Layers: m.Blocks, VRAM: vram, RAM: ram, Context: context, MaxContext: m.Context, MoE: m.Experts > 1}
 	perToken := float64(m.HeadsKV) * (float64(m.KeyLength)*cacheBytes(cacheKey) + float64(m.ValueLength)*cacheBytes(cacheValue))
-	e.KVCache = int64(perToken * float64(context) * float64(m.Blocks))
+	kvLayers := m.KVLayers
+	if kvLayers <= 0 || kvLayers > m.Blocks {
+		kvLayers = m.Blocks
+	}
+	e.KVCache = int64(perToken * float64(context) * float64(kvLayers))
 	layer := float64(fileBytes) / float64(m.Blocks)
 	kvLayer := float64(e.KVCache) / float64(m.Blocks)
 	if vram > 0 {

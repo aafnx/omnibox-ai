@@ -50,6 +50,8 @@ type Controller struct {
 	Test func(ctx context.Context) (string, error)
 	// Sleep puts the computer to sleep.
 	Sleep func() error
+	// Tune fits an auto preset's settings to the engine's model and the GPU, and says how.
+	Tune func(name string, e *config.Engine, settings map[string]string) (map[string]string, string)
 
 	mu sync.Mutex
 }

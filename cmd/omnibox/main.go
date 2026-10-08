@@ -187,6 +187,8 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 		NewUpdater: func(token string) *selfupdate.Updater { return &selfupdate.Updater{Token: token} }}
 	controller.SelfUpdate = updates.Start
 	controller.Sleep = platform.Sleep
+	estimates := estimator{Config: current, GPUs: telemetry.GPUs, RAM: telemetry.RAMTotal}
+	controller.Tune = estimates.Tune
 	controller.Test = func(ctx context.Context) (string, error) {
 		r, err := api.Test(ctx)
 		if err != nil {
@@ -199,7 +201,7 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 	handler, err := panel.New(panel.Options{
 		Config:       current,
 		LogPath:      filepath.Join(*data, "logs", "panel.log"),
-		Estimate:     estimator{Config: current, GPUs: telemetry.GPUs, RAM: telemetry.RAMTotal}.Estimate,
+		Estimate:     estimates.Estimate,
 		SessionsPath: filepath.Join(*data, "run", "sessions.bin"),
 		Status: func(ctx context.Context, gpu bool) any {
 			d := builder.Build(ctx, gpu)
