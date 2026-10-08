@@ -198,6 +198,24 @@ func (SystemServices) Change(spec ServiceSpec) error {
 	return nil
 }
 
+func (SystemServices) SetAutomatic(name string, on bool) error {
+	m, s, err := open(name)
+	if err != nil {
+		return err
+	}
+	defer m.Disconnect()
+	defer s.Close()
+	c, err := s.Config()
+	if err != nil {
+		return err
+	}
+	c.StartType = mgr.StartManual
+	if on {
+		c.StartType = mgr.StartAutomatic
+	}
+	return s.UpdateConfig(c)
+}
+
 func (SystemServices) Executable(name string) (string, error) {
 	m, s, err := open(name)
 	if err != nil {

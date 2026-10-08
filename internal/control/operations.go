@@ -103,16 +103,16 @@ func (o *Operations) Start(r Request) (string, error) {
 		if op.category == cat && op.State == "running" {
 			return "", ErrBusy
 		}
-		// Sleep would cut a download, an engine install or an update in the middle.
-		if r.Action == "sleep" && op.State == "running" {
+		// Sleep or shutdown would cut a download, an engine install or an update in the middle.
+		if (r.Action == "sleep" || r.Action == "shutdown") && op.State == "running" {
 			return "", fmt.Errorf("Сначала дождитесь завершения операции «%s».", op.Action)
 		}
 	}
 	// engine-update is not guarded: its download may take minutes, and it takes the gate itself
 	// right before a running engine restarts.
 	// Sleep is guarded too: a running generation refuses it instead of being cut off.
-	guarded := o.Gate != nil && slices.Contains([]string{"start", "stop", "restart", "stopall", "apply", "restore", "load", "unload", "engine-remove", "preset-apply", "sleep"}, r.Action)
-	if guarded && !o.Gate.BeginControl(slices.Contains([]string{"stop", "stopall", "unload", "engine-remove"}, r.Action)) {
+	guarded := o.Gate != nil && slices.Contains([]string{"start", "stop", "restart", "stopall", "apply", "restore", "load", "unload", "engine-remove", "preset-apply", "sleep", "shutdown"}, r.Action)
+	if guarded && !o.Gate.BeginControl(slices.Contains([]string{"stop", "stopall", "unload", "engine-remove", "shutdown"}, r.Action)) {
 		return "", ErrGenerating
 	}
 	var b [16]byte

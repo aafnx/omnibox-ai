@@ -391,6 +391,43 @@ func TestSleepWaitsForGenerationsAndOperations(t *testing.T) {
 	}
 }
 
+func TestPowerSettingsAndShutdown(t *testing.T) {
+	old := SleepDelay
+	SleepDelay = time.Millisecond
+	defer func() { SleepDelay = old }()
+	r := newRig(t)
+	r.services.Install(platform.ServiceSpec{Name: config.PanelService, Automatic: true})
+	r.services.Set(config.PanelService, platform.Running)
+	if _, err := r.do(Request{Action: "autostart", Enabled: "false"}); err != nil {
+		t.Fatal(err)
+	}
+	if s, _ := r.services.Query(config.PanelService); s.StartType != "Manual" {
+		t.Fatalf("%+v", s)
+	}
+	if _, err := r.do(Request{Action: "start-engine", EngineID: "prismml"}); err != nil || r.store.Get().Panel.StartEngine != "prismml" {
+		t.Fatalf("%v", err)
+	}
+	if _, err := r.do(Request{Action: "start-engine", EngineID: "kobold"}); err == nil {
+		t.Fatal("an unknown engine accepted")
+	}
+	if _, err := r.do(Request{Action: "start", Engine: config.PrismML}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.do(Request{Action: "shutdown"}); err != nil {
+		t.Fatal(err)
+	}
+	if r.state(config.PrismML) == platform.Running {
+		t.Fatal("an engine still runs after shutdown")
+	}
+	for range 200 {
+		if s, _ := r.services.Query(config.PanelService); s.State != platform.Running {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("the panel service did not stop")
+}
+
 func TestParseRequestRejectsUnknownFieldsAndActions(t *testing.T) {
 	if _, err := ParseRequest(map[string]any{"action": "start", "command": "calc.exe"}); err == nil {
 		t.Fatal("unknown field accepted")

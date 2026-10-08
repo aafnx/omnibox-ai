@@ -127,6 +127,13 @@ function run(code){return vm.runInContext(code,context);}
   // The placement estimate is asked for explicitly and can fill in the recommended GPU layers.
   const estimateBefore=requests.length;await run("estimatePlacement()");assert.ok(requests[estimateBefore].startsWith('/api/estimate?'));
   run("lastEstimate={placement:'hybrid',gpu_layers:31,text:'x'};applyEstimate()");assert.equal(nodes.placement.value,'hybrid');assert.equal(nodes['gpu-layers'].value,31);
+  // Start and shutdown: autostart and the engine at boot come from the status; shutdown asks first.
+  run("snapshot={...snapshot,system:{autostart:true,start_engine:'prismml'}};renderPower()");
+  assert.equal(nodes.autostart.checked,true);assert.equal(nodes['start-engine'].value,'prismml');
+  const powerBefore=requests.length;nodes['start-engine'].value='';nodes['start-engine'].listeners.change[0]({target:nodes['start-engine']});await new Promise(r=>setTimeout(r,0));
+  assert.deepEqual(JSON.parse(bodies[powerBefore]),{action:'start-engine',engine:''});
+  context.window.confirm=()=>true;const shutdownBefore=requests.length;nodes['shutdown-omnibox'].listeners.click[0]();await new Promise(r=>setTimeout(r,0));
+  assert.deepEqual(JSON.parse(bodies[shutdownBefore]),{action:'shutdown'});
   // Sleep asks first; the MAC addresses for Wake-on-LAN are listed for Home Assistant.
   context.window.confirm=()=>true;const sleepBefore=requests.length;nodes['sleep-pc'].listeners.click[0]();await new Promise(r=>setTimeout(r,0));
   assert.deepEqual(JSON.parse(bodies[sleepBefore]),{action:'sleep'});
@@ -161,5 +168,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, start and shutdown, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});
