@@ -262,9 +262,17 @@ func Apply(engine string, current map[string]string, changes map[string]string, 
 		if !slices.Contains(knownModels, v) {
 			return nil, errors.New("Выбери существующий GGUF из каталога моделей; произвольные пути запрещены.")
 		}
+		// The API name follows the model unless the owner gave it one of their own.
+		if old := current["model"]; v != old && !hasAlias(changes) {
+			if a := current["alias"]; a == "" || a == AutoAlias(old) || a == modelStem(old) {
+				next["alias"] = AutoAlias(v)
+			}
+		}
 		next["model"] = v
 	}
-	if v, ok := changes["alias"]; ok {
+	if v, ok := changes["alias"]; ok && strings.TrimSpace(v) == "" {
+		next["alias"] = AutoAlias(next["model"])
+	} else if ok {
 		if !aliasPattern.MatchString(v) {
 			return nil, errors.New("Имя API-модели: латиница, цифры, точка, дефис или подчёркивание, до 80 символов.")
 		}
@@ -396,7 +404,7 @@ func View(engine string, s map[string]string) map[string]any {
 	}
 	model := s["model"]
 	v["model"] = model
-	v["alias"] = get("alias", modelStem(model))
+	v["alias"] = get("alias", AutoAlias(model))
 	gpu := get("gpu_layers", "99")
 	v["gpu_layers"] = gpu
 	if n, _ := strconv.Atoi(gpu); n == 0 {
@@ -438,6 +446,42 @@ func keepAliveMinutes(keep string) any {
 }
 
 // modelStem is the file name without directory and .gguf, for both path separators.
+// AutoAlias is the API model name made from the file name: lower case, with characters the API
+// name does not allow turned into dashes.
+func AutoAlias(path string) string {
+	stem := modelStem(path)
+	if n := len(stem); n > 5 && strings.EqualFold(stem[n-5:], ".gguf") {
+		stem = stem[:n-5]
+	}
+	var b strings.Builder
+	dash := false
+	for _, r := range strings.ToLower(stem) {
+		ok := r < 128 && (r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '.' || r == '_' || r == '-')
+		if !ok {
+			r = '-'
+		}
+		if r == '-' && (dash || b.Len() == 0) {
+			continue
+		}
+		dash = r == '-'
+		b.WriteRune(r)
+	}
+	s := strings.Trim(b.String(), "-._")
+	if len(s) > 80 {
+		s = strings.TrimRight(s[:80], "-._")
+	}
+	if s == "" {
+		s = "model"
+	}
+	return s
+}
+
+// hasAlias reports whether the form gives an API name of its own.
+func hasAlias(changes map[string]string) bool {
+	v, ok := changes["alias"]
+	return ok && strings.TrimSpace(v) != ""
+}
+
 func modelStem(path string) string {
 	if i := strings.LastIndexAny(path, `\/`); i >= 0 {
 		path = path[i+1:]

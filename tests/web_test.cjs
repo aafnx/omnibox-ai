@@ -127,6 +127,17 @@ function run(code){return vm.runInContext(code,context);}
   // The placement estimate is asked for explicitly and can fill in the recommended GPU layers.
   const estimateBefore=requests.length;await run("estimatePlacement()");assert.ok(requests[estimateBefore].startsWith('/api/estimate?'));
   run("lastEstimate={placement:'hybrid',gpu_layers:31,text:'x'};applyEstimate()");assert.equal(nodes.placement.value,'hybrid');assert.equal(nodes['gpu-layers'].value,31);
+  // Toasts pop up and stay in the history; opening the history clears the unread count.
+  nodes.notifications.hidden=true;run("notice('Скачано: model.gguf');notice('Сбой',true)");
+  assert.equal(nodes.toasts.children.length>=2,true);assert.equal(nodes['notifications-count'].hidden,false);
+  assert.equal(nodes['notifications-list'].children[0].children[1].textContent,'Сбой');assert.equal(nodes['notifications-list'].children[0].className,'error');
+  assert.ok(JSON.parse(store.get('omnibox-notices')).length>=2);
+  nodes['notifications-button'].listeners.click[0]();assert.equal(nodes.notifications.hidden,false);assert.equal(nodes['notifications-count'].hidden,true);
+  nodes['notifications-clear'].listeners.click[0]();assert.equal(nodes['notifications-list'].children.length,0);assert.equal(nodes['notifications-empty'].hidden,false);
+  // The API name follows the model unless the owner typed their own.
+  nodes['model-choice'].value='/m/Old-Q4.gguf';run("aliasModel='/m/Old-Q4.gguf'");nodes.alias.value='old-q4';nodes['model-choice'].value='/m/Ternary-Bonsai-2-27B-PQ2_0.gguf';
+  run("followModelAlias()");assert.equal(nodes.alias.value,'ternary-bonsai-2-27b-pq2_0');
+  nodes.alias.value='coder';nodes['model-choice'].value='/m/Other.gguf';run("followModelAlias()");assert.equal(nodes.alias.value,'coder');
   // Settings that put everything on the GPU but overflow VRAM are flagged, with the base preset as the fix.
   nodes.placement.value='gpu';run("selectedBackend='prismml';lastEstimate={placement:'hybrid',vram_total:17095983104,weights_bytes:7194070000,kv_cache_bytes:12884901888};renderFit()");
   assert.equal(nodes['fit-warning'].hidden,false);assert.ok(nodes['fit-text'].textContent.includes('замедлится'));
@@ -175,5 +186,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, VRAM overflow warning, base preset, start and shutdown, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, VRAM overflow warning, base preset, toasts and history, API name from the model, start and shutdown, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

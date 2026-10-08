@@ -23,7 +23,26 @@ async function api(path, body) {
   if (!response.ok) { if(response.status===401 && path!=='/api/login') showLogin(); throw new Error(data.error||`Ошибка ${response.status}`); }
   return data;
 }
-function notice(message, error=false) { $('notice').hidden=false; $('notice').textContent=message; $('notice').classList.toggle('error',error); }
+// Notices pop up for a few seconds and stay in the history: this browser only, the last 50.
+let noticeLog=[];try{noticeLog=JSON.parse(localStorage.getItem('omnibox-notices')||'[]');if(!Array.isArray(noticeLog))noticeLog=[];}catch{noticeLog=[];}
+let unreadNotices=0;const toasts=[];
+function notice(message, error=false) {
+  if(!message)return;const item={at:new Date().toISOString(),text:String(message),error:!!error};
+  noticeLog.unshift(item);noticeLog=noticeLog.slice(0,50);try{localStorage.setItem('omnibox-notices',JSON.stringify(noticeLog));}catch{}
+  if($('notifications').hidden)unreadNotices++;renderNotifications();
+  const toast=document.createElement('div');toast.className=`toast${error?' error':''}`;toast.setAttribute('role',error?'alert':'status');
+  const text=document.createElement('span');text.textContent=item.text;const close=document.createElement('button');close.type='button';close.className='toast-close';close.setAttribute('aria-label','Закрыть');close.textContent='×';
+  const remove=()=>{toast.remove?.();const i=toasts.indexOf(toast);if(i>=0)toasts.splice(i,1);};close.addEventListener('click',remove);
+  toast.append(text,close);$('toasts').append(toast);toasts.push(toast);while(toasts.length>4)toasts[0].remove?.(),toasts.shift();
+  setTimeout(remove,error?10000:5000);
+}
+function noticeTime(at){const d=new Date(at);return Number.isNaN(d.getTime())?'':d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+function renderNotifications(){
+  $('notifications-count').hidden=!unreadNotices;$('notifications-count').textContent=unreadNotices>9?'9+':String(unreadNotices);
+  $('notifications-list').replaceChildren(...noticeLog.map(n=>{const li=document.createElement('li');li.className=n.error?'error':'';const time=document.createElement('time');time.textContent=noticeTime(n.at);const text=document.createElement('span');text.textContent=n.text;li.append(time,text);return li;}));
+  $('notifications-empty').hidden=noticeLog.length>0;
+}
+function toggleNotifications(open=$('notifications').hidden){$('notifications').hidden=!open;$('notifications-button').setAttribute('aria-expanded',String(open));if(open)unreadNotices=0;renderNotifications();}
 function showLogin() { placeThemeSwitch(false); $('new-api-key').hidden=true;$('key-copy').replaceChildren();gatewayDirty=false;loggedIn=false; clearTimeout(pollTimer); $('login').hidden=false; $('dashboard').hidden=true; csrf=''; }
 async function showDashboard() { const session=await api('/api/session'); csrf=session.csrf; panelPort=session.port; loggedIn=true; $('login').hidden=true; $('dashboard').hidden=false; placeThemeSwitch(true); await refresh(true); schedulePoll(); refreshStorage(true).catch(()=>{}); }
 function monitoringActive(){return activity?.active||snapshot?.backends.some(b=>b.service==='StartPending'||(b.service==='Running'&&b.sleeping!==true&&(b.type==='prismml'||!['(none)','-',undefined,null].includes(b.loaded_model))));}
@@ -161,7 +180,7 @@ function renderSettings() {
   $('model-hint').textContent=b.type==='prismml'?'GGUF из каталога модели на ПК.':'Для списка моделей Ollama должна быть запущена.';
   $('placement').querySelectorAll('option').forEach(o=>o.hidden=b.type==='ollama'&&['gpu','hybrid'].includes(o.value));
   $('placement-hint').textContent=b.type==='ollama'?'Ollama: RAM/CPU или автоматическое распределение. Полностью VRAM гарантировать нельзя.':'VRAM: попытка загрузить все слои на GPU; RAM + VRAM: число слоёв задаётся ниже. Для MoE-моделей больше VRAM выберите VRAM и задайте «Слои MoE в RAM». При нехватке памяти запуск откатится.';
-  Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');
+  Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');aliasModel=$('model-choice').value;
   document.querySelectorAll('.prism-field').forEach(el=>el.hidden=b.type!=='prismml');applySettingsMode();syncKvOffload();
   $('settings-status').textContent=b.pending?'Есть сохранённые настройки. Они ещё не применены к работающему серверу.':b.type==='ollama'?'Серверные значения по умолчанию. Параметры внешнего клиента могут их переопределить.':'При ошибке запуска с новыми настройками выполняется откат.';
   $('restore').disabled=!b.can_restore;
@@ -173,6 +192,10 @@ function renderSettings() {
   renderModelDisk();
   $('download-hint').textContent=prism?'Скачайте GGUF по прямой ссылке Hugging Face. Формат Bonsai PQ2 поддерживает только PrismML.':'Укажите имя и тег из библиотеки Ollama. Сначала запустите сервер Ollama.';
 }
+// The API name follows the model file unless the owner typed their own (same rule as the server).
+function autoAlias(path){const stem=String(path||'').split(/[\\/]/).pop().replace(/\.gguf$/i,'');let s=stem.toLowerCase().replace(/[^a-z0-9._-]/g,'-').replace(/-+/g,'-').replace(/^[-._]+|[-._]+$/g,'');if(s.length>80)s=s.slice(0,80).replace(/[-._]+$/,'');return s||'model';}
+let aliasModel='';
+function followModelAlias(){const model=$('model-choice').value;const alias=$('alias').value.trim();if(!alias||alias===autoAlias(aliasModel))$('alias').value=autoAlias(model);aliasModel=model;}
 function presetText(p){if(p.auto)return 'под модель и видеокарту: Flash Attention, KV-кеш q8_0, контекст до 128k в VRAM';return Object.entries(p.settings||{}).map(([k,v])=>`${k}=${v}`).join(', ');}
 function renderPresets(b){
   const list=b.presets||[];const select=$('preset-choice');const old=select.value;select.replaceChildren();
@@ -390,6 +413,10 @@ async function refreshLogs() { if(!snapshot)return; const data=await api('/api/l
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();$('login-error').textContent='';const button=e.currentTarget.querySelector('button');button.disabled=true;try{await api('/api/login',{password:$('password').value});$('password').value='';await showDashboard();}catch(error){$('login-error').textContent=error.message;}finally{button.disabled=false;}});
 $('logout').addEventListener('click',()=>api('/api/logout',{}).finally(showLogin));
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
+$('notifications-button').addEventListener('click',()=>toggleNotifications());
+$('notifications-close').addEventListener('click',()=>toggleNotifications(false));
+$('notifications-clear').addEventListener('click',()=>{noticeLog=[];unreadNotices=0;try{localStorage.setItem('omnibox-notices','[]');}catch{}renderNotifications();});
+renderNotifications();
 $('refresh').addEventListener('click',()=>refresh(true).catch(e=>notice(e.message,true)));
 $('stop-all').addEventListener('click',()=>{
   // Stopping interrupts the current generation: ask first when something runs.
@@ -413,6 +440,7 @@ $('settings-form').addEventListener('submit',e=>{e.preventDefault();action({acti
 $('apply').addEventListener('click',()=>{if($('settings-form').reportValidity())action({action:'apply',backend:selectedBackend,settings:collectSettings()}).catch(e=>notice(e.message,true));});
 $('estimate-button').addEventListener('click',()=>estimatePlacement());
 $('estimate-apply').addEventListener('click',applyEstimate);
+$('model-choice').addEventListener('change',followModelAlias);
 ['model-choice','context','cache-key','cache-value','placement'].forEach(id=>$(id).addEventListener('change',checkFit));
 $('fit-base').addEventListener('click',()=>action({action:'preset-apply',backend:selectedBackend,model:'Базовый'}).then(()=>{$('fit-warning').hidden=true;}).catch(e=>notice(e.message,true)));
 $('test-model').addEventListener('click',()=>action({action:'model-test'}).catch(e=>notice(e.message,true)));
