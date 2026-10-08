@@ -397,10 +397,11 @@ func observeSlots(ctx context.Context, cfg *config.Config, api *gateway.Gateway)
 }
 
 // runUninstall is "ai uninstall": it removes the services and the program; data and models stay
-// unless the owner answers otherwise.
+// unless the owner answers otherwise or asks for --all.
 func runUninstall(args []string, in io.Reader, out io.Writer) error {
 	fs := flag.NewFlagSet("uninstall", flag.ContinueOnError)
-	yes := fs.Bool("yes", false, "не спрашивать: удалить программу, оставить данные и модели")
+	yes := fs.Bool("yes", false, "не спрашивать: удалить программу, оставить данные и модели (с --all — удалить всё)")
+	all := fs.Bool("all", false, "удалить полностью: программу, данные и модели")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -409,7 +410,7 @@ func runUninstall(args []string, in io.Reader, out io.Writer) error {
 	}
 	program := platform.ProgramDir()
 	i := &install.Installer{ProgramDir: program, DataDir: platform.DataDir(), Version: omnibox.Version,
-		Services: platform.NewServices(), In: in, Out: out, Yes: *yes, RemoveRule: platform.RemovePortRule,
+		Services: platform.NewServices(), In: in, Out: out, Yes: *yes, All: *all, RemoveRule: platform.RemovePortRule,
 		ShimDir: shimDir(program), RemoveFromPath: platform.RemoveFromPath,
 		RemoveProgram: func(dir string) error {
 			if exe, err := os.Executable(); err == nil {

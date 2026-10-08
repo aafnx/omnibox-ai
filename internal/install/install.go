@@ -43,6 +43,7 @@ type Installer struct {
 	In         io.Reader
 	Out        io.Writer
 	Yes        bool // accept every default
+	All        bool // Uninstall removes the data and models too
 	// Platform hooks, replaced in tests.
 	AllowPort  func(rule string, port int) error
 	RemoveRule func(rule string) error

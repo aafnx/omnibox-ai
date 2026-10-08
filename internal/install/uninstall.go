@@ -18,15 +18,28 @@ import (
 // Uninstall removes the program from this computer: the services, the firewall rule, the ai
 // command and its PATH entry, and the program directory. Settings, logs and models stay unless
 // the owner asks; models are asked about separately, since they take the longest to get back.
+// With All everything goes after one confirmation, which names the model directories.
 func (i *Installer) Uninstall(ctx context.Context) error {
 	i.in = bufio.NewReader(i.In)
-	if !i.Yes && !i.yes("Удалить OmniBox AI с этого компьютера?", false) {
-		i.say("Отменено, ничего не изменено.")
-		return nil
-	}
-	removeData := !i.Yes && i.yes("Удалить и данные: настройки, пароль, API key, журналы?", false)
-	removeModels := removeData && i.yes("Удалить и скачанные модели?", false)
 	models := i.modelDirs()
+	var removeData, removeModels bool
+	if i.All {
+		if len(models) > 0 {
+			i.say("Модели будут удалены вместе с каталогами: %s", strings.Join(models, ", "))
+		}
+		if !i.Yes && !i.yes("Удалить OmniBox AI полностью: программу, настройки, пароль, API key, журналы и модели?", false) {
+			i.say("Отменено, ничего не изменено.")
+			return nil
+		}
+		removeData, removeModels = true, true
+	} else {
+		if !i.Yes && !i.yes("Удалить OmniBox AI с этого компьютера?", false) {
+			i.say("Отменено, ничего не изменено.")
+			return nil
+		}
+		removeData = !i.Yes && i.yes("Удалить и данные: настройки, пароль, API key, журналы?", false)
+		removeModels = removeData && i.yes("Удалить и скачанные модели?", false)
+	}
 
 	var problems []string
 	note := func(what string, err error) {
@@ -34,8 +47,9 @@ func (i *Installer) Uninstall(ctx context.Context) error {
 			problems = append(problems, fmt.Sprintf("%s: %v", what, err))
 		}
 	}
-	// Engines first: the panel would otherwise see them stop as a failure.
-	for _, name := range []string{config.ServiceName(config.PrismML), config.ServiceName(config.Ollama), config.PanelService} {
+	// Engines first: the panel would otherwise see them stop as a failure. The update service is
+	// left behind only by an interrupted update from the panel.
+	for _, name := range []string{config.ServiceName(config.PrismML), config.ServiceName(config.Ollama), config.PanelService, config.UpdateService} {
 		if s, err := i.Services.Query(name); err == nil && s.State != platform.Missing {
 			note("служба "+name, i.Services.Remove(name, control.StopTimeout))
 		}

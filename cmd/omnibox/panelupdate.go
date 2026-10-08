@@ -21,9 +21,7 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/selfupdate"
 )
 
-// updateService is the temporary service that installs an update started from the panel: the
-// installer restarts the panel, so it cannot run inside it.
-const updateService = "omnibox-update"
+const updateService = config.UpdateService
 
 // updateResult is what the panel shows after it comes back from an update.
 type updateResult struct {
