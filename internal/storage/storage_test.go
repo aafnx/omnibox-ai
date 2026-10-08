@@ -2,6 +2,7 @@ package storage
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -183,6 +184,10 @@ func TestRetentionInHoursAndRemovingAllLogs(t *testing.T) {
 	store := config.NewStore(filepath.Join(data, "config.json"), cfg)
 	if err := Save(data, store, map[string]any{"log_retention_days": float64(1)}); err != nil || store.Get().Storage.LogRetentionHours != 0 || store.Get().Storage.LogRetention() != 24*time.Hour {
 		t.Fatalf("%v %+v", err, store.Get().Storage)
+	}
+	// The panel decodes numbers as json.Number.
+	if err := Save(data, store, map[string]any{"log_retention_hours": json.Number("6")}); err != nil || store.Get().Storage.LogRetentionHours != 6 {
+		t.Fatalf("json.Number: %v", err)
 	}
 	if err := Save(data, store, map[string]any{"log_retention_hours": float64(9000)}); err == nil {
 		t.Fatal("more than a year of hours accepted")

@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -164,7 +165,12 @@ func UpdateSettings(store *config.Store, body map[string]any) (string, error) {
 					}
 				}
 			case "queue_depth", "queue_timeout_seconds":
+				// The panel decodes numbers as json.Number; tests and older callers pass float64.
 				n, ok := value.(float64)
+				if num, isNum := value.(json.Number); isNum {
+					f, err := num.Float64()
+					n, ok = f, err == nil
+				}
 				if !ok || n != float64(int(n)) {
 					return errors.New("Очередь: целые числа.")
 				}
