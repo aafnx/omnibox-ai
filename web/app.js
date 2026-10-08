@@ -74,9 +74,10 @@ async function refresh(gpu,snapshotRequested=gpu) {
 function engineName(name){const b=snapshot?.backends?.find(x=>x.name===name);return b?.type==='prismml'?'PrismML':b?.type==='ollama'?'Ollama':name;}
 function renderModelSummary(){
   const running=snapshot.backends.find(b=>b.service==='Running'||b.service==='StartPending');
-  const model=running&&!['-','(none)',undefined,null,''].includes(running.loaded_model)?running.loaded_model:'';
-  $('kpi-model').textContent=model||(running?'Не загружена':'Нет');
-  $('kpi-model-caption').textContent=running?`${engineName(running.name)} · ${badgeText(running).toLowerCase()}`:'Серверы остановлены. Одновременно работает одна модель.';
+  // A sleeping engine has unloaded its model: nothing is in memory, whatever name it still reports.
+  const model=running&&!running.sleeping&&!['-','(none)',undefined,null,''].includes(running.loaded_model)?running.loaded_model:'';
+  $('kpi-model').textContent=model||'Нет';
+  $('kpi-model-caption').textContent=!running?'Серверы остановлены. Одновременно работает одна модель.':running.sleeping?`${engineName(running.name)} · модель выгружена после простоя, загрузится по первому запросу`:`${engineName(running.name)} · ${badgeText(running).toLowerCase()}`;
 }
 function badgeText(b) { if(b.service==='Running') return b.sleeping?'Модель спит':b.api==='Ready'?'API готов':'API недоступен'; return ({Stopped:'Остановлен',Missing:'Не установлен',StartPending:'Запускается',StopPending:'Останавливается'})[b.service]||b.service; }
 const unknownValues=new Set(['—','Нет данных','Время неизвестно','Сервер остановлен']);
@@ -87,7 +88,7 @@ function renderEngines() {
     card.querySelector('h2').textContent=engineName(b.name);
     card.querySelector('.engine-type').textContent=b.type==='prismml'?'PrismML llama-server · GGUF':'Ollama · библиотека моделей';
     const badge=card.querySelector('.badge'); badge.textContent=badgeText(b); badge.classList.toggle('running',b.service==='Running'); badge.classList.toggle('sleeping',!!b.sleeping);
-    card.querySelector('.engine-model').textContent=b.loaded_model==='-'||b.loaded_model==='(none)'?'Не загружена':b.loaded_model;
+    card.querySelector('.engine-model').textContent=b.sleeping?'Не загружена · загрузится по запросу':b.loaded_model==='-'||b.loaded_model==='(none)'||!b.loaded_model?'Не загружена':b.loaded_model;
     card.querySelector('.engine-context').textContent=b.active_context?`${Number(b.active_context).toLocaleString('ru-RU')} активный`:`${b.settings?.context||'—'} настроенный`;
     const timer=card.querySelector('.engine-idle');timer.dataset.backend=b.name;timer.textContent=idleText(b);
     card.querySelector('.engine-residency').textContent=residencyText(b.residency);
