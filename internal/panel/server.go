@@ -127,6 +127,13 @@ func New(opt Options) (*Server, error) {
 		"/brand-dark.svg":  {"brand-dark.svg", "image/svg+xml"},
 		"/inter-400.woff":  {"inter-400.woff.base64", "font/woff"},
 		"/inter-600.woff":  {"inter-600.woff.base64", "font/woff"},
+		// Installable on a phone (PWA): the manifest, the icons and a service worker at the root.
+		"/manifest.webmanifest":  {"manifest.webmanifest", "application/manifest+json"},
+		"/sw.js":                 {"sw.js", "text/javascript; charset=utf-8"},
+		"/icon-192.png":          {"icon-192.png", "image/png"},
+		"/icon-512.png":          {"icon-512.png", "image/png"},
+		"/icon-maskable-512.png": {"icon-maskable-512.png", "image/png"},
+		"/apple-touch-icon.png":  {"apple-touch-icon.png", "image/png"},
 	}
 	s.assets = map[string]asset{}
 	for route, f := range files {
@@ -141,7 +148,7 @@ func New(opt Options) (*Server, error) {
 		}
 		sum := sha256.Sum256(body)
 		s.assets[route] = asset{body: body, contentType: f[1], etag: `"` + hex.EncodeToString(sum[:8]) + `"`,
-			immutable: f[1] == "font/woff" || f[1] == "image/svg+xml"}
+			immutable: f[1] == "font/woff" || f[1] == "image/svg+xml" || f[1] == "image/png"}
 	}
 	s.loadSessions()
 	return s, nil

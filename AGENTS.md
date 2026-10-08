@@ -52,6 +52,7 @@ PowerShell-версия удалена из `main` по решению влад�
 | `web/` | Интерфейс панели. Оформление — по брендбуку `docs/brand/` |
 | `tests/web_test.cjs` | Поведение интерфейса через DOM-адаптер |
 | `install.ps1`, `install.sh` | Установка и обновление одной командой: скачивают выпуск, сверяют SHA256, запускают `omnibox install`. `install.ps1` — для Windows PowerShell 5.1, UTF-8 с BOM |
+| `scripts/render-icons.py` | Иконки PWA из знака `web/favicon.svg` (numpy, Pillow); запускать только при смене знака |
 | `scripts/remove-old-version.ps1` | Одноразовое удаление PowerShell-версии с переносом моделей; не часть программы, публикуется в выпуске. Установщик прежнюю версию не трогает |
 | `.github/workflows/release.yml` | Сборка и публикация выпуска (вручную, из `main`) |
 | `docs/` | Пользователю: `install.md`, `api.md`, `ai.md`, `sleep.md`; архитектура (`architecture-go.md`), план (`roadmap.md`), брендбук |
