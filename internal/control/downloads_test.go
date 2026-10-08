@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -161,5 +162,47 @@ func TestInstalledModelsShowSourceAndUse(t *testing.T) {
 	}
 	if _, err := r.c.InstalledModels(context.Background(), config.Ollama); err == nil {
 		t.Fatal("a stopped Ollama listed its models")
+	}
+}
+
+func TestModelDownloadBringsItsProjector(t *testing.T) {
+	r := newRig(t)
+	r.c.DataDir = t.TempDir()
+	content := append([]byte("GGUF"), make([]byte, 64)...)
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { asked = append(asked, req.URL.Path); w.Write(content) }))
+	defer srv.Close()
+	target, _ := url.Parse(srv.URL)
+	r.c.HTTP = &http.Client{Transport: toServer{target}}
+	base := "https://huggingface.co/unsloth/gemma-GGUF/resolve/main/"
+	msg, err := r.c.Do(context.Background(), Request{Action: "download", Engine: config.PrismML, URL: base + "gemma-Q4_K_M.gguf", Filename: "unsloth-gemma-GGUF-gemma-Q4_K_M.gguf",
+		ProjectorURL: base + "mmproj-F16.gguf", ProjectorFilename: "unsloth-gemma-GGUF-mmproj-F16.gguf"})
+	if err != nil || !strings.Contains(msg, "проектор") || len(asked) != 2 {
+		t.Fatalf("%q %v %v", msg, err, asked)
+	}
+	models, _ := r.c.InstalledModels(context.Background(), config.PrismML)
+	found := false
+	for _, m := range models {
+		if m.Name == "unsloth-gemma-GGUF-gemma-Q4_K_M.gguf" {
+			found = m.Projector != "" && slices.Contains(m.Capabilities, "vision")
+		}
+		if strings.Contains(m.Name, "mmproj") {
+			t.Fatal("a projector is listed as a model")
+		}
+	}
+	if !found {
+		t.Fatalf("the model has no vision: %+v", models)
+	}
+	// A projector alone, for the selected model, is chosen in its settings for the next start.
+	selected := r.store.Get().Engines[config.PrismML].Settings["model"]
+	msg, err = r.c.Do(context.Background(), Request{Action: "download", Engine: config.PrismML, URL: "https://huggingface.co/prism-ml/good-gguf/resolve/main/mmproj-good-F16.gguf",
+		Filename: "prism-ml-good-gguf-mmproj-good-F16.gguf", ForModel: selected})
+	e := r.store.Get().Engines[config.PrismML]
+	if err != nil || !strings.HasSuffix(e.Settings["mmproj"], "prism-ml-good-gguf-mmproj-good-F16.gguf") || !strings.Contains(msg, "выбран") {
+		t.Fatalf("%q %v %v", msg, err, e.Settings)
+	}
+	// A projector under a model's name, or a model under a projector's, is refused.
+	if _, err := r.c.Do(context.Background(), Request{Action: "download", Engine: config.PrismML, URL: base + "x.gguf", Filename: "plain-model.gguf", ProjectorURL: base + "y.gguf", ProjectorFilename: "plain-vision.gguf"}); err == nil {
+		t.Fatal("a projector without mmproj in its name was saved")
 	}
 }
