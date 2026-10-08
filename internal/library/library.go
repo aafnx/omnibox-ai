@@ -150,7 +150,7 @@ func Cloud(cfg *config.Config, models []openrouter.Model) []Model {
 		}
 		out = append(out, Model{Key: key, Source: "cloud", Engine: "openrouter", ID: c.ID, Name: name, Provider: c.Provider,
 			Context: c.Context, PromptUSD: c.PromptUSD, CompletionUSD: c.CompletionUSD, Favorite: slices.Contains(cfg.Favorites, key),
-			Caps: Caps{Vision: c.Caps.Vision, Video: c.Caps.Video, Audio: c.Caps.Audio, Reasoning: c.Caps.Reasoning, Tools: c.Caps.Tools, Draws: c.Caps.Draws},
+			Caps:      Caps{Vision: c.Caps.Vision, Video: c.Caps.Video, Audio: c.Caps.Audio, Reasoning: c.Caps.Reasoning, Tools: c.Caps.Tools, Draws: c.Caps.Draws},
 			Reasoning: c.Reasoning, Page: "https://openrouter.ai/" + c.ID})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })

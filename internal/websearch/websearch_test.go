@@ -37,7 +37,9 @@ func TestSearchErrorsAreExplained(t *testing.T) {
 			t.Fatalf("%d: %v", code, err)
 		}
 	}
-	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, "http://169.254.169.254/", http.StatusFound) }))
+	redirect := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "http://169.254.169.254/", http.StatusFound)
+	}))
 	defer redirect.Close()
 	if _, err := (Client{URL: redirect.URL}).Search(context.Background(), "x", "", 3); err == nil {
 		t.Fatal("a redirect was followed")

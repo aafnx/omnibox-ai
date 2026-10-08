@@ -12,8 +12,8 @@ import (
 func TestDisplayName(t *testing.T) {
 	for in, want := range map[string]string{
 		"unsloth-gemma-4-12b-it-GGUF-gemma-4-12b-it-Q4_K_M.gguf": "gemma-4-12b-it",
-		"Qwen3-30B-A3B-UD-Q4_K_XL-00001-of-00002.gguf":          "Qwen3-30B-A3B",
-		"Ternary-Bonsai-2-27B-PQ2_0.gguf":                       "Ternary-Bonsai-2-27B",
+		"Qwen3-30B-A3B-UD-Q4_K_XL-00001-of-00002.gguf":           "Qwen3-30B-A3B",
+		"Ternary-Bonsai-2-27B-PQ2_0.gguf":                        "Ternary-Bonsai-2-27B",
 	} {
 		if got := DisplayName(config.PrismML, in); got != want {
 			t.Errorf("%s: %s", in, got)

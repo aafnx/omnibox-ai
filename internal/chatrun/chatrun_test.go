@@ -239,7 +239,9 @@ func TestCloudAnswerCostsAndLearnsRefusedParameters(t *testing.T) {
 			`{"choices":[],"usage":{"prompt_tokens":100,"completion_tokens":20,"cost":0.0042}}`))
 	}))
 	defer or.Close()
-	g.r.Cloud = func() (*openrouter.Client, error) { return &openrouter.Client{Key: "sk-or-v1-test", BaseURL: or.URL}, nil }
+	g.r.Cloud = func() (*openrouter.Client, error) {
+		return &openrouter.Client{Key: "sk-or-v1-test", BaseURL: or.URL}, nil
+	}
 	a, _ := g.r.Assistants.Save(chats.Assistant{Name: "Точный", Style: "precise", Instructions: "Отвечай кратко."})
 	id := a.ID
 	code, ev := g.send(Request{ChatID: g.chat.ID, Model: "cloud:openai/gpt-5", Text: "привет", Assistant: &id, Effort: "high"})
