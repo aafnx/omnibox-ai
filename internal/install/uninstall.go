@@ -10,35 +10,31 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/aafnx/omnibox-ai/internal/catalog"
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/control"
 	"github.com/aafnx/omnibox-ai/internal/platform"
 )
 
-// Uninstall removes the program from this computer: the services, the firewall rule, the ai
-// command and its PATH entry, and the program directory. Settings, logs and models stay unless
-// the owner asks; models are asked about separately, since they take the longest to get back.
-// With All everything goes after one confirmation, which names the model directories.
+// Uninstall removes OmniBox AI from this computer without a trace: the services (with the update
+// service an interrupted panel update leaves), the firewall rule, the ai command and its PATH
+// entry, the program and data directories, the models and leftover update downloads. One
+// question comes first and names what goes; --yes skips it.
 func (i *Installer) Uninstall(ctx context.Context) error {
 	i.in = bufio.NewReader(i.In)
-	models := i.modelDirs()
-	var removeData, removeModels bool
-	if i.All {
-		if len(models) > 0 {
-			i.say("Модели будут удалены вместе с каталогами: %s", strings.Join(models, ", "))
+	var outside []string // model directories chosen outside the data directory
+	for _, dir := range i.modelDirs() {
+		if !i.inData(dir) {
+			outside = append(outside, dir)
 		}
-		if !i.Yes && !i.yes("Удалить OmniBox AI полностью: программу, настройки, пароль, API key, журналы и модели?", false) {
-			i.say("Отменено, ничего не изменено.")
-			return nil
-		}
-		removeData, removeModels = true, true
-	} else {
-		if !i.Yes && !i.yes("Удалить OmniBox AI с этого компьютера?", false) {
-			i.say("Отменено, ничего не изменено.")
-			return nil
-		}
-		removeData = !i.Yes && i.yes("Удалить и данные: настройки, пароль, API key, журналы?", false)
-		removeModels = removeData && i.yes("Удалить и скачанные модели?", false)
+	}
+	i.say("Будут удалены службы, правило Firewall, команда ai, программа (%s) и данные: настройки, пароль, API key, журналы, модели (%s).", i.ProgramDir, i.DataDir)
+	if len(outside) > 0 {
+		i.say("Из каталогов моделей %s удаляются только модели OmniBox; другие файлы там останутся.", strings.Join(outside, ", "))
+	}
+	if !i.Yes && !i.yes("Удалить OmniBox AI полностью?", false) {
+		i.say("Отменено, ничего не изменено.")
+		return nil
 	}
 
 	var problems []string
@@ -47,8 +43,7 @@ func (i *Installer) Uninstall(ctx context.Context) error {
 			problems = append(problems, fmt.Sprintf("%s: %v", what, err))
 		}
 	}
-	// Engines first: the panel would otherwise see them stop as a failure. The update service is
-	// left behind only by an interrupted update from the panel.
+	// Engines first: the panel would otherwise see them stop as a failure.
 	for _, name := range []string{config.ServiceName(config.PrismML), config.ServiceName(config.Ollama), config.PanelService, config.UpdateService} {
 		if s, err := i.Services.Query(name); err == nil && s.State != platform.Missing {
 			note("служба "+name, i.Services.Remove(name, control.StopTimeout))
@@ -68,25 +63,27 @@ func (i *Installer) Uninstall(ctx context.Context) error {
 	}
 	note("каталог программы", remove(i.ProgramDir))
 
-	switch {
-	case removeModels:
-		for _, dir := range models {
-			note("модели "+dir, os.RemoveAll(dir))
+	// Deepest first, so an emptied Ollama directory inside another models directory goes before it.
+	slices.SortFunc(outside, func(a, b string) int { return len(b) - len(a) })
+	var foreign []string
+	for _, dir := range outside {
+		kept, err := removeModels(dir)
+		note("модели "+dir, err)
+		foreign = append(foreign, kept...)
+	}
+	note("каталог данных", os.RemoveAll(i.DataDir))
+	if i.TempDir != "" {
+		// "ai update" downloads into the system temporary directory; a cut-off run leaves it there.
+		left, _ := filepath.Glob(filepath.Join(i.TempDir, "omnibox-update-*"))
+		for _, dir := range left {
+			note("временные файлы", os.RemoveAll(dir))
 		}
-		note("каталог данных", os.RemoveAll(i.DataDir))
-	case removeData:
-		note("каталог данных", i.removeDataKeeping(models))
 	}
 
 	i.say("")
-	i.say("OmniBox AI удалён: службы, правило Firewall, команда ai и каталог программы %s.", i.ProgramDir)
-	switch {
-	case removeModels:
-		i.say("Данные и модели удалены.")
-	case removeData:
-		i.say("Данные удалены; модели оставлены: %s", strings.Join(models, ", "))
-	default:
-		i.say("Данные и модели оставлены в %s: повторная установка их подхватит.", i.DataDir)
+	i.say("OmniBox AI удалён полностью: службы, правило Firewall, команда ai, программа, данные и модели.")
+	if len(foreign) > 0 {
+		i.say("Оставлены файлы, которые OmniBox не создавал: %s", strings.Join(foreign, ", "))
 	}
 	if len(problems) > 0 {
 		i.say("Не всё удалось удалить:")
@@ -96,6 +93,43 @@ func (i *Installer) Uninstall(ctx context.Context) error {
 		return errors.New("Удаление завершено с ошибками.")
 	}
 	return nil
+}
+
+func (i *Installer) inData(dir string) bool {
+	rel, err := filepath.Rel(i.DataDir, dir)
+	return err == nil && (rel == "." || filepath.IsLocal(rel))
+}
+
+// removeModels empties a models directory of what OmniBox puts there (GGUF files, partial
+// downloads, the Ollama store) and removes it once nothing else is left: it may be a shared
+// folder the owner also keeps other files in. It returns the paths it left.
+func removeModels(dir string) ([]string, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	var kept []string
+	var failed error
+	for _, e := range entries {
+		name := e.Name()
+		ours := catalog.PartPattern.MatchString(name) ||
+			(!e.IsDir() && strings.EqualFold(filepath.Ext(name), ".gguf")) ||
+			(e.IsDir() && (name == "blobs" || name == "manifests"))
+		if !ours {
+			kept = append(kept, filepath.Join(dir, name))
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(dir, name)); err != nil {
+			failed = err
+		}
+	}
+	if len(kept) == 0 && failed == nil {
+		failed = os.Remove(dir)
+	}
+	return kept, failed
 }
 
 // modelDirs are the engines' model directories from config.json, and the default one.
@@ -115,28 +149,4 @@ func (i *Installer) modelDirs() []string {
 		}
 	}
 	return out
-}
-
-// removeDataKeeping empties the data directory except the model directories inside it.
-func (i *Installer) removeDataKeeping(models []string) error {
-	var keep []string
-	for _, m := range models {
-		if rel, err := filepath.Rel(i.DataDir, m); err == nil && filepath.IsLocal(rel) {
-			keep = append(keep, strings.Split(filepath.ToSlash(rel), "/")[0])
-		}
-	}
-	entries, err := os.ReadDir(i.DataDir)
-	if err != nil {
-		return err
-	}
-	var failed error
-	for _, e := range entries {
-		if slices.ContainsFunc(keep, func(k string) bool { return strings.EqualFold(k, e.Name()) }) {
-			continue
-		}
-		if err := os.RemoveAll(filepath.Join(i.DataDir, e.Name())); err != nil {
-			failed = err
-		}
-	}
-	return failed
 }

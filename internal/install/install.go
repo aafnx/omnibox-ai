@@ -43,7 +43,8 @@ type Installer struct {
 	In         io.Reader
 	Out        io.Writer
 	Yes        bool // accept every default
-	All        bool // Uninstall removes the data and models too
+	// TempDir is where "ai update" downloads; Uninstall removes what a cut-off update left there.
+	TempDir string
 	// Platform hooks, replaced in tests.
 	AllowPort  func(rule string, port int) error
 	RemoveRule func(rule string) error

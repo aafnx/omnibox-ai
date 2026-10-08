@@ -3,6 +3,7 @@ package install
 import (
 	"bufio"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,42 +33,87 @@ func (r *rig) answer(lines ...string) {
 	r.in = bufio.NewReader(r.In)
 }
 
-func TestUninstallKeepsDataAndModelsByDefault(t *testing.T) {
+// gone fails the test if any path still exists.
+func gone(t *testing.T, out fmt.Stringer, paths ...string) {
+	t.Helper()
+	for _, p := range paths {
+		if fileExists(p) {
+			t.Fatalf("%s left\n%s", p, out)
+		}
+	}
+}
+
+func TestUninstallLeavesNoTrace(t *testing.T) {
 	r := installed(t)
+	root := filepath.Dir(r.DataDir)
+	// Models chosen outside the data directory: a shared folder with someone else's file in it,
+	// and an Ollama store inside it; a service and a download left by interrupted updates.
+	shared := filepath.Join(root, "Models")
+	ollama := filepath.Join(shared, "ollama")
+	os.MkdirAll(filepath.Join(ollama, "blobs"), 0o755)
+	os.MkdirAll(filepath.Join(ollama, "manifests"), 0o755)
+	os.WriteFile(filepath.Join(shared, "big-Q4_K_M.gguf"), []byte("model"), 0o644)
+	os.WriteFile(filepath.Join(shared, ".download-0123456789abcdef0123456789abcdef.part"), []byte("mo"), 0o644)
+	os.WriteFile(filepath.Join(shared, "notes.txt"), []byte("mine"), 0o644)
+	store, err := config.Open(r.configPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Update(func(c *config.Config) error {
+		c.Engines[config.PrismML] = &config.Engine{Port: 8801, ModelsDirectory: shared, Launch: config.Launch{Settings: map[string]string{}}}
+		c.Engines[config.Ollama] = &config.Engine{Port: 8802, ModelsDirectory: ollama, Launch: config.Launch{Settings: map[string]string{}}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r.services.Install(platform.ServiceSpec{Name: config.UpdateService, Executable: r.binary()})
+	r.TempDir = filepath.Join(root, "tmp")
+	os.MkdirAll(filepath.Join(r.TempDir, "omnibox-update-123", "x"), 0o755)
+	os.MkdirAll(filepath.Join(r.TempDir, "other"), 0o755)
 	var path []string
 	r.RemoveFromPath = func(dir string) error { path = append(path, dir); return nil }
-	r.answer("y", "", "")
+
+	r.answer("y")
 	if err := r.Uninstall(context.Background()); err != nil {
 		t.Fatalf("%v\n%s", err, r.out)
 	}
-	for _, name := range []string{config.PanelService, config.ServiceName(config.Ollama)} {
+	for _, name := range []string{config.PanelService, config.ServiceName(config.Ollama), config.UpdateService} {
 		if s, _ := r.services.Query(name); s.State != platform.Missing {
 			t.Fatalf("%s left", name)
 		}
 	}
-	if shim, _ := r.shim(); fileExists(shim) || fileExists(r.ProgramDir) || len(r.rules) != 0 {
-		t.Fatal("program, ai command or firewall rule left")
+	shim, _ := r.shim()
+	gone(t, r.out, r.DataDir, r.ProgramDir, shim, ollama, filepath.Join(r.TempDir, "omnibox-update-123"),
+		filepath.Join(shared, "big-Q4_K_M.gguf"), filepath.Join(shared, ".download-0123456789abcdef0123456789abcdef.part"))
+	if len(r.rules) != 0 {
+		t.Fatal("firewall rule left")
 	}
-	if !fileExists(r.configPath()) || !fileExists(filepath.Join(r.DataDir, "models", "m-Q4_K_M.gguf")) {
-		t.Fatal("data or models removed without asking")
+	if !fileExists(filepath.Join(shared, "notes.txt")) || !fileExists(filepath.Join(r.TempDir, "other")) {
+		t.Fatal("removed a file OmniBox did not create")
+	}
+	if out := r.out.String(); !strings.Contains(out, shared) || !strings.Contains(out, filepath.Join(shared, "notes.txt")) {
+		t.Fatalf("the shared folder or the file left in it is not named:\n%s", out)
 	}
 }
 
-func TestUninstallCanRemoveDataButKeepModels(t *testing.T) {
+func TestUninstallRemovesAnEmptiedModelsFolder(t *testing.T) {
 	r := installed(t)
-	r.answer("y", "y", "n")
+	own := filepath.Join(filepath.Dir(r.DataDir), "Models")
+	os.MkdirAll(own, 0o755)
+	os.WriteFile(filepath.Join(own, "m.GGUF"), []byte("model"), 0o644)
+	store, _ := config.Open(r.configPath())
+	if err := store.Update(func(c *config.Config) error {
+		c.Engines[config.PrismML] = &config.Engine{Port: 8801, ModelsDirectory: own, Launch: config.Launch{Settings: map[string]string{}}}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r.Yes = true
+	r.In = strings.NewReader("")
 	if err := r.Uninstall(context.Background()); err != nil {
 		t.Fatalf("%v\n%s", err, r.out)
 	}
-	if fileExists(r.configPath()) || fileExists(filepath.Join(r.DataDir, "logs")) {
-		t.Fatal("data left")
-	}
-	if !fileExists(filepath.Join(r.DataDir, "models", "m-Q4_K_M.gguf")) {
-		t.Fatal("models removed although kept")
-	}
-	if !strings.Contains(r.out.String(), "модели оставлены") {
-		t.Fatalf("%s", r.out)
-	}
+	gone(t, r.out, own, r.DataDir, r.ProgramDir)
 }
 
 func TestUninstallAnsweredNoChangesNothing(t *testing.T) {
@@ -76,77 +122,8 @@ func TestUninstallAnsweredNoChangesNothing(t *testing.T) {
 	if err := r.Uninstall(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if s, _ := r.services.Query(config.PanelService); s.State == platform.Missing || !fileExists(r.binary()) {
+	if s, _ := r.services.Query(config.PanelService); s.State == platform.Missing || !fileExists(r.binary()) || !fileExists(r.configPath()) ||
+		!fileExists(filepath.Join(r.DataDir, "models", "m-Q4_K_M.gguf")) {
 		t.Fatal("a declined uninstall removed something")
-	}
-}
-
-func TestUninstallEverything(t *testing.T) {
-	r := installed(t)
-	r.answer("y", "y", "y")
-	if err := r.Uninstall(context.Background()); err != nil {
-		t.Fatalf("%v\n%s", err, r.out)
-	}
-	if fileExists(r.DataDir) {
-		t.Fatal("data directory left")
-	}
-}
-
-func TestUninstallAllRemovesEverythingAfterOneQuestion(t *testing.T) {
-	r := installed(t)
-	// A models directory outside the data directory, and a service left by an interrupted update.
-	outside := filepath.Join(filepath.Dir(r.DataDir), "models-elsewhere")
-	os.MkdirAll(outside, 0o755)
-	os.WriteFile(filepath.Join(outside, "big.gguf"), []byte("model"), 0o644)
-	store, err := config.Open(r.configPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := store.Update(func(c *config.Config) error {
-		c.Engines[config.PrismML] = &config.Engine{Port: 8801, ModelsDirectory: outside, Launch: config.Launch{Settings: map[string]string{}}}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
-	r.services.Install(platform.ServiceSpec{Name: config.UpdateService, Executable: r.binary()})
-	r.All = true
-	r.answer("y")
-	if err := r.Uninstall(context.Background()); err != nil {
-		t.Fatalf("%v\n%s", err, r.out)
-	}
-	if fileExists(r.DataDir) || fileExists(outside) || fileExists(r.ProgramDir) {
-		t.Fatalf("something left:\n%s", r.out)
-	}
-	for _, name := range []string{config.PanelService, config.ServiceName(config.Ollama), config.UpdateService} {
-		if s, _ := r.services.Query(name); s.State != platform.Missing {
-			t.Fatalf("%s left", name)
-		}
-	}
-	if !strings.Contains(r.out.String(), outside) || !strings.Contains(r.out.String(), "Данные и модели удалены") {
-		t.Fatalf("the model directories are not named before the question:\n%s", r.out)
-	}
-}
-
-func TestUninstallAllDeclinedChangesNothing(t *testing.T) {
-	r := installed(t)
-	r.All = true
-	r.answer("")
-	if err := r.Uninstall(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	if !fileExists(r.configPath()) || !fileExists(r.binary()) {
-		t.Fatal("a declined full uninstall removed something")
-	}
-}
-
-func TestUninstallAllWithYesAsksNothing(t *testing.T) {
-	r := installed(t)
-	r.All, r.Yes = true, true
-	r.In = strings.NewReader("")
-	if err := r.Uninstall(context.Background()); err != nil {
-		t.Fatalf("%v\n%s", err, r.out)
-	}
-	if fileExists(r.DataDir) || fileExists(r.ProgramDir) {
-		t.Fatal("--all --yes left data or the program")
 	}
 }
