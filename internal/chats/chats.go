@@ -138,6 +138,9 @@ type Attachment struct {
 	Kind   string `json:"kind"`
 	Size   int64  `json:"size"`
 	Tokens int    `json:"tokens"`
+	// Text is what a text, Word or Excel file gave the model, kept so later questions about it
+	// still have it. Images, audio and video are not kept.
+	Text string `json:"text,omitempty"`
 }
 
 // Meta is how an answer was produced.
