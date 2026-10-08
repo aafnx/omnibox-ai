@@ -85,6 +85,9 @@ function run(code){return vm.runInContext(code,context);}
   // Stopping everything interrupts generation, so a running server needs confirmation.
   let asked=0;context.window.confirm=()=>{asked++;return false;};const sent=requests.length;
   nodes['stop-all'].listeners.click[0]();await new Promise(setImmediate);assert.equal(asked,1);assert.equal(requests.length,sent);
+  // A sleeping engine shows no model in memory.
+  run("snapshot.backends[0].sleeping=true;renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'Нет');assert.ok(nodes['kpi-model-caption'].textContent.includes('выгружена'));
+  run("snapshot.backends[0].sleeping=false");
   run("snapshot.backends[0].service='Stopped';renderModelSummary()");assert.equal(nodes['kpi-model'].textContent,'Нет');
   nodes['stop-all'].listeners.click[0]();await new Promise(setImmediate);assert.equal(asked,1);assert.ok(requests.length>sent);
   run("snapshot.backends[0].service='Running';renderEngines()");
