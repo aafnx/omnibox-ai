@@ -451,7 +451,8 @@ func (i *Installer) fresh(ctx context.Context) error {
 	cfg.Panel.PublicOrigin, cfg.Panel.TrustedProxies = a.publicOrigin, a.trustedProxies
 	var keyHash string
 	key, keyHash = gateway.NewKey()
-	cfg.API = config.API{Enabled: true, PublicURL: a.apiURL, RequireKey: true, KeyHash: keyHash, Engine: config.PrismML, QueueDepth: 4}
+	cfg.API = config.API{Enabled: true, PublicURL: a.apiURL, RequireKey: true, Engine: config.PrismML, QueueDepth: 4,
+		Keys: []config.APIKey{{ID: config.KeyID(keyHash), Name: "Основной", Hash: keyHash, Created: time.Now().UTC()}}}
 	if err := cfg.Validate(); err != nil {
 		return err
 	}

@@ -12,7 +12,9 @@ import (
 	"net/url"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
+	"time"
 
 	"github.com/aafnx/omnibox-ai/internal/platform"
 )
@@ -97,12 +99,39 @@ type API struct {
 	Enabled    bool   `json:"enabled"`
 	PublicURL  string `json:"public_url,omitempty"`
 	RequireKey bool   `json:"require_key"`
-	KeyHash    string `json:"key_hash,omitempty"` // SHA256 hex of the key; never the key
-	Engine     string `json:"engine"`
+	// KeyHash is the single key of 0.18; it becomes the key named "Основной" on load.
+	KeyHash string `json:"key_hash,omitempty"`
+	// Keys are the clients' API keys: names and SHA256 hashes, never the keys.
+	Keys   []APIKey `json:"keys,omitempty"`
+	Engine string   `json:"engine"`
 	// QueueDepth is how many requests wait for the running generation; 0 answers 409 at once.
 	QueueDepth int `json:"queue_depth"`
 	// QueueTimeoutSeconds bounds the wait in the queue; 0 means the default of 60 s.
 	QueueTimeoutSeconds int `json:"queue_timeout_seconds,omitempty"`
+}
+
+// APIKey is one client's key, e.g. Jan, Pi or Open WebUI.
+type APIKey struct {
+	ID      string    `json:"id"`
+	Name    string    `json:"name"`
+	Hash    string    `json:"hash"`
+	Created time.Time `json:"created,omitempty"`
+}
+
+// MaxKeys is how many API keys the panel keeps.
+const MaxKeys = 20
+
+var keyName = regexp.MustCompile(`^[\p{L}\p{N}][\p{L}\p{N} ._+-]{0,39}$`)
+
+// KeyID is the short id of a key: the start of its hash, stable and safe to show.
+func KeyID(hash string) string { return hash[:12] }
+
+// ValidKeyName checks a key's name.
+func ValidKeyName(name string) error {
+	if !keyName.MatchString(name) {
+		return errors.New("Имя ключа: буквы, цифры, пробел, точка, дефис, до 40 символов.")
+	}
+	return nil
 }
 
 // QueueTimeout is the queue wait in seconds.
@@ -278,8 +307,28 @@ func (a *API) validate(c *Config) error {
 	if a.PublicURL != "" && !ClientBaseURL(a.PublicURL) {
 		return errors.New("Адрес API для клиентов: HTTP/HTTPS с /v1, без пароля и параметров.")
 	}
-	if (a.KeyHash != "" && !sha256Hex.MatchString(a.KeyHash)) || (a.RequireKey && a.KeyHash == "") {
-		return errors.New("Некорректный hash API key.")
+	if a.KeyHash != "" {
+		if !sha256Hex.MatchString(a.KeyHash) {
+			return errors.New("Некорректный hash API key.")
+		}
+		if !slices.ContainsFunc(a.Keys, func(k APIKey) bool { return k.Hash == a.KeyHash }) {
+			a.Keys = append([]APIKey{{ID: KeyID(a.KeyHash), Name: "Основной", Hash: a.KeyHash}}, a.Keys...)
+		}
+		a.KeyHash = ""
+	}
+	if len(a.Keys) > MaxKeys {
+		return fmt.Errorf("Не больше %d API-ключей.", MaxKeys)
+	}
+	seen := map[string]bool{}
+	for i := range a.Keys {
+		k := &a.Keys[i]
+		if !sha256Hex.MatchString(k.Hash) || ValidKeyName(k.Name) != nil || seen[k.Hash] {
+			return errors.New("Некорректный API key в настройках.")
+		}
+		seen[k.Hash], k.ID = true, KeyID(k.Hash)
+	}
+	if a.RequireKey && len(a.Keys) == 0 {
+		return errors.New("Сначала создайте API key.")
 	}
 	if a.QueueDepth < 0 || a.QueueDepth > 16 {
 		return errors.New("Очередь запросов: от 0 до 16.")

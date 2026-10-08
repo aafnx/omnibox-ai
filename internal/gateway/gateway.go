@@ -59,6 +59,7 @@ type Gateway struct {
 	queue         []*waiter
 	recent        []*Record
 	sessions      map[string]*Session
+	keyUse        map[string]*KeyUsage
 	modelSessions map[string]string
 	journalErr    string
 	cached        *resolved
@@ -77,6 +78,7 @@ type resolved struct {
 // New prepares a gateway and loads the recent request journal.
 func New(g *Gateway) *Gateway {
 	g.cancels, g.sessions, g.modelSessions = map[string]context.CancelFunc{}, map[string]*Session{}, map[string]string{}
+	g.keyUse = map[string]*KeyUsage{}
 	if g.HTTP == nil {
 		g.HTTP = &http.Client{
 			Transport:     &http.Transport{Proxy: nil, MaxConnsPerHost: 8, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, ResponseHeaderTimeout: requestTimeout},
@@ -108,21 +110,35 @@ func fail(w http.ResponseWriter, status int, message string) {
 	_, _ = w.Write(body)
 }
 
-// Authorized checks the client's API key against the stored SHA256 hash in constant time.
+// Authorized checks the client's API key against the stored SHA256 hashes in constant time.
 func Authorized(r *http.Request, api config.API) bool {
+	_, ok := MatchKey(r, api)
+	return ok
+}
+
+// MatchKey returns the id of the client's key; without a required key any request passes.
+func MatchKey(r *http.Request, api config.API) (string, bool) {
 	if !api.RequireKey {
-		return true
+		return "", true
 	}
 	auth := r.Header.Get("Authorization")
 	if len(auth) < 8 || len(auth) > 256 || !strings.EqualFold(auth[:7], "Bearer ") {
-		return false
-	}
-	want, err := hex.DecodeString(api.KeyHash)
-	if err != nil || len(want) != sha256.Size {
-		return false
+		return "", false
 	}
 	got := sha256.Sum256([]byte(auth[7:]))
-	return subtle.ConstantTimeCompare(got[:], want) == 1
+	keys := api.Keys
+	if api.KeyHash != "" {
+		keys = append([]config.APIKey{{Hash: api.KeyHash}}, keys...)
+	}
+	found := ""
+	// Every key is compared, so the time does not tell which one nearly matched.
+	for _, k := range keys {
+		want, err := hex.DecodeString(k.Hash)
+		if err == nil && len(want) == sha256.Size && subtle.ConstantTimeCompare(got[:], want) == 1 {
+			found = config.KeyID(k.Hash)
+		}
+	}
+	return found, found != ""
 }
 
 var routes = map[string]string{
@@ -185,9 +201,14 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	// The key is checked before anything touches services or engines. The panel's model test
 	// comes from inside the service; a context value cannot arrive over the network.
-	if r.Context().Value(internalRequest{}) == nil && !Authorized(r, cfg.API) {
-		fail(w, http.StatusUnauthorized, "Invalid or missing API key.")
-		return
+	keyID := ""
+	if r.Context().Value(internalRequest{}) == nil {
+		id, ok := MatchKey(r, cfg.API)
+		if !ok {
+			fail(w, http.StatusUnauthorized, "Invalid or missing API key.")
+			return
+		}
+		keyID = id
 	}
 	if g.inFlight.Add(1) > maxInFlight {
 		g.inFlight.Add(-1)
@@ -211,7 +232,7 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		g.models(w, r, target, t)
 		return
 	}
-	g.generate(w, r, cfg, target, t, gen)
+	g.generate(w, r, cfg, target, t, gen, keyID)
 }
 
 func loopback(host string) bool {
@@ -344,7 +365,7 @@ func jsonEncoder(w io.Writer) *json.Encoder {
 	return enc
 }
 
-func (g *Gateway) generate(w http.ResponseWriter, r *http.Request, cfg *config.Config, target *url.URL, t Target, gen uint64) {
+func (g *Gateway) generate(w http.ResponseWriter, r *http.Request, cfg *config.Config, target *url.URL, t Target, gen uint64, keyID string) {
 	if r.ContentLength > bodyLimit {
 		fail(w, http.StatusRequestEntityTooLarge, "Request exceeds 8 MiB.")
 		return
@@ -375,7 +396,7 @@ func (g *Gateway) generate(w http.ResponseWriter, r *http.Request, cfg *config.C
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	timeout := time.Duration(cfg.API.QueueTimeout()) * time.Second
-	record, err := g.admit(ctx, gen, t, r.URL.Path, r.Header.Get("X-Omnibox-Session"), cancel, cfg.API.QueueDepth, timeout)
+	record, err := g.admit(ctx, gen, t, r.URL.Path, r.Header.Get("X-Omnibox-Session"), keyID, cancel, cfg.API.QueueDepth, timeout)
 	if err != nil {
 		var a *admissionError
 		if errors.As(err, &a) {

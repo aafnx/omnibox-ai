@@ -213,8 +213,17 @@ function renderGatewayForm() {
   $('api-base-url').value=gateway.base_url;$('api-require-key').checked=gateway.require_key;
   $('api-public-origin').value=gateway.public_origin||'';$('api-trusted-proxies').value=(gateway.trusted_proxies||[]).join(', ');
   $('api-state').textContent=!gateway.enabled?'Сетевой API не включён. Повторите установщик и выберите OpenAI API.':`API доступен на порту панели ${panelPort} по пути /v1 и обслуживает запущенный движок. ${gateway.require_key?'Используйте сохранённый ключ или сгенерируйте новый.':'Авторизация отключена: ключ не нужен.'}`;
-  $('save-api').disabled=!gateway.enabled;$('generate-api-key').disabled=!gateway.enabled;
+  $('save-api').disabled=!gateway.enabled;$('generate-api-key').disabled=!gateway.enabled;$('add-api-key').disabled=!gateway.enabled;
+  renderKeys();
   $('api-no-key-warning').hidden=!gateway.enabled||gateway.require_key;
+}
+function renderKeys(){
+  const when=t=>t?new Date(t).toLocaleString('ru-RU'):'—';
+  $('api-key-list').replaceChildren(...(gateway.keys||[]).map(k=>{const tr=document.createElement('tr');
+    [k.name,when(k.created),when(k.last_used),fmt(k.requests),fmt(k.tokens)].forEach(v=>{const td=document.createElement('td');td.textContent=v;tr.append(td);});
+    const td=document.createElement('td');const b=document.createElement('button');b.type='button';b.className='text-button';b.textContent='Отозвать';
+    b.addEventListener('click',()=>{if(!window.confirm(`Отозвать ключ «${k.name}»? Клиент с ним сразу потеряет доступ.`))return;saveGateway({action:'revoke',id:k.id}).catch(e=>notice(e.message,true));});
+    td.append(b);tr.append(td);return tr;}));
 }
 function renderConnections() {
   if(!snapshot||!gateway)return;$('connections').replaceChildren();if(!gateway.enabled)return;
@@ -233,7 +242,7 @@ async function saveGateway(body) {
   const data=await api('/api/gateway',body);gateway=data.gateway;gatewayDirty=false;renderGatewayForm();renderConnections();
   if(data.key){$('new-api-key').hidden=false;$('key-copy').replaceChildren(copyRow('API key — скопируйте и сохраните сейчас',data.key));}
   else if(!gateway.require_key){$('new-api-key').hidden=true;$('key-copy').replaceChildren();}
-  notice(data.key?'Новый ключ сгенерирован. Предыдущий ключ отозван.':'Настройки API сохранены. Движок автоматически не запускается.');
+  notice(body.action==='add'?'Ключ создан. Скопируйте его сейчас: он больше не будет показан.':body.action==='generate'?'Новый ключ сгенерирован. Все прежние ключи отозваны.':body.action==='revoke'?'Ключ отозван.':'Настройки API сохранены. Движок автоматически не запускается.');
 }
 let catalogBusy=false;
 async function catalogRequest(mode,value) {
@@ -377,7 +386,9 @@ $('storage-clean').addEventListener('click',async()=>{try{const u=await api('/ap
 $('mode-basic').addEventListener('click',()=>setSettingsMode('basic'));$('mode-pro').addEventListener('click',()=>setSettingsMode('pro'));
 $('api-settings-form').addEventListener('input',()=>gatewayDirty=true);
 $('api-settings-form').addEventListener('submit',e=>{e.preventDefault();saveGateway({action:'save',base_url:$('api-base-url').value.trim(),require_key:$('api-require-key').checked,queue_depth:Number($('api-queue-depth').value),queue_timeout_seconds:Number($('api-queue-timeout').value),public_origin:$('api-public-origin').value.trim(),trusted_proxies:$('api-trusted-proxies').value.split(',').map(s=>s.trim()).filter(Boolean)}).catch(e=>notice(e.message,true));});
-$('generate-api-key').addEventListener('click',()=>saveGateway({action:'generate'}).catch(e=>notice(e.message,true)));
+$('generate-api-key').addEventListener('click',()=>{if(!window.confirm('Заменить все ключи одним новым? Все клиенты потеряют доступ, пока не получат новый ключ.'))return;saveGateway({action:'generate'}).catch(e=>notice(e.message,true));});
+$('add-api-key').addEventListener('click',()=>{const name=$('api-key-name').value.trim();if(!name){notice('Введите имя клиента для ключа.',true);return;}
+  saveGateway({action:'add',name}).then(()=>{$('api-key-name').value='';}).catch(e=>notice(e.message,true));});
 $('catalog-form').addEventListener('submit',e=>{e.preventDefault();searchCatalog($('catalog-query').value.trim());});
 document.querySelectorAll('[data-search]').forEach(button=>button.addEventListener('click',()=>{$('catalog-query').value=button.dataset.search;searchCatalog(button.dataset.search);}));
 showDashboard().catch(()=>showLogin());

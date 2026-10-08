@@ -130,6 +130,11 @@ function run(code){return vm.runInContext(code,context);}
   assert.ok(run("restartText({})").includes('Не больше 2 раз'));
   const restartLine=run("restartText({restarts:2,last_failure:'процесс движка завершился с кодом 3',gave_up:'уже 2 перезапуска за 10 минут'})");
   assert.ok(restartLine.includes('Автоперезапусков после запуска: 2')&&restartLine.includes('Перезапуск прекращён: уже 2')&&restartLine.includes('кодом 3'),restartLine);
+  // Several named keys: each row shows its use and can be revoked alone.
+  run("gateway={...gateway,keys:[{id:'aaaaaaaaaaaa',name:'Jan',created:'2026-10-07T10:00:00Z',last_used:'2026-10-07T11:00:00Z',requests:3,tokens:1200},{id:'bbbbbbbbbbbb',name:'Pi',created:null,last_used:null,requests:0,tokens:0}]};renderGatewayForm()");
+  assert.equal(nodes['api-key-list'].children.length,2);assert.equal(nodes['api-key-list'].children[0].children[0].textContent,'Jan');
+  context.window.confirm=()=>true;const revokeBefore=requests.length;nodes['api-key-list'].children[1].children[5].children[0].listeners.click[0]();await new Promise(r=>setTimeout(r,0));
+  assert.deepEqual(JSON.parse(bodies[revokeBefore]),{action:'revoke',id:'bbbbbbbbbbbb'});
   // S1: working without a key is allowed but shown as a warning.
   assert.equal(nodes['api-no-key-warning'].hidden,true);
   run("gateway={...gateway,require_key:false};renderGatewayForm()");assert.equal(nodes['api-no-key-warning'].hidden,false);
@@ -143,5 +148,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, no-key warning, model test, presets, auto-restart status, self-update and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, model test, presets, auto-restart status, self-update and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,18 +34,18 @@ func TestKeyIsShownOnceAndOnlyItsHashIsStored(t *testing.T) {
 	}
 	sum := sha256.Sum256([]byte(key))
 	c := store.Get()
-	if c.API.KeyHash != hex.EncodeToString(sum[:]) || !c.API.RequireKey {
+	if len(c.API.Keys) != 1 || c.API.Keys[0].Hash != hex.EncodeToString(sum[:]) || !c.API.RequireKey {
 		t.Fatalf("%+v", c.API)
 	}
 	saved, _ := os.ReadFile(store.Path())
 	if strings.Contains(string(saved), key) {
 		t.Fatal("the key itself was saved")
 	}
-	if v := SettingsView(store.Get()); !v.HasKey || strings.Contains(strings.ToLower(v.PublicURL), "obai") {
+	if v := SettingsView(store.Get(), nil); !v.HasKey || strings.Contains(mustJSON(v), c.API.Keys[0].Hash) {
 		t.Fatalf("%+v", v)
 	}
 	second, _ := UpdateSettings(store, map[string]any{"action": "generate"})
-	if second == key || store.Get().API.KeyHash == hex.EncodeToString(sum[:]) {
+	if keys := store.Get().API.Keys; second == key || len(keys) != 1 || keys[0].Hash == hex.EncodeToString(sum[:]) {
 		t.Fatal("a new key did not revoke the old one")
 	}
 }
@@ -57,7 +58,7 @@ func TestSaveValidatesSettings(t *testing.T) {
 	if _, err := UpdateSettings(store, map[string]any{"action": "save", "enabled": true, "base_url": "https://llm.fnx.red/v1/", "queue_depth": float64(2), "queue_timeout_seconds": float64(30), "require_key": false}); err != nil {
 		t.Fatal(err)
 	}
-	v := SettingsView(store.Get())
+	v := SettingsView(store.Get(), nil)
 	if !v.Enabled || v.PublicURL != "https://llm.fnx.red/v1" || v.QueueDepth != 2 || v.QueueTimeoutSeconds != 30 {
 		t.Fatalf("%+v", v)
 	}
@@ -79,7 +80,7 @@ func TestSaveChangesTheNASProxy(t *testing.T) {
 	if _, err := UpdateSettings(store, map[string]any{"action": "save", "public_origin": "LLM.fnx.red", "trusted_proxies": []any{" 192.168.1.10 "}}); err != nil {
 		t.Fatal(err)
 	}
-	v := SettingsView(store.Get())
+	v := SettingsView(store.Get(), nil)
 	if v.PublicOrigin != "https://llm.fnx.red" || len(v.TrustedProxies) != 1 || v.TrustedProxies[0] != "192.168.1.10" {
 		t.Fatalf("%+v", v)
 	}
@@ -98,5 +99,62 @@ func TestSaveChangesTheNASProxy(t *testing.T) {
 	}
 	if c := store.Get(); c.Panel.PublicOrigin != "" || len(c.Panel.TrustedProxies) != 0 {
 		t.Fatalf("NAS not removed: %+v", c.Panel)
+	}
+}
+
+func TestNamedKeysAreAddedRevokedAndCounted(t *testing.T) {
+	store := settingsStore(t)
+	jan, err := UpdateSettings(store, map[string]any{"action": "add", "name": "Jan"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pi, _ := UpdateSettings(store, map[string]any{"action": "add", "name": "Pi"})
+	if _, err := UpdateSettings(store, map[string]any{"action": "add", "name": "Jan"}); err == nil {
+		t.Fatal("a duplicate name accepted")
+	}
+	c := store.Get()
+	if len(c.API.Keys) != 2 || !c.API.RequireKey {
+		t.Fatalf("%+v", c.API.Keys)
+	}
+	for _, key := range []string{jan, pi} {
+		r := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+		r.Header.Set("Authorization", "Bearer "+key)
+		if id, ok := MatchKey(r, c.API); !ok || id == "" {
+			t.Fatalf("%s not accepted", key[:10])
+		}
+	}
+	janID := c.API.Keys[0].ID
+	v := SettingsView(c, map[string]KeyUsage{janID: {Requests: 3, Tokens: 120}})
+	if v.Keys[0].Name != "Jan" || v.Keys[0].Requests != 3 || v.Keys[0].LastUsed == nil || v.Keys[1].LastUsed != nil {
+		t.Fatalf("%+v", v.Keys)
+	}
+	if _, err := UpdateSettings(store, map[string]any{"action": "revoke", "id": janID}); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	r.Header.Set("Authorization", "Bearer "+jan)
+	if _, ok := MatchKey(r, store.Get().API); ok {
+		t.Fatal("a revoked key still works")
+	}
+	if _, err := UpdateSettings(store, map[string]any{"action": "revoke", "id": store.Get().API.Keys[0].ID}); err == nil || !strings.Contains(err.Error(), "последний ключ") {
+		t.Fatalf("the last required key revoked: %v", err)
+	}
+}
+
+func TestRequestsAreCountedPerKey(t *testing.T) {
+	f := newFixture(t, nil)
+	f.request("/v1/chat/completions", chat("ornith-27b"), nil)
+	sum := sha256.Sum256([]byte(apiKey))
+	id := config.KeyID(hex.EncodeToString(sum[:]))
+	if r := f.g.Snapshot().Requests[0]; r.KeyID != id {
+		t.Fatalf("%+v", r)
+	}
+	if u := f.g.KeyUsage()[id]; u.Requests != 1 || u.Tokens != 14 || u.LastUsed.IsZero() {
+		t.Fatalf("%+v", u)
+	}
+	// The count comes back from the journal after a restart.
+	again := New(&Gateway{Config: f.cfg.Load, Services: f.services, Dir: f.g.Dir})
+	if u := again.KeyUsage()[id]; u.Requests != 1 {
+		t.Fatalf("after restart: %+v", u)
 	}
 }

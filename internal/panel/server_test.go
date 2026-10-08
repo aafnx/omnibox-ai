@@ -471,7 +471,8 @@ func TestPasswordChangeEndsOtherSessions(t *testing.T) {
 }
 
 func TestGatewayRoutesNeverReturnTheHash(t *testing.T) {
-	c := testConfig(t, func(c *config.Config) { c.API.KeyHash, c.API.RequireKey = strings.Repeat("b", 64), true })
+	hash := strings.Repeat("b", 64)
+	c := testConfig(t, func(c *config.Config) { c.API.KeyHash, c.API.RequireKey = hash, true })
 	s, _ := New(Options{
 		Config:        func() *config.Config { return c },
 		Gateway:       func() any { return map[string]any{"has_key": true} },
@@ -479,7 +480,7 @@ func TestGatewayRoutesNeverReturnTheHash(t *testing.T) {
 	})
 	cookie, csrf := login(t, s, nil)
 	w := call(s, "GET", "/api/gateway", "", func(r *http.Request) { r.AddCookie(cookie) })
-	if w.Code != 200 || strings.Contains(w.Body.String(), c.API.KeyHash) {
+	if w.Code != 200 || strings.Contains(w.Body.String(), hash) {
 		t.Fatalf("%d %s", w.Code, w.Body.String())
 	}
 	if w := call(s, "POST", "/api/gateway", `{"action":"generate"}`, func(r *http.Request) { r.AddCookie(cookie) }); w.Code != 403 {
