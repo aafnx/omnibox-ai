@@ -183,8 +183,9 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		fail(w, http.StatusNotFound, "Unsupported OpenAI route.")
 		return
 	}
-	// The key is checked before anything touches services or engines.
-	if !Authorized(r, cfg.API) {
+	// The key is checked before anything touches services or engines. The panel's model test
+	// comes from inside the service; a context value cannot arrive over the network.
+	if r.Context().Value(internalRequest{}) == nil && !Authorized(r, cfg.API) {
 		fail(w, http.StatusUnauthorized, "Invalid or missing API key.")
 		return
 	}

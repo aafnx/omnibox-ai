@@ -73,6 +73,9 @@ func category(action string) string {
 		return "engine"
 	case action == "self-update":
 		return "update"
+	case action == "model-test":
+		// It waits in the /v1 queue, so it must not hold the engines like a control operation.
+		return "test"
 	}
 	return "control"
 }

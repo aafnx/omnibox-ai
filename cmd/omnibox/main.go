@@ -179,6 +179,13 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 	updates := &panelUpdate{Services: services, Data: *data, Program: programDirOf(exe), Current: omnibox.Version,
 		NewUpdater: func(token string) *selfupdate.Updater { return &selfupdate.Updater{Token: token} }}
 	controller.SelfUpdate = updates.Start
+	controller.Test = func(ctx context.Context) (string, error) {
+		r, err := api.Test(ctx)
+		if err != nil {
+			return "", err
+		}
+		return r.String(), nil
+	}
 	cleanupUpdate(services, *data)
 	operations := &control.Operations{Run: controller.Do, Gate: api}
 	handler, err := panel.New(panel.Options{
