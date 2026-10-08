@@ -56,6 +56,9 @@ type Options struct {
 	// Activity is the /v1 request history; RequestContent returns one stored request by id.
 	Activity       func() any
 	RequestContent func(id string) (json.RawMessage, bool)
+	// SearchContent finds stored requests by text; ExportSession returns a session as JSON lines.
+	SearchContent func(query, session string) any
+	ExportSession func(session string) ([]byte, bool)
 	// Storage reports disk usage; StorageAction saves log settings or runs a cleanup.
 	Storage       func() any
 	StorageAction func(body map[string]any) (any, error)
@@ -213,6 +216,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		s.json(w, http.StatusOK, map[string]any{"logs": s.opt.Logs(name)})
 	case route == "GET /api/activity" && s.opt.Activity != nil:
 		s.json(w, http.StatusOK, s.opt.Activity())
+	case route == "GET /api/request-content" && r.URL.Query().Has("q") && s.opt.SearchContent != nil:
+		q := r.URL.Query()
+		s.json(w, http.StatusOK, map[string]any{"matches": s.opt.SearchContent(q.Get("q"), q.Get("session"))})
+	case route == "GET /api/request-content" && r.URL.Query().Get("export") == "1" && s.opt.ExportSession != nil:
+		session := r.URL.Query().Get("session")
+		data, ok := s.opt.ExportSession(session)
+		if !ok {
+			s.json(w, http.StatusBadRequest, map[string]any{"error": "Содержимое этого сеанса не сохранено."})
+			return
+		}
+		w.Header().Set("Content-Disposition", `attachment; filename="omnibox-session-`+session[:12]+`.jsonl"`)
+		s.write(w, http.StatusOK, "application/x-ndjson; charset=utf-8", data)
 	case route == "GET /api/request-content" && s.opt.RequestContent != nil:
 		line, ok := s.opt.RequestContent(r.URL.Query().Get("id"))
 		if !ok {

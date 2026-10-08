@@ -119,6 +119,11 @@ function run(code){return vm.runInContext(code,context);}
   // API settings: queue fields, no engine choice; /v1 serves the running engine.
   run("gateway={enabled:true,base_url:'https://llm.fnx.red/v1',require_key:true,has_key:true,queue_depth:4,queue_timeout_seconds:60,public_origin:'https://llm.fnx.red',trusted_proxies:['192.168.1.10','192.168.1.11']};renderGatewayForm()");
   assert.equal(nodes['api-queue-depth'].value,4);assert.equal(nodes['api-queue-timeout'].value,60);
+  // Content search lists matches with a link to export their session.
+  run("renderContentResults([{id:'a1',session_id:'0123456789abcdef01234567',model:'ornith',started:'2026-10-07T10:00:00Z',snippet:'…про Байкал…'}])");
+  const match=nodes['content-results'].children[0];assert.equal(match.children[1].textContent,'…про Байкал…');
+  assert.ok(match.children[2].children[1].href.includes('session=0123456789abcdef01234567&export=1'));
+  run("renderContentResults([])");assert.ok(nodes['content-results'].children[0].textContent.includes('Ничего не найдено'));
   // The placement estimate is asked for explicitly and can fill in the recommended GPU layers.
   const estimateBefore=requests.length;await run("estimatePlacement()");assert.ok(requests[estimateBefore].startsWith('/api/estimate?'));
   run("lastEstimate={placement:'hybrid',gpu_layers:31,text:'x'};applyEstimate()");assert.equal(nodes.placement.value,'hybrid');assert.equal(nodes['gpu-layers'].value,31);
@@ -156,5 +161,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, placement estimate, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, content search, placement estimate, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});

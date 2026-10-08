@@ -327,6 +327,18 @@ function formatRequestContent(c){
   parts.push('ОТВЕТ',c.response!==undefined?JSON.stringify(c.response,null,2):(c.response_text||'—'));
   return parts.join('\n\n');
 }
+function renderContentResults(matches){
+  const when=t=>new Date(t).toLocaleString('ru-RU');
+  if(!matches.length){const p=document.createElement('p');p.className='muted';p.textContent='Ничего не найдено в сохранённом содержимом.';$('content-results').replaceChildren(p);return;}
+  $('content-results').replaceChildren(...matches.map(m=>{const row=document.createElement('div');row.className='content-match';
+    const head=document.createElement('p');head.className='muted';head.textContent=`${when(m.started)} · ${m.model} · сеанс ${m.session_id.slice(0,8)}`;
+    const text=document.createElement('p');text.textContent=m.snippet;
+    const open=document.createElement('button');open.type='button';open.className='text-button';open.textContent='Открыть';open.addEventListener('click',()=>showRequestContent(m.id).catch(e=>notice(e.message,true)));
+    const exp=document.createElement('a');exp.className='text-button';exp.textContent='Экспорт сеанса';exp.href=`/api/request-content?session=${encodeURIComponent(m.session_id)}&export=1`;exp.setAttribute('download','');
+    const buttons=document.createElement('div');buttons.className='button-row';buttons.append(open,exp);row.append(head,text,buttons);return row;}));
+}
+async function searchContent(){const q=$('content-query').value.trim();if(q.length<2){notice('Введите хотя бы 2 символа.',true);return;}
+  const data=await api(`/api/request-content?q=${encodeURIComponent(q)}`);renderContentResults(data.matches||[]);}
 async function showRequestContent(id){const c=await api(`/api/request-content?id=${encodeURIComponent(id)}`);$('request-content').textContent=formatRequestContent(c);$('request-content-box').hidden=false;}
 function formatMb(bytes){return `${((bytes||0)/1024**2).toFixed(1)} МБ`;}
 function formatGb(bytes){return (bytes||0)>=1024**4?`${(bytes/1024**4).toFixed(2)} ТБ`:`${((bytes||0)/1024**3).toFixed(1)} ГБ`;}
@@ -399,6 +411,7 @@ $('refresh-logs').addEventListener('click',()=>refreshLogs().catch(e=>notice(e.m
 $('placement').addEventListener('change',()=>syncKvOffload(true));
 $('storage-form').addEventListener('input',()=>storageDirty=true);
 $('storage-form').addEventListener('submit',async e=>{e.preventDefault();if(requestLog==='content'&&$('request-log').value==='metadata'&&!window.confirm('Выключить запись содержимого? Уже сохранённые запросы и ответы будут удалены.'))return;try{const u=await api('/api/storage',{action:'save',log_retention_days:Number($('log-retention').value),log_warn_mb:Number($('log-warn').value),request_log:$('request-log').value});$('request-content-box').hidden=true;storageDirty=false;renderStorage(u);notice('Настройки хранения журналов сохранены.');}catch(error){notice(error.message,true);}});
+$('content-search-form').addEventListener('submit',e=>{e.preventDefault();searchContent().catch(err=>notice(err.message,true));});
 $('request-content-close').addEventListener('click',()=>{$('request-content-box').hidden=true;$('request-content').textContent='';});
 $('storage-clean').addEventListener('click',async()=>{try{const u=await api('/api/storage',{action:'cleanup'});renderStorage(u);notice(`Удалено файлов: ${u.cleanup.removed}, освобождено ${formatMb(u.cleanup.freed_bytes)}.`);}catch(error){notice(error.message,true);}});
 $('mode-basic').addEventListener('click',()=>setSettingsMode('basic'));$('mode-pro').addEventListener('click',()=>setSettingsMode('pro'));
