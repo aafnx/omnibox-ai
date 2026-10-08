@@ -69,6 +69,12 @@ type Config struct {
 	API           API                `json:"api"`
 	Storage       Storage            `json:"storage"`
 	Engines       map[string]*Engine `json:"engines"`
+	// Chat, Cloud, Models and Favorites appear once the owner changes them in the panel.
+	Chat   *Chat                  `json:"chat,omitempty"`
+	Cloud  *Cloud                 `json:"cloud,omitempty"`
+	Models map[string]*ModelPrefs `json:"models,omitempty"`
+	// Favorites are model keys (prismml:<file>, ollama:<name>, cloud:<id>) shown first.
+	Favorites []string `json:"favorites,omitempty"`
 }
 
 // Panel holds the web panel's address and password hash.
@@ -82,6 +88,9 @@ type Panel struct {
 	// StartEngine is started when the computer boots (if OmniBox starts with it) and by
 	// "ai on"; empty means no engine starts by itself. Off by default.
 	StartEngine string `json:"start_engine,omitempty"`
+	// StartModel is the local model loaded once after the computer boots (prismml:<file> or
+	// ollama:<name>); it replaces StartEngine when set. Off by default.
+	StartModel string `json:"start_model,omitempty"`
 }
 
 // Password is a PBKDF2-SHA256 hash (base64), never the password itself.
@@ -240,6 +249,19 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := c.Storage.validate(); err != nil {
+		return err
+	}
+	if c.Chat != nil {
+		if err := c.Chat.Validate(); err != nil {
+			return err
+		}
+	}
+	if c.Cloud != nil {
+		if err := c.Cloud.validate(); err != nil {
+			return err
+		}
+	}
+	if err := c.validateModels(); err != nil {
 		return err
 	}
 	ports := map[int]string{c.Panel.Port: "панель"}

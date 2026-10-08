@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,8 +49,9 @@ type Controller struct {
 	SelfUpdate func(ctx context.Context, token, version string) (string, error)
 	// Test measures the running model with a short fixed request.
 	Test func(ctx context.Context) (string, error)
-	// Sleep puts the computer to sleep.
-	Sleep func() error
+	// Sleep puts the computer to sleep; PowerOff shuts it down.
+	Sleep    func() error
+	PowerOff func() error
 	// Tune fits an auto preset's settings to the engine's model and the GPU, and says how.
 	Tune func(name string, e *config.Engine, settings map[string]string) (map[string]string, string)
 
@@ -239,7 +241,8 @@ func (c *Controller) Apply(name, verb string, prepared *config.Launch) error {
 	if err == nil {
 		return nil
 	}
-	cause := err
+	// The cause is a sentence of its own: its full stop is not doubled below.
+	cause := errors.New(strings.TrimRight(err.Error(), "."))
 	e, _ = c.engine(name)
 	if e == nil || !e.Pending || e.Previous == nil {
 		return cause

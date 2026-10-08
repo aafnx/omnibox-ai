@@ -35,6 +35,8 @@ type Meta struct {
 	// tool (function) calls.
 	Thinking bool `json:"thinking"`
 	Tools    bool `json:"tools"`
+	// ThinkToggle means the template reads enable_thinking: reasoning can be switched off.
+	ThinkToggle bool `json:"think_toggle,omitempty"`
 }
 
 // Header limits: a damaged or hostile file cannot make the reader allocate much.
@@ -181,6 +183,7 @@ func parse(in io.Reader) (Meta, error) {
 			m.SizeLabel = s
 		case "tokenizer.chat_template":
 			m.Thinking, m.Tools = TemplateFeatures(s)
+			m.ThinkToggle = strings.Contains(s, "enable_thinking")
 		}
 		numbers[key] = n
 	}

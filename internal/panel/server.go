@@ -84,6 +84,9 @@ type Options struct {
 	LogPath string
 	// SessionsPath keeps the sign-ins across a restart of the service.
 	SessionsPath string
+	// Handlers serve whole API paths (the chat, its history, models, OpenRouter) after the
+	// session, CSRF and Origin checks; they read their own bodies.
+	Handlers map[string]http.Handler
 }
 
 type session struct {
@@ -127,6 +130,10 @@ func New(opt Options) (*Server, error) {
 	files := map[string][2]string{
 		"/":                {"index.html", "text/html; charset=utf-8"},
 		"/app.js":          {"app.js", "text/javascript; charset=utf-8"},
+		"/chat.js":         {"chat.js", "text/javascript; charset=utf-8"},
+		"/models.js":       {"models.js", "text/javascript; charset=utf-8"},
+		"/server.js":       {"server.js", "text/javascript; charset=utf-8"},
+		"/settings.js":     {"settings.js", "text/javascript; charset=utf-8"},
 		"/style.css":       {"style.css", "text/css; charset=utf-8"},
 		"/favicon.svg":     {"favicon.svg", "image/svg+xml"},
 		"/brand-light.svg": {"brand-light.svg", "image/svg+xml"},
@@ -213,6 +220,11 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.Method == http.MethodPost && r.Header.Get("X-Omnibox-CSRF") != sess.csrf {
 		s.json(w, http.StatusForbidden, map[string]any{"error": "CSRF-проверка не пройдена."})
+		return
+	}
+	if h, ok := s.opt.Handlers[path]; ok {
+		s.headers(w.Header(), "application/json; charset=utf-8", "no-store")
+		h.ServeHTTP(w, r)
 		return
 	}
 	route := r.Method + " " + path
@@ -520,6 +532,9 @@ func internalError(err error) bool {
 	var u *url.Error
 	return errors.As(err, &path) || errors.As(err, &link) || errors.As(err, &sys) || errors.As(err, &op) || errors.As(err, &u)
 }
+
+// Logf writes to the panel log, for the parts of the panel served by other packages.
+func (s *Server) Logf(format string, args ...any) { s.logf(format, args...) }
 
 // logf appends a line to the panel log, which rotates at 1 MiB and keeps two older copies.
 func (s *Server) logf(format string, args ...any) {

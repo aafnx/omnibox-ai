@@ -72,7 +72,7 @@ func (g *Gateway) Test(ctx context.Context) (TestResult, error) {
 	body, _ := json.Marshal(map[string]any{"model": t.Model, "stream": true, "max_tokens": 160, "temperature": 0,
 		"stream_options": map[string]any{"include_usage": true},
 		"messages":       []map[string]string{{"role": "user", "content": testPrompt}}})
-	req, err := http.NewRequestWithContext(context.WithValue(ctx, internalRequest{}, true), http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(context.WithValue(ctx, internalRequest{}, "test"), http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return TestResult{}, err
 	}

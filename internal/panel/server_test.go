@@ -490,3 +490,26 @@ func TestGatewayRoutesNeverReturnTheHash(t *testing.T) {
 		t.Fatalf("generate: %d", w.Code)
 	}
 }
+
+func TestHandlersRunOnlyAfterSessionAndCSRF(t *testing.T) {
+	c := testConfig(t, nil)
+	calls := 0
+	s, err := New(Options{Config: func() *config.Config { return c }, Handlers: map[string]http.Handler{
+		"/api/chats": http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { calls++; w.Write([]byte(`{"ok":true}`)) }),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if w := call(s, "GET", "/api/chats", "", nil); w.Code != 401 || calls != 0 {
+		t.Fatalf("without a session: %d", w.Code)
+	}
+	cookie, csrf := login(t, s, nil)
+	withCookie := func(r *http.Request) { r.AddCookie(cookie) }
+	if w := call(s, "POST", "/api/chats", "{}", withCookie); w.Code != 403 || calls != 0 {
+		t.Fatalf("without CSRF: %d", w.Code)
+	}
+	w := call(s, "POST", "/api/chats", "{}", func(r *http.Request) { withCookie(r); r.Header.Set("X-Omnibox-CSRF", csrf) })
+	if w.Code != 200 || calls != 1 || w.Header().Get("X-Frame-Options") != "DENY" {
+		t.Fatalf("%d %d %v", w.Code, calls, w.Header())
+	}
+}

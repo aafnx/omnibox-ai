@@ -160,8 +160,9 @@ func TestInstalledModelsShowSourceAndUse(t *testing.T) {
 	if _, ok := r.c.sources()[got.ID]; ok {
 		t.Fatal("a removed model kept its source")
 	}
-	if _, err := r.c.InstalledModels(context.Background(), config.Ollama); err == nil {
-		t.Fatal("a stopped Ollama listed its models")
+	// A stopped Ollama is not started for a list: its models come from disk, here none.
+	if models, err := r.c.InstalledModels(context.Background(), config.Ollama); err != nil || len(models) != 0 {
+		t.Fatalf("a stopped Ollama: %v %v", models, err)
 	}
 }
 

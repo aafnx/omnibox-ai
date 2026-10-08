@@ -4,6 +4,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"errors"
 	"io/fs"
 	"os"
@@ -328,7 +329,12 @@ func Save(data string, store *config.Store, body map[string]any) error {
 			switch key {
 			case "action":
 			case "log_retention_days", "log_retention_hours", "log_warn_mb":
+				// The panel decodes numbers as json.Number; tests and older callers pass float64.
 				n, ok := value.(float64)
+				if num, isNum := value.(json.Number); isNum {
+					f, err := num.Float64()
+					n, ok = f, err == nil
+				}
 				if !ok || n != float64(int(n)) {
 					return errors.New("Срок хранения и порог объёма — целые числа.")
 				}

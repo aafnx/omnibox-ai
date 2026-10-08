@@ -33,7 +33,17 @@ func bootStart(data string, cfg *config.Config, boot time.Time, start func(engin
 			_ = platform.WriteAtomic(path, b, 0o644)
 		}
 	}
-	if sameBoot || cfg.Panel.StartEngine == "" {
+	if sameBoot {
+		return
+	}
+	// A chosen model names its engine; the older setting starts an engine with its last model.
+	if name, _, ok := config.SplitKey(cfg.Panel.StartModel); ok {
+		if _, ok := cfg.Engines[name]; ok {
+			start(name)
+		}
+		return
+	}
+	if cfg.Panel.StartEngine == "" {
 		return
 	}
 	if _, ok := cfg.Engines[cfg.Panel.StartEngine]; ok {

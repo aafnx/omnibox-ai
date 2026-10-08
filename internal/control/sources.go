@@ -3,7 +3,6 @@ package control
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -61,8 +60,17 @@ func (c *Controller) InstalledModels(ctx context.Context, name string) ([]engine
 		return nil, err
 	}
 	if name == config.Ollama {
+		// A stopped Ollama is not started for a list: its models are read from disk.
 		if !c.running(name) {
-			return nil, errors.New("Запустите Ollama: список её моделей доступен только при работающем сервере.")
+			out := []engine.Details{}
+			if e.ModelsDirectory != "" {
+				out = engine.OllamaDisk(e.ModelsDirectory)
+			}
+			for i := range out {
+				out[i].Selected = out[i].ID == e.Model
+				out[i].InUse = out[i].Selected
+			}
+			return out, nil
 		}
 		client := c.client(name, e)
 		models, err := client.OllamaTags(ctx)

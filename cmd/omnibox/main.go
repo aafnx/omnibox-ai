@@ -187,6 +187,7 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 		NewUpdater: func(token string) *selfupdate.Updater { return &selfupdate.Updater{Token: token} }}
 	controller.SelfUpdate = updates.Start
 	controller.Sleep = platform.Sleep
+	controller.PowerOff = platform.PowerOff
 	estimates := estimator{Config: current, GPUs: telemetry.GPUs, RAM: telemetry.RAMTotal}
 	controller.Tune = estimates.Tune
 	controller.Test = func(ctx context.Context) (string, error) {
@@ -197,6 +198,9 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 		return r.String(), nil
 	}
 	cleanupUpdate(services, *data)
+	side := newChatSide(*data, store, services, controller, estimates)
+	side.Chats.Cleanup(time.Now())
+	api.Cloud = cloudRoute{side}
 	operations := &control.Operations{Run: controller.Do, Gate: api}
 	handler, err := panel.New(panel.Options{
 		Config:       current,
@@ -314,10 +318,12 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 		SearchContent:  func(q, session string) any { return api.SearchContent(q, session) },
 		ExportSession:  api.ExportSession,
 		Logs:           func(engine string) any { return status.Logs(*data, current(), engine) },
+		Handlers:       side.handlers(api.Chat),
 	})
 	if err != nil {
 		return err
 	}
+	side.Logf = handler.Logf
 	// The ai command reaches the service through a local socket only administrators can open.
 	localLn, err := local.Listen(*data)
 	if err != nil {
@@ -366,6 +372,10 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 	fmt.Fprintf(stdout, "OmniBox AI %s: панель на порту %d\n", omnibox.Version, cfg.Panel.Port)
 	running()
 	bootStart(*data, current(), platform.BootTime(), func(engine string) {
+		if key := current().Panel.StartModel; key != "" {
+			_, _ = operations.Start(control.Request{Action: "model-start", Model: key, Engine: engine})
+			return
+		}
 		_, _ = operations.Start(control.Request{Action: "start", Engine: engine})
 	})
 	go func() {

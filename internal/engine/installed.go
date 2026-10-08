@@ -28,6 +28,12 @@ type Details struct {
 	Selected  bool   `json:"selected"`
 	// InUse models are selected or needed for rollback: the panel does not delete them.
 	InUse bool `json:"in_use"`
+	// Memory feeds the panel's estimate of where a context fits; nil without a readable header.
+	Memory *Memory `json:"memory,omitempty"`
+	// ThinkToggle means reasoning can be switched off per request.
+	ThinkToggle bool `json:"think_toggle,omitempty"`
+	// Family is the model family Ollama reports (gptoss, qwen3…).
+	Family string `json:"family,omitempty"`
 }
 
 var paramsPattern = regexp.MustCompile(`(?i)(?:^|[-_.])(\d+(?:\.\d+)?[BM])(?:[-_.]|$)`)
@@ -87,8 +93,16 @@ func PrismDetails(models []Model, sources map[string]string, selected string, in
 		}
 		if meta, err := header(m.ID); err == nil {
 			d.Context, d.Params = meta.Context, meta.SizeLabel
+			weights := m.Bytes
+			if p := MatchProjector(m.Name, projectors); p != "" {
+				if info, err := os.Stat(filepath.Join(filepath.Dir(m.ID), p)); err == nil {
+					weights += info.Size()
+				}
+			}
+			d.Memory = MemoryOf(meta, weights)
 			if meta.Thinking {
 				d.Capabilities = append(d.Capabilities, "reasoning")
+				d.ThinkToggle = meta.ThinkToggle
 			}
 			if meta.Tools {
 				d.Capabilities = append(d.Capabilities, "tools")
@@ -237,6 +251,9 @@ func (c *Client) OllamaDetails(ctx context.Context, models []Model, selected str
 			}
 			if p, ok := show.Details["parameter_size"].(string); ok {
 				d.Params = p
+			}
+			if f, ok := show.Details["family"].(string); ok {
+				d.Family = f
 			}
 			if q, ok := show.Details["quantization_level"].(string); ok {
 				d.Quant = q

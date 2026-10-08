@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -72,6 +73,13 @@ func TestSaveValidatesSettings(t *testing.T) {
 	}
 	if store.Get().API.QueueDepth != 2 {
 		t.Fatal("a refused change was applied")
+	}
+	// The panel decodes its JSON with UseNumber: numbers arrive as json.Number.
+	if _, err := UpdateSettings(store, map[string]any{"action": "save", "queue_depth": json.Number("3")}); err != nil || store.Get().API.QueueDepth != 3 {
+		t.Fatalf("json.Number: %v", err)
+	}
+	if _, err := UpdateSettings(store, map[string]any{"action": "save", "queue_depth": json.Number("2.5")}); err == nil {
+		t.Fatal("a fraction was accepted")
 	}
 }
 
