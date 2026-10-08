@@ -50,6 +50,8 @@ type Record struct {
 	UsageSource      string     `json:"usage_source"`
 	// KeyID is the client's API key (its short id), empty without a key.
 	KeyID string `json:"key_id,omitempty"`
+	// Client names the panel's own requests: "chat" (its chat) or "test" (the model test).
+	Client string `json:"client,omitempty"`
 }
 
 // KeyUsage is what one API key used: shown next to the key so an unused one can be revoked.

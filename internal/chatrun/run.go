@@ -208,6 +208,8 @@ func (r *Runner) generate(ctx context.Context, t *turn, body map[string]any, a *
 		if data, ok := strings.CutPrefix(line, "data:"); ok {
 			data = strings.TrimSpace(data)
 			if data == "[DONE]" {
+				// The rest of the stream is read, so the request ends as completed, not cut.
+				_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<20))
 				break
 			}
 			var c chunk

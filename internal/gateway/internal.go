@@ -14,7 +14,7 @@ import (
 // closes its body, which also ends the request.
 func (g *Gateway) Chat(ctx context.Context, session string, body []byte) *http.Response {
 	ctx, cancel := context.WithCancel(ctx)
-	req, _ := http.NewRequestWithContext(context.WithValue(ctx, internalRequest{}, true), http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.WithValue(ctx, internalRequest{}, "chat"), http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Omnibox-Session", session)
 	req.ContentLength = int64(len(body))

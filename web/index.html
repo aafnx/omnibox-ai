@@ -1,78 +1,372 @@
 <!doctype html>
 <html lang="ru">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>OMNIBOX AI · управление сервером</title><link rel="stylesheet" href="/style.css"><div id="toasts" class="toasts" aria-live="polite"></div>
-<script src="/app.js" defer></script><link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#000000"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="OMNIBOX"></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>OMNIBOX AI</title>
+<link rel="stylesheet" href="/style.css"><link rel="icon" href="/favicon-32.png" type="image/png" sizes="32x32"><link rel="icon" href="/favicon.svg" type="image/svg+xml"><link rel="manifest" href="/manifest.webmanifest"><meta name="theme-color" content="#000000"><link rel="apple-touch-icon" href="/apple-touch-icon.png"><meta name="apple-mobile-web-app-capable" content="yes"><meta name="apple-mobile-web-app-title" content="OMNIBOX"></head>
 <body>
-<div id="theme-switch" class="theme-switch" role="group" aria-label="Цветовая тема"><button id="theme-light" type="button" class="theme-option" title="Светлая тема" aria-label="Светлая тема"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg></button><button id="theme-dark" type="button" class="theme-option" title="Тёмная тема" aria-label="Тёмная тема"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20.5 14.5A8.5 8.5 0 0 1 9.5 3.5a8.5 8.5 0 1 0 11 11z"/></svg></button><button id="theme-system" type="button" class="theme-option" title="Как в системе" aria-label="Тема как в системе"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></svg></button></div>
-<section id="login" class="login-screen">
+<svg width="0" height="0" class="sprite" aria-hidden="true">
+  <defs>
+    <linearGradient id="g" x1=".08" y1=".08" x2=".92" y2=".92"><stop offset="0" stop-color="#BEEFFF"/><stop offset=".48" stop-color="#7C6CFF"/><stop offset=".82" stop-color="#FF9654"/><stop offset="1" stop-color="#FFBE78"/></linearGradient>
+    <symbol id="i-chat" viewBox="0 0 24 24"><path d="M4 5h16v11H9l-5 4z"/></symbol>
+    <symbol id="i-models" viewBox="0 0 24 24"><path d="M12 3 3 8l9 5 9-5z"/><path d="m3 13 9 5 9-5"/></symbol>
+    <symbol id="i-server" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="7" rx="2"/><rect x="4" y="13" width="16" height="7" rx="2"/><path d="M8 7.5h.01M8 16.5h.01"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10"/><circle cx="16" cy="7" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+    <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="i-brain" viewBox="0 0 24 24"><path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a2 2 0 0 0-3-1z"/><path d="M15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/></symbol>
+    <symbol id="i-tool" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.6 2.6-2.4-.6-.6-2.4z"/></symbol>
+    <symbol id="i-ctx" viewBox="0 0 24 24"><path d="M6 3h9l3 3v15H6z"/><path d="M9 10h6M9 14h6M9 18h4"/></symbol>
+    <symbol id="i-video" viewBox="0 0 24 24"><rect x="3" y="6" width="13" height="12" rx="2"/><path d="m16 10 5-3v10l-5-3"/></symbol>
+    <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5 18 18M6 18l2.5-2.5M15.5 8.5 18 6"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></symbol>
+    <symbol id="i-retry" viewBox="0 0 24 24"><path d="M4 12a8 8 0 0 1 14-5.3L20 9M20 4v5h-5M20 12a8 8 0 0 1-14 5.3L4 15M4 20v-5h5"/></symbol>
+    <symbol id="i-trash" viewBox="0 0 24 24"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/></symbol>
+    <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="i-list" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h10"/></symbol>
+    <symbol id="i-pin" viewBox="0 0 24 24"><path d="M9 3h6l-1 6 4 4H6l4-4z"/><path d="M12 13v8"/></symbol>
+    <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></symbol>
+    <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .6-8A6 6 0 0 0 6.2 9 4.5 4.5 0 0 0 7 18z"/></symbol>
+    <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+    <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
+    <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z"/></symbol>
+    <symbol id="i-user-off" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 20a7 7 0 0 1 14 0"/><path d="M4 4l16 16"/></symbol>
+    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v9"/><path d="M6.3 6.8a8 8 0 1 0 11.4 0"/></symbol>
+    <symbol id="i-chip" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></symbol>
+    <symbol id="i-audio" viewBox="0 0 24 24"><path d="M4 10v4M8 7v10M12 4v16M16 8v8M20 11v2"/></symbol>
+    <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M3 15h18M9 4v16"/></symbol>
+    <symbol id="i-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/></symbol>
+    <symbol id="i-clip" viewBox="0 0 24 24"><path d="m20 11-8.5 8.5a5 5 0 0 1-7-7L13 4a3.5 3.5 0 0 1 5 5l-8.4 8.4a2 2 0 0 1-2.8-2.8L14.5 7"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></symbol>
+    <symbol id="i-dots" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"/></symbol>
+    <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
+    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
+    <symbol id="i-test" viewBox="0 0 24 24"><path d="M13 3 4 14h7l-1 7 9-11h-7z"/></symbol>
+  </defs>
+</svg>
+
+<section id="login" class="login-screen" hidden>
   <form id="login-form" class="login-card">
-    <div class="brand-logo"><img class="brand-light" src="/brand-light.svg" alt="OMNIBOX AI"><img class="brand-dark" src="/brand-dark.svg" alt="OMNIBOX AI"></div><p class="eyebrow">ПАНЕЛЬ УПРАВЛЕНИЯ</p><h1>Ваш сервер<br>под вашим управлением</h1><p class="muted">Войдите, чтобы управлять моделями и памятью ПК.</p>
-    <label>Пароль панели<input id="password" type="password" autocomplete="current-password" required maxlength="256"></label><button class="primary" type="submit">Войти в панель <span>→</span></button><p id="login-error" class="error" role="alert"></p>
+    <div class="brand-logo"><img class="brand-light" src="/brand-light.svg" alt="OMNIBOX AI"><img class="brand-dark" src="/brand-dark.svg" alt="OMNIBOX AI"></div>
+    <p class="eyebrow">ПАНЕЛЬ И ЧАТ</p><h1>Ваш ИИ на вашем ПК</h1>
+    <div class="field"><label for="password">Пароль панели</label><input id="password" type="password" autocomplete="current-password" required maxlength="256"></div>
+    <button class="btn primary" type="submit">Войти</button><p id="login-error" class="error" role="alert"></p>
   </form>
 </section>
-<div id="dashboard" class="shell" hidden>
-  <aside class="sidebar"><a class="brand" href="#overview"><span class="brand-logo"><img class="brand-light" src="/brand-light.svg" alt="OMNIBOX AI"><img class="brand-dark" src="/brand-dark.svg" alt="OMNIBOX AI"></span></a>
-    <nav aria-label="Разделы"><button data-tab="overview" class="nav active"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg><span class="nav-label">Обзор</span><span class="nav-short" aria-hidden="true">Обзор</span></button><button data-tab="models" class="nav"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l9 5-9 5-9-5 9-5z"/><path d="M3 13l9 5 9-5"/></svg><span class="nav-label">Модели и настройки</span><span class="nav-short" aria-hidden="true">Модели</span></button><button data-tab="connect" class="nav"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1 1"/><path d="M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1-1"/></svg><span class="nav-label">Подключение</span><span class="nav-short" aria-hidden="true">API</span></button><button data-tab="logs" class="nav"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg><span class="nav-label">Журналы</span><span class="nav-short" aria-hidden="true">Журналы</span></button><button data-tab="updates" class="nav"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-14.9-3.9L3 9"/><path d="M3 4v5h5"/><path d="M4 13a8 8 0 0 0 14.9 3.9L21 15"/><path d="M21 20v-5h-5"/></svg><span class="nav-label">Обновления</span><span class="nav-short" aria-hidden="true">Обновления</span></button></nav>
-    <div class="sidebar-bottom"><span id="computer">OMNIBOX</span><span class="muted">Локальный ИИ-сервер</span><button id="logout" class="text-button">Выйти ↗</button></div>
-  </aside>
+
+<div class="app" id="app" hidden>
+  <nav class="nav" aria-label="Разделы">
+    <div class="brand"><svg viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="200" fill="none" stroke="url(#g)" stroke-width="34"/><circle cx="256" cy="256" r="146" fill="none" stroke="url(#g)" stroke-width="6" opacity=".55"/></svg>OMNIBOX AI</div>
+    <ul>
+      <li><a href="#chat" data-go="chat" aria-current="page"><svg class="i"><use href="#i-chat"/></svg>Чат</a></li>
+      <li><a href="#models" data-go="models"><svg class="i"><use href="#i-models"/></svg>Модели</a></li>
+      <li><a href="#server" data-go="server"><svg class="i"><use href="#i-server"/></svg>Сервер</a></li>
+      <li><a href="#settings" data-go="settings"><svg class="i"><use href="#i-settings"/></svg>Настройки</a></li>
+    </ul>
+    <div class="now" id="now">
+      <div class="who"><span class="dot off" id="now-dot"></span><span id="now-model">Модель не запущена</span></div>
+      <div class="muted" id="now-sub"></div>
+      <div class="meter" id="now-meter" hidden><i></i></div>
+      <div class="faint" id="now-vram" hidden></div>
+      <a class="orbal" href="#settings" data-go="settings" data-jump-after="s-cloud" id="now-balance" hidden title="Баланс OpenRouter — открыть настройки"><span><svg class="i"><use href="#i-cloud"/></svg>OpenRouter</span><b id="now-balance-v">—</b></a>
+    </div>
+  </nav>
+
   <main>
-    <header class="topbar"><span class="eyebrow">УПРАВЛЕНИЕ СЕРВЕРОМ</span><div id="topbar-actions" class="topbar-actions"><span id="version" class="version"></span><div class="notifications-anchor"><button id="notifications-button" type="button" class="secondary small icon-button" aria-expanded="false" aria-controls="notifications" title="Уведомления"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span class="visually-hidden">Уведомления</span><span id="notifications-count" class="notifications-count" hidden></span></button><section id="notifications" class="notifications" hidden aria-label="Уведомления"><div class="notifications-head"><strong>Уведомления</strong><div class="button-row"><button id="notifications-clear" type="button" class="text-button small">Очистить</button><button id="notifications-close" type="button" class="text-button small" aria-label="Закрыть">×</button></div></div><p id="notifications-empty" class="muted">Уведомлений пока нет.</p><ol id="notifications-list"></ol></section></div><button id="refresh" class="secondary small with-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"/><path d="M21 3v5h-5"/></svg>Обновить данные</button></div></header>
-    <section id="tab-overview" class="tab">
-      <div class="page-heading"><div><p class="eyebrow accent">Обзор сервера</p><h1>Всё под контролем</h1><p class="muted">Управляйте моделями, настройками загрузки и ресурсами сервера.</p></div><button id="stop-all" class="stop-all-button with-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>Остановить все серверы</button><button id="sleep-pc" class="secondary" type="button" title="Отказ, пока идёт генерация, скачивание или обновление">Перевести ПК в сон</button></div>
-      <div class="summary-grid"><article class="summary-card"><span class="card-label">Видеопамять</span><h2 id="gpu-value">—</h2><progress id="gpu-bar" max="100" value="0"></progress><p id="gpu-caption" class="muted">Опрос при работающем сервере и открытой панели.</p></article><article class="summary-card"><span class="card-label">Активные серверы</span><h2 id="server-count">—</h2><p class="muted">Одновременно один сервер и одна модель.</p></article><article class="summary-card"><div class="card-head"><span class="card-label">Модель в памяти</span><button id="kpi-unload" type="button" class="text-button small" hidden title="Освободить VRAM и RAM: модель выгружается, новый запрос её сам не загрузит">Выгрузить</button></div><h2 id="kpi-model" class="long-value">—</h2><p id="kpi-model-caption" class="muted">Одновременно одна модель.</p></article></div>
-      <p id="telemetry-state" class="muted monitor-note">Опрос ресурсов выключен, пока серверы остановлены.</p><div class="resource-grid"><article class="resource-card"><span class="card-label">CPU</span><strong id="cpu-value">—</strong><progress id="cpu-bar" max="100" value="0"></progress></article><article class="resource-card"><span class="card-label">RAM</span><strong id="ram-value">—</strong><progress id="ram-bar" max="100" value="0"></progress></article><article class="resource-card"><span class="card-label">GPU</span><strong id="gpu-load">—</strong><progress id="gpu-load-bar" max="100" value="0"></progress></article><article class="resource-card"><span class="card-label">Температура GPU</span><strong id="temperature-value">—</strong><span id="power-value" class="muted"></span><span id="fan-value" class="muted"></span></article></div>
-      <div class="panel live-panel"><h2>Текущий сеанс</h2><div id="live-session" aria-live="polite"><p class="muted">Запросов пока нет.</p></div><p class="muted footnote">Показаны счётчики движка. Контекст запроса — input + output; сумма по сеансу не означает занятый KV-кеш. Неизвестные значения обозначены «—».</p></div>
-      <div class="section-heading"><h2>ИИ-движки</h2><span class="muted">Настройки API доступны в разделе подключения</span></div>
-      <div id="engines" class="engine-grid"></div>
-      <div class="section-heading"><h2>Последние операции</h2><span class="muted">Скачивание и запуск выполняются в фоне</span></div><div id="operations" class="operations"><p class="muted">Операций пока нет.</p></div>
-    </section>
-    <section id="tab-models" class="tab" hidden>
-      <div class="page-heading"><div><p class="eyebrow accent">ПАРАМЕТРЫ ЗАГРУЗКИ</p><h1>Модели и настройки</h1><p class="muted">Сохраните параметры для следующего запуска или примените сейчас.</p></div></div>
-      <div class="panel"><div class="panel-top"><label class="backend-label">Движок<select id="model-backend"></select></label><div class="panel-top-side"><div id="settings-mode" class="segmented" role="group" aria-label="Режим настроек"><button type="button" id="mode-basic" class="segment active" aria-pressed="true">Обычный</button><button type="button" id="mode-pro" class="segment" aria-pressed="false">Продвинутый</button></div><span id="model-service" class="badge"></span></div></div>
-        <div id="presets" class="preset-row"><label for="preset-choice">Пресет</label><div class="inline-field"><select id="preset-choice"></select><button id="preset-apply" type="button" class="secondary small">Применить</button><button id="preset-delete" type="button" class="text-button small">Удалить</button></div><small id="preset-hint">«Базовый» — рекомендуемые настройки для этого ПК: подбираются под выбранную модель и VRAM. Модель пресет не меняет; работающий сервер перезапустится с откатом при ошибке.</small><div class="inline-field"><input id="preset-name" type="text" maxlength="40" placeholder="Сохранить текущие настройки как… (например, Ornith 64k)" aria-label="Имя нового пресета"><button id="preset-save" type="button" class="text-button small">Сохранить пресет</button></div></div><form id="settings-form"><div class="form-grid"><label>Модель на диске<select id="model-choice"></select><small id="model-hint"></small></label><label>Контекст, токенов<input name="context" id="context" type="text" placeholder="192k" required><small>32k = 32768 · 128k = 131072 · 192k = 196608</small></label><label>Выгрузка после простоя, минут<input name="idle_minutes" id="idle" type="number" min="1" max="1440" required><small>Движок остаётся доступным и может загрузить модель по запросу.</small></label><label>Размещение модели<select id="placement"><option value="auto">Автоматически · VRAM + RAM</option><option value="cpu">RAM · CPU</option><option value="gpu">VRAM · GPU</option><option value="hybrid">RAM + VRAM · слои GPU</option></select><small id="placement-hint">Изменение применяется при следующей загрузке.</small></label><label class="prism-field">Имя модели в API<input name="alias" id="alias" type="text" maxlength="80" placeholder="из названия модели"><small id="alias-hint">Из названия модели; можно изменить. Это имя указывается во внешнем клиенте.</small><button id="alias-reset" type="button" class="text-button small" hidden>Вернуть имя из модели</button></label><label class="prism-field">Thinking<select name="reasoning" id="reasoning"><option value="">Как в шаблоне модели</option><option value="on">Включено</option><option value="off">Выключено</option></select><small>Размышления перед ответом: точнее, но дольше.</small></label><label class="prism-field">Зрение (изображения)<select name="mmproj" id="mmproj"><option value="auto">Авто — проектор этой модели</option><option value="off">Выключено</option></select><small id="mmproj-hint">Модель видит изображения только с проектором mmproj из её репозитория.</small><button id="mmproj-download" type="button" class="secondary small" hidden>Скачать проектор</button></label></div><p id="mode-hint" class="muted footnote">Слои GPU, эксперты MoE, KV-кеш, сэмплинг и другие параметры — в продвинутом режиме.</p>
-        <details id="advanced"><summary>Память и скорость</summary><div class="form-grid advanced-grid"><label>Слои на GPU<input name="gpu_layers" id="gpu-layers" type="number" min="0" max="999"><small>0 — CPU; 99 для текущего Bonsai — все слои.</small></label><label>Слои MoE в RAM<input name="n_cpu_moe" id="n-cpu-moe" type="number" min="0" max="999"><small>Только для MoE-моделей: эксперты первых N слоёв остаются в RAM, остальное — на GPU. 0 — выключено, 999 — все эксперты.</small></label><label>Flash Attention<select name="flash_attention" id="flash"><option value="on">Включено</option><option value="auto">Автоматически</option><option value="off">Выключено</option></select></label><label>Кеш K<select name="cache_key" id="cache-key"><option>q8_0</option><option>q5_1</option><option>q5_0</option><option>q4_1</option><option>iq4_nl</option><option>q4_0</option><option>bf16</option><option>f16</option></select></label><label>Кеш V<select name="cache_value" id="cache-value"><option>q8_0</option><option>q5_1</option><option>q5_0</option><option>q4_1</option><option>iq4_nl</option><option>q4_0</option><option>bf16</option><option>f16</option></select></label><label>Batch<input name="batch" id="batch" type="number" min="1" max="8192"></label><label>Micro-batch<input name="ubatch" id="ubatch" type="number" min="1" max="8192"></label><label>KV-кеш на GPU<select name="kv_offload" id="kv-offload"><option value="on">Включено</option><option value="off">Выключено · KV в RAM</option></select><small>Выключение освобождает VRAM, но замедляет генерацию.</small></label><label>Потоки CPU<input name="threads" id="threads" type="number" min="1" max="256" placeholder="авто"><small>Пусто — автоматически.</small></label><label>Загрузка весов<select name="load_mode" id="load-mode"><option value="">Автоматически</option><option value="mmap">mmap</option><option value="mlock">Держать в RAM (mlock)</option><option value="mmap+mlock">mmap + mlock</option><option value="none">Без mmap</option></select><small>mlock не даёт Windows выгрузить модель в файл подкачки.</small></label></div><p class="muted">Больший контекст требует больше памяти. q4_0 экономит память и может влиять на качество.</p></details><details id="generation"><summary>Размышления и сэмплинг</summary><div class="form-grid advanced-grid"><label>Уровень размышлений<select name="reasoning_effort" id="reasoning-effort"><option value="">По умолчанию</option><option value="minimal">minimal</option><option value="low">low</option><option value="medium">medium</option><option value="high">high</option><option value="xhigh">xhigh</option><option value="max">max</option></select><small>Работает, если шаблон модели его поддерживает.</small></label><label>Лимит размышлений, токенов<input name="reasoning_budget" id="reasoning-budget" type="number" min="-1" max="1000000" placeholder="без лимита"><small>0 — сразу к ответу; пусто — без лимита.</small></label><label>Temperature<input name="temperature" id="temperature" type="number" min="0" max="2" step="0.05" placeholder="0.8"></label><label>Top-K<input name="top_k" id="top-k" type="number" min="0" max="1000" placeholder="40"></label><label>Top-P<input name="top_p" id="top-p" type="number" min="0" max="1" step="0.01" placeholder="0.95"></label><label>Min-P<input name="min_p" id="min-p" type="number" min="0" max="1" step="0.01" placeholder="0.05"></label><label>Repeat penalty<input name="repeat_penalty" id="repeat-penalty" type="number" min="0" max="2" step="0.01" placeholder="1.0"></label><label>Presence penalty<input name="presence_penalty" id="presence-penalty" type="number" min="-2" max="2" step="0.1" placeholder="0"></label><label>Frequency penalty<input name="frequency_penalty" id="frequency-penalty" type="number" min="-2" max="2" step="0.1" placeholder="0"></label><label>Максимум токенов ответа<input name="max_tokens" id="max-tokens" type="number" min="-1" max="1000000" placeholder="без лимита"></label><label>Seed<input name="seed" id="seed" type="number" min="-1" max="4294967295" placeholder="случайный"></label></div><p class="muted">Пустое поле — значение модели и llama-server. Это значения по умолчанию: если клиент (Jan, Open WebUI, Pi) передаёт свой параметр в запросе, действует его значение.</p></details>
-        <div id="fit-warning" class="fit-warning" role="alert" hidden><p id="fit-text"></p><button id="fit-base" type="button" class="secondary small">Применить «Базовый»</button></div><div class="prism-field estimate-box"><div class="button-row"><button id="estimate-button" type="button" class="text-button">Оценить размещение в VRAM/RAM</button><button id="estimate-apply" type="button" class="text-button" hidden>Подставить рекомендуемые слои</button></div><p id="estimate" class="muted" role="status"></p></div>
-        <p id="settings-status" class="info-line"></p><div class="button-row"><button type="submit" class="secondary">Сохранить</button><button id="apply" type="button" class="primary">Применить и запустить</button><button id="restore" type="button" class="text-button">Восстановить предыдущие</button></div></form><label class="checkbox-label"><input id="auto-restart" type="checkbox"> Перезапускать движок после сбоя</label><p id="restart-status" class="muted footnote">Не больше 2 раз за 10 минут и не при нехватке памяти. Остановка из панели или ai stop не отменяется.</p>
-        <div class="model-memory"><div><h3>Модель в памяти</h3><p id="loaded-model" class="muted">—</p></div><div class="button-row"><button id="load-model" class="secondary">Загрузить</button><button id="unload-model" class="secondary">Выгрузить</button><button id="test-model" class="secondary" type="button" title="Короткий запрос через очередь API: время до первого токена и скорость">Тест модели</button></div></div>
+    <!-- ── CHAT ── -->
+    <section id="chat" class="chat" data-page>
+      <aside class="threads" aria-label="Чаты">
+        <div class="top">
+          <button class="btn ghost sm close-threads" type="button" data-close-threads><svg class="i"><use href="#i-x"/></svg>Закрыть</button>
+          <button class="btn primary" type="button" id="new-chat"><svg class="i"><use href="#i-plus"/></svg>Новый чат</button>
+          <input type="search" id="thread-search" placeholder="Поиск по чатам" aria-label="Поиск по чатам">
+        </div>
+        <ul id="thread-list"></ul>
+        <div class="tfoot">
+          <button class="btn ghost sm" type="button" data-del-all><svg class="i i15"><use href="#i-trash"/></svg>Удалить все чаты</button>
+          <div class="confirm" id="del-all" hidden><span id="del-all-text"></span><div class="cbtns" id="del-all-btns"></div></div>
+        </div>
+      </aside>
+      <div class="conv" id="conv">
+        <div class="drop" id="drop" hidden><svg class="i"><use href="#i-clip"/></svg><b>Отпустите, чтобы прикрепить</b><span>Изображения, видео, аудио, текст, Word, Excel — до 25 МБ</span></div>
+        <div class="conv-head">
+          <button class="btn ghost sm threads-btn" type="button" id="threads-btn" aria-label="Чаты"><svg class="i"><use href="#i-list"/></svg><span class="lbl">Чаты</span></button>
+          <div class="picker">
+            <button type="button" id="picker-btn" aria-expanded="false"><span class="dot off"></span><span class="pname">Выберите модель</span><svg class="i i15"><use href="#i-down"/></svg></button>
+            <div class="menu" id="picker-menu" hidden><input type="search" id="picker-q" placeholder="Найти модель" aria-label="Найти модель"><div class="mscroll" id="picker-list"></div><div class="note" id="picker-note"></div></div>
+          </div>
+          <span class="chatcost" id="chat-cost" hidden tabindex="0"></span><span class="keep" id="keep" tabindex="0" hidden></span>
+        </div>
+        <div class="messages" id="messages"><div id="message-list"></div></div>
+        <div class="composer">
+          <form id="composer">
+            <div class="busy" id="model-busy" hidden><span id="model-busy-text">Модель запускается…</span><div class="meter run"><i></i></div></div>
+            <div class="attach-warn" id="attach-warn" role="alert" hidden></div><div class="attached" id="attached" hidden></div>
+            <textarea id="prompt" rows="2" placeholder="Спросите что-нибудь… Файлы можно перетащить сюда" aria-label="Сообщение"></textarea>
+            <div class="row">
+              <div class="picker asst-picker"><button type="button" id="asst-btn" class="asst-chip" aria-expanded="false" aria-haspopup="true"></button><div class="menu" id="asst-menu" hidden></div></div>
+              <button type="button" class="tog" id="attach-btn" title="Прикрепить файл: изображение, видео, аудио, текст, Word, Excel. Можно перетащить в окно чата." aria-label="Прикрепить файл"><svg class="i i15"><use href="#i-clip"/></svg><span class="lbl">Файл</span></button><input type="file" id="attach-input" multiple hidden>
+              <div class="websearch thinkwrap"><button type="button" class="tog" id="think-btn" aria-haspopup="true"><svg class="i i15"><use href="#i-brain"/></svg><span class="lbl">Размышления</span></button><div class="pop" id="think-pop" hidden></div></div>
+              <div class="websearch webwrap"><button type="button" class="tog" id="web" aria-pressed="false" aria-expanded="false" aria-haspopup="true" aria-label="Веб-поиск" title="Веб-поиск"><svg class="i i15"><use href="#i-globe"/></svg><span class="lbl">Веб-поиск</span></button><div class="pop" id="web-pop" hidden><div class="line"><b>Искать в интернете</b><label class="switch"><input type="checkbox" id="web-on" aria-label="Поиск в интернете"><span></span></label></div><div class="line"><span class="muted">Движок</span><span>SearXNG</span></div><div class="line"><span class="muted">Адрес</span><span class="mono" id="web-host">не задан</span></div><span class="hint" id="web-hint">Модель сама решает, когда искать. Источники появятся под ответом.</span></div></div>
+              <button type="submit" class="send" id="send" aria-label="Отправить"><svg class="i"><use href="#i-up"/></svg></button>
+            </div>
+          </form>
+          <div class="foot" id="chat-foot">ИИ может ошибаться — проверяйте важное.</div>
+        </div>
       </div>
-      <div class="panel"><div class="panel-head"><div><h2>Установленные модели</h2><p class="muted">Все модели выбранного движка на диске: возможности, источник, выбор и удаление. Выбранную в настройках и нужную для отката модель удалить нельзя.</p></div><button id="installed-refresh" type="button" class="text-button small">Обновить список</button></div><p id="installed-status" class="muted" role="status"></p><div id="installed-models" class="installed-list"></div></div>
-      <div class="panel"><h2>Добавить модель</h2><p class="muted">Популярные модели открываются списком файлов (⌕ — поиском свежих версий); модель скачивается вместе с её проектором изображений, если он есть. Скачанная модель появится в «Установленных моделях»; в память она не загружается.</p>
-        <p class="card-label">Популярные</p><div id="popular-models" class="chips"><button type="button" class="chip" data-repo="prism-ml/Ternary-Bonsai-2-27B-gguf" title="prism-ml/Ternary-Bonsai-2-27B-gguf">Bonsai 2 27B</button><button type="button" class="chip" data-repo="ornith-ai/Ornith-1.5-35B-A3B-GGUF" title="ornith-ai/Ornith-1.5-35B-A3B-GGUF">Ornith 1.5 35B-A3B</button><button type="button" class="chip" data-search="gemma-4" title="Поиск «gemma-4» на Hugging Face">Gemma 4 ⌕</button><button type="button" class="chip" data-search="qwen3.8" title="Поиск «qwen3.8» на Hugging Face">Qwen 3.8 ⌕</button><button type="button" class="chip" data-repo="unsloth/gpt-oss-20b-GGUF" title="unsloth/gpt-oss-20b-GGUF">gpt-oss 20B</button><button type="button" class="chip" data-search="mistral-small" title="Поиск «mistral-small» на Hugging Face">Mistral Small ⌕</button><button type="button" class="chip" data-search="deepseek-r1" title="Поиск «deepseek-r1» на Hugging Face">DeepSeek R1 ⌕</button></div>
-        <form id="catalog-form"><div class="catalog-search"><label>Поиск на Hugging Face<input id="catalog-query" minlength="2" maxlength="100" placeholder="gemma, qwen3, Bonsai, uncensored…" required></label><button id="catalog-search-button" class="secondary" type="submit">Найти</button></div></form>
-        <div id="models-progress" class="inline-progress-list" hidden></div><p id="catalog-status" class="muted" role="status"></p><div id="catalog-results"></div>
-        <details id="direct-download"><summary>По прямой ссылке или имени Ollama</summary><p id="download-hint" class="muted"></p><p id="model-disk" class="muted" hidden></p><form id="download-form"><div class="form-grid"><label id="pull-label">Имя модели Ollama<input id="pull-name" placeholder="имя-модели:тег"></label><label id="url-label" hidden>Прямая ссылка на GGUF<input id="download-url" type="url" placeholder="https://huggingface.co/…/resolve/main/…gguf"></label><label id="filename-label" hidden>Имя файла<input id="download-filename" placeholder="model-pq2.gguf"></label><label id="sha-label" hidden>SHA256 (необязательно)<input id="download-sha" maxlength="64" placeholder="Контрольная сумма от автора модели"></label></div><button type="submit" class="secondary">↓ Скачать на ПК</button></form></details>
-        <p class="muted footnote">Источники: <a href="https://huggingface.co/models?library=gguf" target="_blank" rel="noopener noreferrer">Hugging Face ↗</a> · <a href="https://ollama.com/library" target="_blank" rel="noopener noreferrer">Ollama Library ↗</a> · <a href="https://github.com/PrismML-Eng/Bonsai-demo" target="_blank" rel="noopener noreferrer">Bonsai / PrismML ↗</a>. Размер файла не учитывает KV-кеш и контекст; значки возможностей — по тегам автора. Для Bonsai 2 PQ2/PTQ1 нужен PrismML; многотомные GGUF этим загрузчиком не устанавливаются.</p></div>
     </section>
-    <section id="tab-connect" class="tab" hidden>
-      <div class="page-heading"><div><p class="eyebrow accent">ДЛЯ ВНЕШНИХ КЛИЕНТОВ</p><h1>Подключение к ИИ</h1><p class="muted">Выберите OpenAI-совместимый провайдер в Jan или Pi и скопируйте Base URL и имя модели ниже.</p></div></div>
-      <div class="panel"><h2>Сетевой OpenAI API</h2><p class="connection-note">Скопируйте Base URL и Model ниже в Jan/Pi. Панель и API могут использовать один домен и порт: панель на /, API на /v1.</p>
-        <form id="api-settings-form"><div class="form-grid"><label>OpenAI Base URL для клиентов<input id="api-base-url" type="url" placeholder="https://llm.fnx.red/v1" required><small>Через NAS — https://llm.fnx.red/v1 без номера порта. API обслуживает запущенный движок.</small></label><label>Очередь запросов<input id="api-queue-depth" type="number" min="0" max="16" required><small>Сколько запросов ждут текущую генерацию; 0 — сразу отказ 409.</small></label><label>Ожидание в очереди, с<input id="api-queue-timeout" type="number" min="1" max="600" required></label><label>HTTPS-адрес через NAS<input id="api-public-origin" type="text" placeholder="https://llm.fnx.red" autocomplete="off"><small>Reverse proxy на NAS; пусто — панель только в локальной сети.</small></label><label>IP NAS<input id="api-trusted-proxies" type="text" placeholder="192.168.1.10" autocomplete="off"><small>Через запятую. Только с этих адресов принимаются X-Forwarded-* и имя NAS.</small></label></div><label class="checkbox-label"><input id="api-require-key" type="checkbox"> Требовать API key</label><p id="api-state" class="muted"></p><p id="api-no-key-warning" class="warning-line" role="status" hidden>API работает без ключа: любой, кто видит ПК или NAS в сети, может пользоваться моделью. Это допустимо только в закрытой сети — LAN и WireGuard без посторонних устройств.</p><div class="button-row"><button id="save-api" class="secondary" type="submit">Сохранить API</button><button id="generate-api-key" class="text-button" type="button" title="Все прежние ключи сразу перестанут действовать">Заменить все ключи одним новым</button></div></form><div id="api-keys"><h3>API-ключи клиентов</h3><p class="muted footnote">Отдельный ключ для каждого клиента (Jan, Pi, Open WebUI): его можно отозвать, не трогая остальные. Ключ показывается один раз; хранится только его SHA256.</p><div class="table-scroll"><table><thead><tr><th>Имя</th><th>Создан</th><th>Последний запрос</th><th>Запросов</th><th>Токенов</th><th></th></tr></thead><tbody id="api-key-list"></tbody></table></div><div class="button-row"><input id="api-key-name" type="text" maxlength="40" placeholder="Имя клиента, например Jan" aria-label="Имя нового ключа"><button id="add-api-key" class="primary" type="button">Создать ключ</button></div></div>
-        <div id="new-api-key" class="key-result" hidden><p>Новый ключ показан один раз. Сохраните его в Bitwarden; прежний ключ больше не действует.</p><div id="key-copy"></div></div>
-      </div><div id="connections"></div>
-      <div class="panel" id="power-panel"><h2>Запуск и выключение</h2><label class="checkbox-label"><input id="autostart" type="checkbox"> Запускать OmniBox вместе с Windows</label><label>Модель при старте Windows<select id="start-engine"><option value="">Не запускать — выбрать в панели</option><option value="prismml">PrismML с выбранной моделью</option><option value="ollama">Ollama с выбранной моделью</option></select><small>Запускается один раз при загрузке ПК (и командой ai on). Перезапуск службы или обновление остановленную модель не запускают.</small></label><div class="button-row"><button id="shutdown-omnibox" class="secondary" type="button">Выключить OmniBox полностью</button></div><p class="muted footnote">Выключение останавливает движки, панель и API. Включить снова: ai on в терминале от имени администратора или перезагрузка ПК, если включён автозапуск. Команды: ai on, ai off, ai autostart on|off.</p></div>
-      <div class="panel" id="wake-panel"><h2>Сон и пробуждение</h2><p class="muted">Кнопка «Перевести ПК в сон» на обзоре усыпляет ПК, если сейчас нет генерации, скачивания или обновления. Разбудить его можно по Wake-on-LAN — кнопкой в Home Assistant (пример настройки — docs/sleep.md). Пока ПК спит, панель и API недоступны.</p><div id="wake-adapters"></div></div>
-      <div class="panel"><h2>Настройки в Jan и Pi</h2><ol><li>Запустите нужный движок и загрузите модель: API обслуживает запущенный движок.</li><li>В клиенте выберите OpenAI-compatible / Custom OpenAI.</li><li>Вставьте OpenAI Base URL, имя модели и сгенерированный ключ. Если ключ отключён — оставьте поле пустым; при обязательном поле укажите local.</li></ol><p class="muted">Сохранение Base URL не создаёт DNS, сертификат или reverse proxy. Существующее перенаправление NAS → порт панели на ПК обслуживает и /v1. Встроенные API движков остаются локальными.</p></div>
-      <div class="panel"><h2>Пароль панели</h2><form id="password-form"><div class="form-grid"><label>Текущий пароль<input id="password-current" type="password" autocomplete="current-password" required maxlength="256"></label><label>Новый пароль<input id="password-new" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label><label>Повтор нового пароля<input id="password-repeat" type="password" autocomplete="new-password" required minlength="12" maxlength="256"></label></div><p class="muted footnote">Не короче 12 символов. После смены другие сеансы входа завершаются.</p><button class="secondary" type="submit">Сменить пароль</button></form></div>
+
+    <!-- ── MODELS ── -->
+    <section id="models" class="page" data-page hidden>
+      <div class="head">
+        <div><h1>Модели</h1><p>Модели на этом ПК и в OpenRouter. Локальную можно запустить — прежняя остановится сама; облачные работают сразу.</p></div>
+        <button class="btn primary" type="button" id="add-open"><svg class="i"><use href="#i-plus"/></svg>Добавить модель</button>
+      </div>
+      <div class="filters">
+        <div class="seg" role="group" aria-label="Где" id="engine-filter"><button type="button" aria-pressed="true" data-engine="all">Все</button><button type="button" aria-pressed="false" data-engine="local">Локальные</button><button type="button" aria-pressed="false" data-engine="cloud">OpenRouter</button><button type="button" aria-pressed="false" data-engine="fav"><svg class="i i14 lbl-mid"><use href="#i-star"/></svg> Избранные</button></div>
+        <div class="seg" role="group" aria-label="Умеет" id="cap-filter">
+          <button type="button" aria-pressed="false" data-cap="vision">Изображения</button>
+          <button type="button" aria-pressed="false" data-cap="reasoning">Рассуждения</button>
+          <button type="button" aria-pressed="false" data-cap="tools">Функции</button>
+        </div>
+        <span class="small faint mla" id="models-disk"></span>
+      </div>
+      <div class="ops" id="models-ops" hidden></div>
+      <div class="models" id="model-list"><div class="banner">Загружаем список моделей…</div></div>
     </section>
-    <section id="tab-logs" class="tab" hidden><div class="page-heading"><div><p class="eyebrow accent">ДИАГНОСТИКА</p><h1>Журналы</h1><p class="muted">Метаданные запросов и журналы движков. Содержание запросов и ответов в журнал API не записывается.</p></div></div><div class="panel" id="storage-panel"><h2>Место на диске</h2><p id="storage-models">—</p><div id="storage-drives" class="drive-list"></div><p id="storage-summary" class="muted">—</p><p id="storage-warning" class="warning-line" role="status" hidden></p><form id="storage-form"><div class="form-grid"><label>Хранить журналы<select id="log-retention"><option value="h6">6 часов</option><option value="d1">1 день</option><option value="d7">7 дней</option><option value="d14">14 дней</option><option value="d30">30 дней</option><option value="d90">90 дней</option><option value="d365">1 год</option><option value="0">Не удалять по сроку</option><option value="custom">Своё значение…</option></select><span id="log-retention-custom" class="inline-field" hidden><input id="log-retention-value" type="number" min="1" max="8760" aria-label="Срок хранения"><select id="log-retention-unit" aria-label="Единица срока"><option value="hours">часов</option><option value="days">дней</option></select></span><small>Устаревшие журналы удаляются при запуске панели и по кнопке ниже. Каждый файл также ограничен по размеру.</small></label><label>Журнал запросов<select id="request-log"><option value="metadata">Только метаданные</option><option value="content">Метаданные и содержимое</option></select><small>Содержимое — тексты запросов и ответов модели. Хранится открытым текстом в logs/requests/content.jsonl: не больше трёх файлов по 16 МБ и не дольше срока хранения. API key и пароль не записываются. При выключении сохранённое содержимое удаляется.</small></label><label>Предупреждать, если журналы больше, МБ<input id="log-warn" type="number" min="10" max="100000" required><small>Предупреждение появится при входе в панель и здесь.</small></label></div><div class="button-row"><button type="submit" class="secondary">Сохранить</button><button id="storage-clean" type="button" class="text-button">Удалить устаревшие сейчас</button><button id="storage-purge" type="button" class="text-button danger-text">Удалить все журналы</button></div></form></div><div class="panel"><h2>Сеансы модели</h2><div class="table-scroll"><table><thead><tr><th>Сеанс</th><th>Модель</th><th>Запросов</th><th>Input</th><th>Output</th><th>Всего</th></tr></thead><tbody id="session-history"></tbody></table></div></div><div class="panel"><h2>Последние запросы API</h2><p class="muted footnote">До 200 записей. Счётчики без usage остаются неизвестными; итоги сеанса включают только известные значения.</p><div class="table-scroll"><table><thead><tr><th>Время</th><th>Сеанс</th><th>Модель</th><th>Состояние</th><th>Секунд</th><th>Input</th><th>Output</th><th>Всего</th><th>Содержимое</th></tr></thead><tbody id="request-history"></tbody></table></div><p id="journal-status" class="muted"></p><form id="content-search-form" class="button-row"><input id="content-query" type="search" minlength="2" maxlength="200" placeholder="Поиск по тексту запросов и ответов" aria-label="Поиск по содержимому"><button type="submit" class="secondary">Найти</button></form><p class="muted footnote">Поиск работает по сохранённому содержимому (Хранение → «Метаданные и содержимое»). Экспорт сеанса — файл JSONL со всеми его запросами и ответами.</p><div id="content-results"></div><div id="request-content-box" hidden><div class="panel-top"><h3>Содержимое запроса</h3><button id="request-content-close" type="button" class="text-button">Закрыть</button></div><pre id="request-content"></pre></div></div><div class="panel"><div class="panel-top"><h2>События сервера</h2><button id="refresh-logs" class="secondary small">Обновить журналы</button></div><div id="logs"></div></div></section>
-    <section id="tab-updates" class="tab" hidden>
-      <div class="page-heading"><div><p class="eyebrow accent">ПРИЛОЖЕНИЕ</p><h1>Обновления</h1><p class="muted">Последняя версия из приватного репозитория aafnx/omnibox-ai.</p></div></div>
-      <div class="panel"><h2>Версия и обновление</h2><p id="update-version" class="muted">—</p><p id="last-update" class="info-line" hidden></p>
-        <div class="button-row"><button id="update-check" type="button" class="primary">Проверить обновления</button></div>
-        <div id="update-result" class="update-result" hidden><p id="update-summary"></p><pre id="update-notes" hidden></pre><div class="button-row"><button id="update-install" type="button" class="primary" hidden>Обновить</button><a id="update-release-link" class="text-button small" target="_blank" rel="noopener noreferrer" hidden>Страница выпуска ↗</a></div></div>
-        <div id="update-progress" class="inline-progress-list" hidden></div>
-        <details id="update-token-box"><summary id="update-token-summary">GitHub token для обновлений</summary>
-          <p class="muted">Служба OmniBox работает от имени системы и не видит ваш вход в gh, поэтому панели нужен свой токен. Он хранится на ПК зашифрованным, доступен только службе и нужен лишь для проверки и скачивания выпусков.</p>
-          <ol class="token-steps"><li><a id="update-token-link" class="secondary small" target="_blank" rel="noopener noreferrer">Создать токен на GitHub ↗</a> — откроется форма с готовыми настройками: только чтение содержимого, срок 1 год.</li><li>В «Repository access» выберите <strong>Only select repositories → omnibox-ai</strong> и нажмите «Generate token».</li><li>Скопируйте токен и вставьте ниже.</li></ol>
-          <form id="update-token-form" class="inline-field"><input id="update-token" type="password" autocomplete="off" placeholder="github_pat_…" aria-label="GitHub token"><button type="submit" class="secondary small">Проверить и сохранить</button><button id="update-token-forget" type="button" class="text-button small danger-text" hidden>Удалить токен</button></form>
-          <small>Через интернет вводите токен только на https://llm.fnx.red.</small></details>
-        <details id="update-other"><summary>Другая версия или откат</summary><form id="self-update-form" class="inline-field"><input id="update-target" type="text" placeholder="например, 0.20.1" pattern="\d+\.\d+\.\d+" required aria-label="Версия"><button type="submit" class="secondary small">Установить эту версию</button></form></details>
-        <details><summary>Обновление из терминала</summary><p class="muted">ai update работает через вход в gh или сохранённый токен; ai update --check только проверяет. Настройки, пароль, API key и вход в панель сохраняются.</p><div id="update-commands"></div></details>
-        <p class="muted footnote">Работающий движок перейдёт на новую версию при следующем запуске. Если новая панель не запустится, установщик вернёт прежнюю версию.</p></div>
-    <div class="panel" id="engines-panel"><h2>ИИ-движки</h2><p class="muted">Установка, обновление и удаление PrismML и Ollama с GitHub. Список версий загружается по кнопке. Работающий движок перезапускается на новой версии, при ошибке возвращается прежняя; остановленный остаётся остановленным. При удалении модели остаются на диске.</p><div id="engines-progress" class="inline-progress-list" hidden></div><div id="engine-manager" class="engine-manager"></div></div>
+
+    <!-- ── SERVER ── -->
+    <section id="server" class="page" data-page hidden>
+      <div class="head"><div><h1>Сервер</h1><p>Что работает сейчас и сколько ресурсов занято. Данные обновляются, пока открыта вкладка.</p></div>
+        <div class="power" role="group" aria-label="Питание и модели">
+          <button class="pbtn" type="button" data-pc="unload" title="Выгрузить локальные модели из видеопамяти и оперативной памяти ПК. Облачные модели продолжат работать."><svg class="i"><use href="#i-stop"/></svg><span>Выгрузить модели</span></button>
+          <button class="pbtn" type="button" data-pc="sleep" title="Перевести ПК в сон"><svg class="i"><use href="#i-moon"/></svg><span>Сон</span></button>
+          <button class="pbtn danger" type="button" data-pc="poweroff" title="Выключить ПК"><svg class="i"><use href="#i-power"/></svg><span>Выключить ПК</span></button>
+        </div></div>
+      <div class="confirm" id="pc-confirm" hidden><span id="pc-text"></span><button class="btn danger sm" type="button" id="pc-yes">Да</button><button class="btn ghost sm" type="button" id="pc-no">Отмена</button></div>
+      <div class="panel hero">
+        <div class="main" id="hero-main"></div>
+        <div class="stats" id="hero-stats"></div>
+      </div>
+      <div class="ops" id="server-ops" hidden></div>
+      <div class="engines" id="engines"></div>
+      <div class="panel">
+        <header><h2>Последние запросы</h2><button class="btn ghost sm" type="button" id="journals-toggle" aria-expanded="false">Все журналы</button></header>
+        <div class="body tablewrap"><table>
+          <thead><tr><th>Время</th><th>Откуда</th><th>Модель</th><th class="num">Токены</th><th class="num">Скорость</th></tr></thead>
+          <tbody id="recent"></tbody></table><p class="hint" id="recent-note"></p></div>
+      </div>
+      <div class="stack14" id="journals" hidden>
+        <div class="panel"><header><h2>Сеансы моделей</h2></header><div class="body tablewrap"><table><thead><tr><th>Сеанс</th><th>Модель</th><th class="num">Запросов</th><th class="num">Вход</th><th class="num">Ответ</th></tr></thead><tbody id="sessions"></tbody></table></div></div>
+        <div class="panel"><header><h2>Текст запросов</h2></header><div class="body">
+          <form id="content-search" class="copy"><input type="search" id="content-q" minlength="2" maxlength="200" placeholder="Поиск по тексту запросов и ответов" aria-label="Поиск по тексту запросов"><button class="btn" type="submit">Найти</button></form>
+          <span class="hint" id="content-hint">Работает, если в «Настройки → Данные и хранение» включена запись текста запросов.</span>
+          <div id="content-results" class="stack8"></div>
+          <div id="content-box" class="journal" hidden><div class="line"><b>Запрос</b><button class="btn ghost sm" type="button" id="content-close">Закрыть</button></div><pre id="content-text"></pre></div>
+        </div></div>
+        <div class="panel journal"><header><h2>Журналы движков</h2><button class="btn ghost sm" type="button" id="logs-refresh">Обновить</button></header><div class="body" id="engine-logs"></div></div>
+      </div>
     </section>
-    <footer>OMNIBOX AI <span>Панель управляет сервером. Модели доступны через отдельный API.</span></footer>
+
+    <!-- ── SETTINGS ── -->
+    <section id="settings" class="page" data-page hidden>
+      <div class="head"><div><h1>Настройки</h1><p>Подключение клиентов, веб-поиск, хранение данных и обновления.</p></div></div>
+      <div class="settings">
+        <nav class="sub-nav" aria-label="Разделы настроек">
+          <a href="#settings" data-jump="s-api">Подключение</a><a href="#settings" data-jump="s-search">Веб-поиск</a><a href="#settings" data-jump="s-cloud">OpenRouter</a><a href="#settings" data-jump="s-assist">Ассистенты</a>
+          <a href="#settings" data-jump="s-data">Данные и хранение</a><a href="#settings" data-jump="s-sleep">Сон и пробуждение</a>
+          <a href="#settings" data-jump="s-update">Обновления</a><a href="#settings" data-jump="s-panel">Панель</a>
+        </nav>
+        <div class="sections">
+          <div class="panel" id="s-api"><header><h2>Подключение клиентов</h2><span class="pill" id="api-state">API</span></header>
+            <div class="body">
+              <div class="field"><label for="base">Адрес для Jan, Open WebUI, Pi</label><div class="copy"><input id="base" type="text" readonly><button class="btn" type="button" data-copy="base">Копировать</button></div><span class="hint" id="base-hint"></span></div>
+              <div class="line"><div><b>Требовать ключ API</b><div class="small muted">Без ключа к API может обратиться любой в вашей сети.</div></div><label class="switch"><input type="checkbox" id="require-key" aria-label="Требовать ключ API"><span></span></label></div>
+              <div class="warnbox" id="nokey-warn" hidden>Ключ не требуется: любой в LAN и WireGuard может пользоваться моделями.</div>
+              <div class="stack8"><b>Ключи API</b><div class="tablewrap"><table class="keys"><thead><tr><th>Клиент</th><th>Создан</th><th>Последний запрос</th><th class="num">Запросов</th><th></th></tr></thead><tbody id="keys"></tbody></table></div>
+                <div class="copy"><input type="text" id="key-name" maxlength="40" placeholder="Имя клиента, например Ноутбук" aria-label="Имя клиента"><button class="btn" type="button" id="key-add">Создать ключ</button></div>
+                <div class="newkey" id="newkey" hidden><b>Новый ключ — скопируйте сейчас, он больше не будет показан</b><div class="copy"><input id="newkey-v" type="text" readonly><button class="btn" type="button" data-copy="newkey-v">Копировать</button></div></div></div>
+              <details class="more"><summary>Очередь и адрес через NAS</summary>
+                <div class="stack12">
+                  <div class="row2"><div class="field"><label for="queue-depth">Запросов в очереди</label><input id="queue-depth" type="number" min="0" max="16"></div><div class="field"><label for="queue-timeout">Ожидание в очереди, с</label><input id="queue-timeout" type="number" min="1" max="600"></div></div>
+                  <div class="field"><label for="public-url">Адрес API для клиентов</label><input id="public-url" type="url" placeholder="https://llm.example.com/v1"></div>
+                  <div class="field"><label for="public-origin">HTTPS-адрес панели через NAS</label><input id="public-origin" type="url" placeholder="https://llm.example.com"><span class="hint">Вместе с IP NAS: заголовки X-Forwarded-* принимаются только от этих адресов.</span></div>
+                  <div class="field"><label for="trusted">IP NAS (через запятую)</label><input id="trusted" type="text" placeholder="192.168.1.10"></div>
+                  <div><button class="btn" type="button" id="api-save">Сохранить</button></div>
+                </div></details>
+            </div></div>
+          <div class="panel" id="s-search"><header><h2>Веб-поиск</h2><span class="pill" id="search-state">Не проверен</span></header>
+            <div class="body">
+              <div class="field"><label for="searx">Адрес SearXNG</label><div class="copy"><input id="searx" type="url" placeholder="https://search.example.com"><button class="btn" type="button" id="searx-check">Проверить</button></div><span class="hint">Нужен JSON-формат ответа: в settings.yml SearXNG строка <span class="mono">formats: [html, json]</span>.</span></div>
+              <div class="row2">
+                <div class="field"><label for="search-n">Источников на запрос</label><select id="search-n"><option value="3">3</option><option value="5">5</option><option value="8">8</option></select></div>
+                <div class="field"><label for="search-lang">Язык поиска</label><select id="search-lang"><option value="">Как в вопросе</option><option value="ru">Русский</option><option value="en">English</option></select></div>
+              </div>
+              <div class="line"><div><b>Поиск включён в новых чатах</b><div class="small muted">Модель сама решает, когда искать. Без поддержки функций — поиск по каждому вопросу.</div></div><label class="switch"><input type="checkbox" id="search-default" aria-label="Поиск в новых чатах"><span></span></label></div>
+              <div><button class="btn" type="button" id="search-save">Сохранить</button></div>
+            </div></div>
+          <div class="panel" id="s-cloud"><header><h2>OpenRouter</h2><span class="pill" id="or-state">Не подключено</span></header>
+            <div class="body">
+              <div id="or-off"><div class="field"><label for="or-key">Ключ API OpenRouter</label><div class="copy"><input id="or-key" type="password" placeholder="sk-or-v1-…" autocomplete="off"><button class="btn primary" type="button" id="or-connect">Подключить</button></div><span class="hint">Ключ создаётся на openrouter.ai в разделе Keys. Он хранится на ПК в зашифрованном виде и не показывается в панели.</span></div></div>
+              <div id="or-on" class="stack14" hidden>
+                <div class="kv"><div><span class="label">Баланс</span><b id="or-balance">—</b><span class="small faint" id="or-credits"></span></div><div><span class="label">Сегодня</span><b id="or-today">—</b></div><div><span class="label">За 30 дней</span><b id="or-month">—</b></div></div>
+                <div class="warnbox" id="or-low-warn" hidden></div>
+                <div class="orlinks" aria-label="Быстрые ссылки OpenRouter">
+                  <a class="btn sm primary" href="https://openrouter.ai/settings/credits" target="_blank" rel="noopener noreferrer">Пополнить баланс ↗</a>
+                  <a class="btn sm" href="https://openrouter.ai/activity" target="_blank" rel="noopener noreferrer">Активность ↗</a>
+                  <a class="btn sm" href="https://openrouter.ai/settings/keys" target="_blank" rel="noopener noreferrer">Ключи и лимиты ↗</a>
+                  <a class="btn sm" href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer">Каталог моделей ↗</a>
+                </div>
+                <div class="spend">
+                  <div class="line"><b>Расходы за 14 дней</b><span class="small faint">по данным OpenRouter о каждом ответе через OmniBox</span></div>
+                  <div class="chart" id="spend-chart" role="img" aria-label="Расходы по дням за 14 дней"></div><div class="xlabs" id="spend-x"></div>
+                  <details class="small"><summary class="muted">Таблица</summary><div class="tablewrap"><table id="spend-table"></table></div></details>
+                </div>
+                <div class="spend">
+                  <div class="line"><b>По моделям за 30 дней</b><span class="small faint" id="by-source">чат OmniBox и API</span></div>
+                  <div id="by-model" class="bymodel"></div>
+                </div>
+                <div class="line"><div><b>Предупреждать о низком балансе</b><div class="small muted">Уведомление в панели, когда на счёте меньше указанной суммы.</div></div><select id="or-low" class="sel-fit"><option value="1">$1</option><option value="2">$2</option><option value="5">$5</option><option value="0">Не предупреждать</option></select></div>
+                <div class="line"><div><b>Показывать в API OmniBox</b><div class="small muted" id="or-expose-hint">Jan, Open WebUI и Pi увидят избранные модели OpenRouter. Запросы оплачиваются с вашего ключа.</div></div><label class="switch"><input type="checkbox" id="or-expose" aria-label="Показывать модели OpenRouter в API"><span></span></label></div>
+                <div class="line"><div><b>Список моделей</b><div class="small muted" id="or-fetched">Обновляется при открытии раздела «Модели», не чаще раза в час.</div></div><button class="btn sm" type="button" id="or-refresh">Обновить</button></div>
+                <div class="line"><span class="muted small" id="or-keyinfo"></span><button class="btn ghost sm danger-text" type="button" id="or-disconnect">Отключить и удалить ключ</button></div>
+              </div>
+            </div></div>
+          <div class="panel" id="s-assist"><header><h2>Ассистенты</h2><button class="btn sm primary" type="button" data-asst-new><svg class="i i15"><use href="#i-plus"/></svg>Новый ассистент</button></header>
+            <div class="body">
+              <div class="line"><div><b>По умолчанию</b><div class="small muted">В любом чате можно выбрать другого или отключить ассистента.</div></div><select id="asst-default" class="sel-auto"></select></div>
+              <div class="alist" id="asst-list"></div>
+            </div></div>
+          <div class="panel" id="s-data"><header><h2>Данные и хранение</h2><span class="small faint">Всё хранится только на этом ПК</span></header>
+            <div class="body">
+              <div class="row2">
+                <div class="field"><label for="keep-chats">Хранить чаты</label><select id="keep-chats"><option value="24">1 день</option><option value="168">7 дней</option><option value="720">30 дней</option><option value="2160">90 дней</option><option value="0">Всегда</option></select><span class="hint" id="keep-chats-hint"></span></div>
+                <div class="field"><label for="keep-logs">Хранить журналы</label><select id="keep-logs"><option value="h6">6 часов</option><option value="d1">1 день</option><option value="d7">7 дней</option><option value="d30">30 дней</option><option value="d90">90 дней</option><option value="0">Не удалять</option></select><span class="hint" id="keep-logs-hint"></span></div>
+              </div>
+              <div class="line"><div><b>Записывать текст запросов из внешних клиентов</b><div class="small muted">По умолчанию в журнале только время, модель и токены. При выключении записанный текст удаляется.</div></div><label class="switch"><input type="checkbox" id="request-text" aria-label="Записывать текст запросов"><span></span></label></div>
+              <div id="drives" class="stack8"></div>
+              <div class="flexrow"><button class="btn" type="button" data-wipe="chats">Удалить все чаты</button><button class="btn" type="button" data-wipe="logs">Удалить все журналы</button><button class="btn danger" type="button" data-wipe="all">Удалить все данные</button></div>
+              <div class="confirm" id="wipe-confirm" hidden><span id="wipe-text"></span><button class="btn danger sm" type="button" id="wipe-yes">Удалить</button><button class="btn ghost sm" type="button" id="wipe-no">Отмена</button></div>
+            </div></div>
+          <div class="panel" id="s-sleep"><header><h2>Сон и пробуждение</h2></header>
+            <div class="body">
+              <div class="line"><div><b>Запускать OmniBox при включении ПК</b><div class="small muted">Только служба: панель, чат и API. Модели не загружаются.</div></div><label class="switch"><input type="checkbox" id="autostart" aria-label="Автозапуск OmniBox"><span></span></label></div>
+              <div class="line"><div><b>Модель при запуске</b><div class="small muted">Отдельная настройка. Загружается один раз после включения ПК; если её остановить, сама не вернётся.</div></div><select id="start-model" class="sel-auto"><option value="">Не загружать</option></select></div>
+              <div id="macs" class="stack8"></div>
+              <span class="hint">Разбудить ПК можно по Wake-on-LAN, например кнопкой в Home Assistant. Пока ПК спит, панель и API недоступны.</span>
+            </div></div>
+          <div class="panel" id="s-update"><header><h2>Обновления</h2><span class="pill" id="version-pill">Версия</span></header>
+            <div class="body">
+              <div class="line"><div><b id="update-title">Проверьте обновления</b><div class="small muted" id="update-sub"></div></div><div class="flexrow"><button class="btn" type="button" id="update-check">Проверить</button><button class="btn primary" type="button" id="update-install" hidden>Обновить</button></div></div>
+              <div class="ops" id="update-ops" hidden></div>
+              <details class="more" id="token-box"><summary id="token-summary">GitHub token для обновлений</summary>
+                <div class="stack8"><span class="hint">Репозиторий приватный: нужен fine-grained token с доступом Contents: Read к aafnx/omnibox-ai. Хранится на ПК в зашифрованном виде. <a class="ink" id="token-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Создать на GitHub ↗</a></span>
+                  <div class="copy"><input type="password" id="token" autocomplete="off" placeholder="github_pat_…" aria-label="GitHub token"><button class="btn" type="button" id="token-save">Сохранить</button></div>
+                  <div><button class="btn ghost sm danger-text" type="button" id="token-forget" hidden>Удалить токен</button></div></div></details>
+              <details class="more"><summary>Другая версия или откат</summary><div class="copy"><input type="text" id="update-target" placeholder="например, 0.20.5" aria-label="Версия"><button class="btn" type="button" id="update-other">Установить</button></div></details>
+              <details class="more"><summary>ИИ-движки: версии</summary><div class="stack12" id="engine-manager"></div></details>
+            </div></div>
+          <div class="panel" id="s-panel"><header><h2>Панель</h2></header>
+            <div class="body">
+              <div class="line"><span>Тема</span><div class="seg" role="group" aria-label="Тема" id="theme"><button type="button" aria-pressed="true" data-theme-set="system" title="Как в системе" aria-label="Как в системе"><svg class="i"><use href="#i-monitor"/></svg></button><button type="button" aria-pressed="false" data-theme-set="light" title="Светлая" aria-label="Светлая"><svg class="i"><use href="#i-sun"/></svg></button><button type="button" aria-pressed="false" data-theme-set="dark" title="Тёмная" aria-label="Тёмная"><svg class="i"><use href="#i-moon"/></svg></button></div></div>
+              <details class="more"><summary>Пароль панели</summary>
+                <form id="password-form" class="stack8"><input type="password" id="pw-current" autocomplete="current-password" placeholder="Текущий пароль" aria-label="Текущий пароль" required><input type="password" id="pw-new" autocomplete="new-password" minlength="12" placeholder="Новый пароль, от 12 символов" aria-label="Новый пароль" required><input type="password" id="pw-repeat" autocomplete="new-password" minlength="12" placeholder="Повтор нового пароля" aria-label="Повтор нового пароля" required><div><button class="btn" type="submit">Сменить пароль</button></div><span class="hint">После смены другие сеансы входа завершаются.</span></form></details>
+              <div class="line"><span class="muted small" id="panel-version"></span><button class="btn ghost sm" type="button" id="logout">Выйти</button></div>
+            </div></div>
+        </div>
+      </div>
+    </section>
   </main>
 </div>
-<template id="engine-template"><article class="engine-card"><div class="engine-top"><span class="engine-symbol"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 2v4M15 2v4M9 18v4M15 18v4M2 9h4M2 15h4M18 9h4M18 15h4"/></svg></span><span class="badge"></span></div><h2></h2><p class="engine-type muted"></p><dl><div><dt>Модель</dt><dd class="engine-model"></dd></div><div><dt>Контекст</dt><dd class="engine-context"></dd></div><div><dt>До выгрузки</dt><dd class="engine-idle"></dd></div><div><dt>Размещение</dt><dd class="engine-residency"></dd></div></dl><p class="engine-error error"></p><div class="button-row"><button data-action="start" class="primary">Запустить</button><button data-action="stop" class="secondary">Остановить</button><button data-action="settings" class="text-button">Настройки ↗</button></div></article></template>
-</body></html>
+
+<!-- model drawer -->
+<div class="scrim" id="scrim" hidden></div>
+<aside class="drawer" id="drawer" hidden aria-label="Модель">
+  <header class="relh">
+    <button class="btn ghost sm x" type="button" data-close aria-label="Закрыть"><svg class="i"><use href="#i-x"/></svg></button>
+    <span class="label" id="d-engine"></span>
+    <h1 id="d-name" class="dh1"></h1>
+    <span class="small muted mono" id="d-file"></span>
+  </header>
+  <div class="scroll">
+    <section class="stack"><h2>Что умеет</h2><div class="capsx" id="d-caps"></div></section>
+    <section class="stack8"><h2>Изображения и видео</h2>
+      <div class="line small"><span class="muted">Понимает изображения</span><span id="d-img"></span></div>
+      <div class="line small"><span class="muted">Понимает видео</span><span id="d-vid"></span></div>
+      <div class="line small"><span class="muted">Рисует</span><span>Нет</span></div>
+      <span class="hint">Модели PrismML и Ollama отвечают только текстом. Для создания картинок нужен отдельный движок, например Stable Diffusion или FLUX.</span></section>
+    <section class="stack12">
+      <div class="line"><h2>Запуск</h2><span class="small muted" id="d-fit"></span></div>
+      <div class="field"><span class="label">Длина контекста</span>
+        <div class="ctx" id="d-ctx"></div>
+        <div class="custom"><label for="d-custom" class="small muted">Своё значение</label><input id="d-custom" type="text" inputmode="numeric" placeholder="например 48000"><span class="small faint">токенов</span><span class="amsg" id="d-custom-msg" aria-live="polite"></span></div>
+        <div class="membar" id="d-bar" aria-hidden="true"></div>
+        <div class="legend"><span><i class="lw"></i>Модель</span><span><i class="lk"></i>Контекст</span><span><i class="lx"></i>Не помещается</span><span class="faint">| черта — предел видеопамяти</span></div>
+        <div class="verdict" id="d-verdict"></div>
+        <span class="hint" id="d-rec"></span></div>
+      <div class="line" id="d-vision-row"><div><b>Изображения</b><div class="small muted">Подключать проектор изображений</div></div><label class="switch"><input type="checkbox" id="d-vision" aria-label="Изображения"><span></span></label></div>
+      <div class="field" id="d-alias-row"><label for="d-alias">Имя модели в API</label><input id="d-alias" type="text" maxlength="80"><span class="hint">Это имя указывается в Jan, Open WebUI и Pi. Пусто — из названия файла.</span></div>
+      <div class="adv-head" id="d-adv-row"><div><b>Расширенный режим</b><div class="small muted">Кеш, слои, сэмплинг и размышления. Сохраняется только для этой модели.</div></div><label class="switch"><input type="checkbox" id="adv-on" aria-label="Расширенный режим"><span></span></label></div>
+      <div id="adv" class="adv-stack" hidden><div class="adv-status"><span id="adv-count" class="small muted"></span><button class="btn ghost sm" type="button" id="adv-reset" hidden>Сбросить к базовым</button></div><div id="adv-groups"></div></div>
+    </section>
+    <section class="stack8"><h2>Файлы</h2><div id="d-files" class="stack8"></div></section>
+  </div>
+  <footer><span id="d-save-note" class="small faint" aria-live="polite"></span><button class="btn" type="button" data-close>Отмена</button><button class="btn primary" type="button" id="d-save">Сохранить для модели</button></footer>
+</aside>
+
+<!-- assistant editor -->
+<aside class="drawer" id="asst-drawer" hidden aria-label="Ассистент">
+  <header class="relh">
+    <button class="btn ghost sm x" type="button" data-close aria-label="Закрыть"><svg class="i"><use href="#i-x"/></svg></button>
+    <span class="label">Ассистент</span><h1 id="ae-title" class="dh1">Новый ассистент</h1>
+  </header>
+  <div class="scroll">
+    <div class="field"><span class="label">Аватар</span><div class="emo-row"><span id="ae-av"></span><div class="emo-grid" id="ae-emojis" role="group" aria-label="Эмодзи"></div></div><div class="custom"><label for="ae-emoji" class="small muted">Своё эмодзи</label><input id="ae-emoji" class="emo-input" type="text" maxlength="8" placeholder="Вставьте любое"><button class="btn ghost sm" type="button" id="ae-letter">Без эмодзи — буква</button></div></div>
+    <div class="field"><label for="ae-name">Название</label><input id="ae-name" type="text" maxlength="40" placeholder="Например, Домашний админ"><span class="amsg danger-text" id="ae-name-msg"></span></div>
+    <div class="field"><label for="ae-desc">Описание</label><input id="ae-desc" type="text" maxlength="120" placeholder="Коротко: для чего он нужен"><span class="hint">Видно в списке ассистентов. Модели не передаётся.</span></div>
+    <div class="field"><div class="line"><label for="ae-instr">Инструкции</label><label class="btn ghost sm filelabel"><svg class="i i15"><use href="#i-file"/></svg>Загрузить из .md<input type="file" id="ae-file" accept=".md,.txt,text/markdown,text/plain" hidden></label></div>
+      <textarea id="ae-instr" rows="12" placeholder="Кто ты, как отвечать, что учитывать. Можно в Markdown, как AGENTS.md."></textarea>
+      <div class="line"><span class="hint">Передаются модели первым сообщением в каждом запросе этого чата.</span><span class="hint" id="ae-count">0 / 20 000</span></div></div>
+    <div class="row2">
+      <div class="field"><label for="ae-model">Модель</label><select id="ae-model"></select><span class="hint">Если выбрана, чат с этим ассистентом переключится на неё.</span></div>
+      <div class="field"><label for="ae-style">Стиль ответов</label><select id="ae-style"><option value="">Как в модели</option><option value="precise">Точно</option><option value="balanced">Баланс</option><option value="creative">Творчески</option></select></div>
+    </div>
+    <div class="line"><div><b>Веб-поиск</b><div class="small muted">Включать поиск в интернете в чатах с этим ассистентом</div></div><label class="switch"><input type="checkbox" id="ae-web" aria-label="Веб-поиск"><span></span></label></div>
+    <div class="line"><div><b>Ассистент по умолчанию</b><div class="small muted">Подключать в новых чатах</div></div><label class="switch"><input type="checkbox" id="ae-default" aria-label="По умолчанию"><span></span></label></div>
+  </div>
+  <footer><button class="btn ghost sm danger-text sp-right" type="button" id="ae-delete">Удалить</button><button class="btn" type="button" data-close>Отмена</button><button class="btn primary" type="button" id="ae-save">Сохранить</button></footer>
+</aside>
+
+<!-- add model dialog -->
+<div class="dialog" id="add" hidden role="dialog" aria-label="Добавить модель">
+  <header>
+    <button class="btn ghost sm x" type="button" data-close aria-label="Закрыть"><svg class="i"><use href="#i-x"/></svg></button>
+    <h1 class="dh1s">Добавить модель</h1>
+    <div class="seg" role="group" aria-label="Куда" id="add-engine"><button type="button" aria-pressed="true" data-add-engine="prismml">PrismML · GGUF</button><button type="button" aria-pressed="false" data-add-engine="ollama">Ollama</button></div>
+    <form class="copy" id="hf-form"><input type="search" id="hf" placeholder="Название на Hugging Face: gemma, qwen, bonsai…" aria-label="Поиск модели"><button class="btn primary" type="submit">Найти</button></form>
+    <div class="chips" id="add-quick"><button type="button" data-repo="prism-ml/Ternary-Bonsai-2-27B-gguf">Bonsai 2 27B</button><button type="button" data-repo="ornith-ai/Ornith-1.5-35B-A3B-GGUF">Ornith 1.5 35B-A3B</button><button type="button" data-repo="unsloth/gpt-oss-20b-GGUF">gpt-oss 20B</button><button type="button" data-hf="gemma-4">Gemma 4 ⌕</button><button type="button" data-hf="qwen3.8">Qwen 3.8 ⌕</button><button type="button" data-hf="mistral-small">Mistral Small ⌕</button></div>
+    <span class="small muted" id="add-note">Подборка под ваш ПК: модель скачивается вместе с проектором изображений, если он есть.</span>
+  </header>
+  <div class="scroll">
+    <div class="ops" id="add-ops" hidden></div>
+    <div id="add-results" class="stack8"></div>
+    <details class="more" id="add-direct"><summary>По прямой ссылке или имени Ollama</summary>
+      <form id="direct-form" class="stack8">
+        <div id="direct-prism" class="stack8"><input type="url" id="direct-url" placeholder="https://huggingface.co/…/resolve/main/…gguf" aria-label="Ссылка на GGUF"><input type="text" id="direct-name" placeholder="Имя файла, например model-Q4_K_M.gguf" aria-label="Имя файла"><input type="text" id="direct-sha" maxlength="64" placeholder="SHA256 (необязательно)" aria-label="SHA256"></div>
+        <input type="text" id="direct-ollama" placeholder="имя-модели:тег, например qwen3:8b" aria-label="Имя модели Ollama" hidden>
+        <div><button class="btn" type="submit">Скачать на ПК</button></div></form></details>
+  </div>
+</div>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<script src="/app.js"></script>
+<script src="/chat.js"></script>
+<script src="/models.js"></script>
+<script src="/server.js"></script>
+<script src="/settings.js"></script>
+</body>
+</html>

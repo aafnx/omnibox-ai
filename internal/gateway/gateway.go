@@ -420,6 +420,11 @@ func (g *Gateway) generate(w http.ResponseWriter, r *http.Request, cfg *config.C
 		// A client that left gets no answer.
 		return
 	}
+	if client, ok := r.Context().Value(internalRequest{}).(string); ok {
+		g.mu.Lock()
+		record.Client = client
+		g.mu.Unlock()
+	}
 	status, completed := http.StatusBadGateway, false
 	defer func() { g.finish(record, status, completed, c) }()
 	req, _ := http.NewRequestWithContext(ctx, http.MethodPost, target.String(), bytes.NewReader(forward))

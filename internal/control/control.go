@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -240,7 +241,8 @@ func (c *Controller) Apply(name, verb string, prepared *config.Launch) error {
 	if err == nil {
 		return nil
 	}
-	cause := err
+	// The cause is a sentence of its own: its full stop is not doubled below.
+	cause := errors.New(strings.TrimRight(err.Error(), "."))
 	e, _ = c.engine(name)
 	if e == nil || !e.Pending || e.Previous == nil {
 		return cause

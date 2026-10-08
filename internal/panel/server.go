@@ -130,6 +130,10 @@ func New(opt Options) (*Server, error) {
 	files := map[string][2]string{
 		"/":                {"index.html", "text/html; charset=utf-8"},
 		"/app.js":          {"app.js", "text/javascript; charset=utf-8"},
+		"/chat.js":         {"chat.js", "text/javascript; charset=utf-8"},
+		"/models.js":       {"models.js", "text/javascript; charset=utf-8"},
+		"/server.js":       {"server.js", "text/javascript; charset=utf-8"},
+		"/settings.js":     {"settings.js", "text/javascript; charset=utf-8"},
 		"/style.css":       {"style.css", "text/css; charset=utf-8"},
 		"/favicon.svg":     {"favicon.svg", "image/svg+xml"},
 		"/brand-light.svg": {"brand-light.svg", "image/svg+xml"},
