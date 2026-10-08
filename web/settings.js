@@ -130,6 +130,7 @@ byId('request-text').addEventListener('change',e=>api('/api/storage',{action:'sa
 byId('autostart').addEventListener('change',e=>operation({action:'autostart',enabled:e.target.checked}).catch(err=>{e.target.checked=!e.target.checked;fail(err);}));
 byId('start-model').addEventListener('change',e=>api('/api/library',{action:'start-model',model:e.target.value}).then(()=>{S.library.start_model=e.target.value;notice(e.target.value?'Эта модель загрузится после включения ПК.':'После включения ПК модели не загружаются.');}).catch(fail));
 byId('update-check').addEventListener('click',()=>checkUpdate());
+byId('shutdown-omnibox').addEventListener('click',()=>ask(byId('shutdown-confirm'),'Выключить OmniBox? Панель закроется через несколько секунд и откроется снова только после ai on или перезагрузки ПК.').then(yes=>yes&&operation({action:'shutdown'})).catch(fail));
 byId('update-install').addEventListener('click',()=>operation({action:'self-update',version:byId('update-install').dataset.version}).catch(fail));
 byId('update-other').addEventListener('click',()=>{const v=byId('update-target').value.trim();if(!/^\d+\.\d+\.\d+$/.test(v)){notice('Версия — три числа через точку, например 0.20.5.',true);return;}operation({action:'self-update',version:v}).catch(fail);});
 byId('token-save').addEventListener('click',async()=>{const token=byId('token').value.trim();byId('token').value='';if(!token){notice('Вставьте GitHub token.',true);return;}

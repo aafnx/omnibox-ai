@@ -257,6 +257,8 @@
               <div class="line"><div><b>Запускать OmniBox при включении ПК</b><div class="small muted">Только служба: панель, чат и API. Модели не загружаются.</div></div><label class="switch"><input type="checkbox" id="autostart" aria-label="Автозапуск OmniBox"><span></span></label></div>
               <div class="line"><div><b>Модель при запуске</b><div class="small muted">Отдельная настройка. Загружается один раз после включения ПК; если её остановить, сама не вернётся.</div></div><select id="start-model" class="sel-auto"><option value="">Не загружать</option></select></div>
               <div id="macs" class="stack8"></div>
+              <div class="line"><div><b>Выключить OmniBox</b><div class="small muted">Остановит движки, панель, чат и API; ПК останется включённым. Включить снова — команда ai on или перезагрузка ПК.</div></div><button class="btn sm" type="button" id="shutdown-omnibox">Выключить</button></div>
+              <div class="confirm" id="shutdown-confirm" hidden><span></span><button class="btn danger sm" type="button">Выключить</button><button class="btn ghost sm" type="button">Отмена</button></div>
               <span class="hint">Разбудить ПК можно по Wake-on-LAN, например кнопкой в Home Assistant. Пока ПК спит, панель и API недоступны.</span>
             </div></div>
           <div class="panel" id="s-update"><header><h2>Обновления</h2><span class="pill" id="version-pill">Версия</span></header>

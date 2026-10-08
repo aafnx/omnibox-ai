@@ -10,7 +10,7 @@ const ACT_BOT='<div class="mact"><button type="button" data-act="copy" title="К
 const hoursLeft=t=>t.expires?(Date.parse(t.expires)-Date.now())/3600000:Infinity;
 const remain=t=>{const h=hoursLeft(t);return h>=24?`${Math.floor(h/24)} дн.`:h>=1?`${Math.floor(h)} ч`:'<1 ч';};
 const leftText=t=>{const h=hoursLeft(t);return h>=24?`удалится через ${Math.floor(h/24)} ${plural(Math.floor(h/24),'день','дня','дней')}`:h>=1?`удалится через ${Math.floor(h)} ${plural(Math.floor(h),'час','часа','часов')}`:'удалится меньше чем через час';};
-function threadRow(t){const cur=C.chat?.id===t.id;return `<li class="t"><a href="#chat" data-thread="${t.id}" class="${cur?'on':''}"><span>${esc(t.title)}</span><small>${dateShort(t.created)}${t.pinned||!t.expires?'':` · <span class="remain${hoursLeft(t)<24?' soon':''}" title="${leftText(t)}"><svg class="i"><use href="#i-clock"/></svg>${remain(t)}</span>`}</small></a>`+
+function threadRow(t){const cur=C.chat?.id===t.id;return `<li class="t"><a href="#chat" data-thread="${t.id}" class="${cur?'on':''}"><span>${esc(t.title)}</span><small>${dateShort(t.created)}${t.pinned||!t.expires?'':` · <span class="remain${hoursLeft(t)<24?' soon':''}" title="${leftText(t)}"><svg class="i"><use href="#i-clock"/></svg>${esc(remain(t))}</span>`}</small></a>`+
   `<div class="tacts"><button type="button" class="${t.pinned?'on':''}" data-pin="${t.id}" title="${t.pinned?'Открепить':'Закрепить'}" aria-label="${t.pinned?'Открепить':'Закрепить'} «${esc(t.title)}»"><svg class="i"><use href="#i-pin"/></svg></button><button type="button" class="tdel" data-del-thread="${t.id}" title="Удалить" aria-label="Удалить «${esc(t.title)}»"><svg class="i"><use href="#i-trash"/></svg></button></div></li>`;}
 function renderThreads(){const list=byId('thread-list');
   if(C.hits){setHTML(list,C.hits.length?C.hits.map(h=>`<li class="t"><a href="#chat" data-thread="${h.id}"><span>${esc(h.title)}</span><small>${esc(h.snippet||dateShort(h.updated))}</small></a></li>`).join(''):'<li class="group">Ничего не найдено</li>');return;}
@@ -18,7 +18,7 @@ function renderThreads(){const list=byId('thread-list');
   const tg=(title,items)=>{if(!items.length)return '';const key='t:'+title;const shut=collapsed.has(key);return `<li class="group"><button type="button" class="grp-btn tgrp" data-grp="${key}" aria-expanded="${!shut}"><span>${title}</span><span class="grp-n">${items.length}</span>${chev(key)}</button></li>`+(shut?'':items.map(threadRow).join(''));};
   setHTML(list,tg('Закреплённые',pin)+tg('Чаты',rest)||'<li class="group">Чатов пока нет</li>');renderKeep();}
 function renderKeep(){const k=byId('keep');const t=C.chat&&C.threads.find(x=>x.id===C.chat.id);k.hidden=!t||t.pinned||!t.expires;if(k.hidden)return;
-  k.classList.toggle('soon',hoursLeft(t)<24);k.innerHTML=`<svg class="i"><use href="#i-clock"/></svg>${remain(t)}`;k.title=`Создан ${dateShort(t.created)}, ${leftText(t)}. Срок меняется в «Настройки → Данные и хранение».`;}
+  k.classList.toggle('soon',hoursLeft(t)<24);k.innerHTML=`<svg class="i"><use href="#i-clock"/></svg>${esc(remain(t))}`;k.title=`Создан ${dateShort(t.created)}, ${leftText(t)}. Срок меняется в «Настройки → Данные и хранение».`;}
 async function loadThreads(){const d=await api('/api/chats');C.threads=d.chats||[];renderThreads();}
 
 // ── one chat ──

@@ -18,6 +18,7 @@ const ADV=[
  {g:'Память и скорость',k:'ubatch',l:'Микропакет',t:'num',d:'512',p:[['128','минимум памяти'],['256','экономно'],['512','баланс для RTX 5080'],['1024','быстрее, больше пиковая память']],tip:'Размер части пакета, которую видеокарта считает за раз.\nВлияние: 512 — хороший баланс. Больше — чуть быстрее чтение, больше пиковая видеопамять.'},
  {g:'Память и скорость',k:'threads',l:'Потоки процессора',t:'num',d:'авто',p:[['авто','по числу физических ядер'],['4','оставить ядра другим программам'],['8','обычно оптимально'],['16','все ядра']],tip:'Сколько ядер CPU использовать для слоёв и экспертов в RAM.\nВлияние: важно, только если часть модели на процессоре.'},
  {g:'Память и скорость',k:'load_mode',l:'Загрузка модели',t:'sel',o:['с диска по мере нужды','целиком в память'],d:'с диска по мере нужды',tip:'Как читать файл модели.\n«По мере нужды» — быстрый старт, файл читается системой постепенно.\n«Целиком» — дольше запуск, но первый ответ без задержек на чтение с диска.'},
+ {g:'Память и скорость',k:'idle_minutes',l:'Выгружать при простое',t:'num',d:'никогда',p:[['никогда','модель остаётся в памяти'],['15','через 15 минут без запросов'],['30','через полчаса'],['60','через час']],tip:'Через сколько минут без запросов модель выгружается из видеопамяти; движок продолжает работать.\nСледующий запрос загрузит её снова — первый ответ придёт на 10–30 секунд позже.'},
  {g:'Ответы',k:'temperature',l:'Температура',t:'num',d:'как в модели',p:[['0.2','точно: код, факты, расчёты'],['0.5','сдержанно'],['0.7','баланс для общения'],['1.0','творчески: тексты, идеи']],tip:'Насколько случайны ответы.\n0,2–0,5 — точнее и предсказуемее.\n0,8–1,0 — разнообразнее.\nНа скорость не влияет.'},
  {g:'Ответы',k:'top_p',l:'Top-P',t:'num',d:'как в модели',p:[['0.8','строго'],['0.9','чуть строже обычного'],['0.95','обычно'],['1.0','выключен']],tip:'Выбор слова только из самых вероятных, пока их суммарная вероятность не достигнет P.\nМеньше — строже ответы.'},
  {g:'Ответы',k:'top_k',l:'Top-K',t:'num',d:'как в модели',p:[['20','строго'],['40','обычно'],['64','разнообразнее'],['0','выключен']],tip:'Выбор только из K самых вероятных слов. 20–40 — обычные значения.'},
@@ -51,7 +52,7 @@ function fromConfig(s){const a={};for(const x of ADV){let v=s?.[x.k];if(v===unde
 function toConfig(a){const s={};for(const x of ADV){const v=a[x.k];if(v===undefined||v===x.d)continue;const w=WORDS[x.k];
   if(w){if(w[v]!==undefined)s[x.k]=w[v];continue;}
   if(v===AUTO[x.k]){s[x.k]=x.k==='gpu_layers'?'999':'999';continue;}
-  if(['как в модели','без предела','случайное','авто'].includes(v))continue;s[x.k]=String(v).replace(',','.');}return s;}
+  if(['как в модели','без предела','случайное','авто','никогда'].includes(v))continue;s[x.k]=String(v).replace(',','.');}return s;}
 
 // ── where a context fits: weights + KV cache + buffers against the GPU's memory ──
 function kvBytes(m,ctx,a){const mem=m.memory;if(!mem)return 0;const ck=a.cache_key||'q8_0',cv=a.cache_value||'q8_0';return ctx*(mem.kv_key_per_token*CACHE_BYTES[ck]+mem.kv_value_per_token*CACHE_BYTES[cv]);}
@@ -142,7 +143,7 @@ function updateMeta(){ADV.forEach(x=>{const el=document.querySelector(`[data-fie
 // Impossible values are errors and block saving; legal but doubtful ones are warnings.
 function check(m,a,ctx){const E={},layers=m.memory?.layers||999,cores=navigator.hardwareConcurrency||16;
   const err=(k,t)=>{E[k]={lv:'err',t};},warn=(k,t)=>{if(!E[k])E[k]={lv:'warn',t};};
-  const word=k=>{const d=ADV.find(x=>x.k===k).d;return a[k]===undefined||a[k]===d||['все','авто','как в модели','без предела','случайное'].includes(a[k]);};
+  const word=k=>{const d=ADV.find(x=>x.k===k).d;return a[k]===undefined||a[k]===d||['все','авто','как в модели','без предела','случайное','никогда'].includes(a[k]);};
   const val=k=>Number(String(a[k]).replace(',','.'));
   const int=(k,lo,hi,why)=>{if(word(k))return null;const x=val(k);if(!Number.isFinite(x)){err(k,'Нужно целое число');return null;}if(!Number.isInteger(x)){err(k,'Нужно целое число, без дробной части');return null;}if(x<lo){err(k,`Не меньше ${fmtN(lo)}`);return null;}if(x>hi){err(k,`Не больше ${fmtN(hi)}${why?' — '+why:''}`);return null;}return x;};
   const real=(k,lo,hi,open)=>{if(word(k))return null;const x=val(k);if(!Number.isFinite(x)){err(k,'Нужно число, например 0.7');return null;}if(open?x<=lo:x<lo){err(k,open?`Больше ${lo}`:`Не меньше ${lo}`);return null;}if(x>hi){err(k,`Не больше ${hi}`);return null;}return x;};
@@ -150,7 +151,7 @@ function check(m,a,ctx){const E={},layers=m.memory?.layers||999,cores=navigator.
   const gl=int('gpu_layers',0,layers,`у модели ${layers} слоёв`);if(gl===0)warn('gpu_layers','Только процессор: ответы в 10 и более раз медленнее.');else if(gl!==null&&f.level==='gpu')warn('gpu_layers','Модель помещается в видеопамять целиком — с этим значением она будет медленнее.');
   const moe=int('n_cpu_moe',0,layers,`у модели ${layers} слоёв`);if(!(m.memory?.experts>1)&&!word('n_cpu_moe')&&!E.n_cpu_moe&&moe!==0)warn('n_cpu_moe','У этой модели нет экспертов MoE: настройка ни на что не влияет.');
   const b=int('batch',32,8192),ub=int('ubatch',32,8192),bb=b??2048;if(ub!==null&&ub>bb)err('ubatch',`Не больше пакета чтения запроса (${fmtN(bb)})`);
-  int('threads',1,256,'');const t=real('temperature',0,2);if(t===0)warn('temperature','Ответ всегда одинаковый — подходит только для тестов.');else if(t>1.3)warn('temperature','Ответы могут стать бессвязными.');
+  int('threads',1,256,'');int('idle_minutes',1,1440,'это сутки');const t=real('temperature',0,2);if(t===0)warn('temperature','Ответ всегда одинаковый — подходит только для тестов.');else if(t>1.3)warn('temperature','Ответы могут стать бессвязными.');
   const tp=real('top_p',0,1,true);if(tp!==null&&tp<.5)warn('top_p','Очень строго: ответы станут однообразными.');
   const tk=int('top_k',0,1000);if(tk!==null&&tk>0&&tk<=5)warn('top_k','Почти не остаётся вариантов: ответы шаблонные.');
   const mp=real('min_p',0,1);if(mp>.3)warn('min_p','Слишком строго: ответы обедняются.');
