@@ -40,7 +40,7 @@ type Request struct {
 }
 
 // Actions the panel may request.
-var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart", "self-update", "preset-save", "preset-delete", "preset-apply", "model-test", "sleep", "autostart", "start-engine", "shutdown"}
+var Actions = []string{"start", "stop", "restart", "stopall", "save", "apply", "restore", "load", "unload", "pull", "download", "engine-install", "engine-update", "engine-remove", "model-delete", "auto-restart", "self-update", "preset-save", "preset-delete", "preset-apply", "model-test", "sleep", "autostart", "start-engine", "shutdown", "model-start", "poweroff", "start-model"}
 
 // ParseRequest validates a panel operation body; unknown fields are refused.
 func ParseRequest(body map[string]any) (Request, error) {
@@ -110,6 +110,13 @@ func ParseRequest(body map[string]any) (Request, error) {
 	}
 	if r.Token != "" && r.Action != "self-update" {
 		return r, errors.New("token нужен только для обновления программы.")
+	}
+	if r.Action == "model-start" {
+		name, _, ok := config.SplitKey(r.Model)
+		if !ok || name == "cloud" {
+			return r, errors.New("Нужна локальная модель: prismml:<файл> или ollama:<имя>.")
+		}
+		r.Engine = name
 	}
 	if strings.HasPrefix(r.Action, "engine-") {
 		if !slices.Contains(config.EngineNames, r.EngineID) {
@@ -181,6 +188,39 @@ func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
 			}
 		}()
 		return "OmniBox выключается: движки остановлены, панель и API остановятся через несколько секунд. Включить снова — ai on (или перезагрузка, если включён автозапуск).", nil
+	}
+	switch r.Action {
+	case "model-start":
+		return c.StartModel(ctx, r.Model)
+	case "start-model":
+		// The model loaded once after the computer boots; the service itself starts by autostart.
+		if r.Model != "" {
+			if name, _, ok := config.SplitKey(r.Model); !ok || name == "cloud" {
+				return "", errors.New("Нужна локальная модель или пусто.")
+			}
+		}
+		err := c.Store.Update(func(cfg *config.Config) error {
+			cfg.Panel.StartModel = r.Model
+			if r.Model != "" {
+				cfg.Panel.StartEngine = ""
+			}
+			return nil
+		})
+		if r.Model == "" {
+			return "После включения ПК модели не загружаются.", err
+		}
+		return "Эта модель будет загружаться один раз после включения ПК.", err
+	case "poweroff":
+		if c.PowerOff == nil {
+			return "", errors.New("Выключение ПК недоступно в этом режиме.")
+		}
+		go func() {
+			time.Sleep(SleepDelay)
+			if err := c.PowerOff(); err != nil {
+				c.say("Не удалось выключить ПК: %v", err)
+			}
+		}()
+		return "ПК выключается. Включить его можно через Wake-on-LAN (Home Assistant) или кнопкой питания.", nil
 	}
 	if r.Action == "sleep" {
 		if c.Sleep == nil {
