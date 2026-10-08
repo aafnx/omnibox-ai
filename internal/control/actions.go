@@ -279,15 +279,19 @@ func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
 			if !ok {
 				return fmt.Errorf("Пресета «%s» нет.", r.Model)
 			}
+			fit := ""
+			if p.Auto && c.Tune != nil {
+				p.Settings, fit = c.Tune(name, e, p.Settings)
+			}
 			prepared, err := c.prepare(name, e, p.Settings)
 			if err != nil {
 				return err
 			}
 			if s, err := c.Services.Query(config.ServiceName(name)); err != nil || s.State != platform.Running {
-				message = fmt.Sprintf("%s: пресет «%s» сохранён для следующего запуска.", label, p.Name)
+				message = fmt.Sprintf("%s: пресет «%s» сохранён для следующего запуска.%s", label, p.Name, fit)
 				return c.Save(name, prepared)
 			}
-			message = fmt.Sprintf("%s: пресет «%s» применён. Движок готов.", label, p.Name)
+			message = fmt.Sprintf("%s: пресет «%s» применён. Движок готов.%s", label, p.Name, fit)
 			return c.Apply(name, "restart", &prepared)
 		})
 		return message, err

@@ -336,4 +336,6 @@ body>.theme-switch{position:absolute;top:18px;right:20px;z-index:10}
 @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 .preset-row{display:grid;gap:10px;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid var(--border)}
 .estimate-box{margin:6px 0 14px}
+.fit-warning{display:flex;gap:12px;align-items:center;justify-content:space-between;margin:6px 0 10px;padding:10px 14px;border:1px solid color-mix(in srgb,var(--warn) 35%,transparent);border-radius:var(--radius-s);background:var(--warn-soft);color:var(--warn);font-size:13px}
+.fit-warning p{margin:0}
 .content-match{padding:10px 0;border-bottom:1px solid var(--border)}

@@ -61,10 +61,15 @@ func (c *Controller) Engines() []EngineInfo {
 }
 
 // defaultLaunch is the launch of a newly installed engine: it starts once a model is chosen.
+// defaultLaunch starts a new engine with the base preset's values.
 func defaultLaunch(name, exe string) config.Launch {
 	settings := map[string]string{"context": "32768"}
 	if name == config.Ollama {
 		settings["keep_alive"] = "30m"
+	} else {
+		for _, key := range []string{"flash_attention", "cache_key", "cache_value", "batch", "ubatch"} {
+			settings[key] = config.BaseSettings(name)[key]
+		}
 	}
 	return config.Launch{Executable: exe, Settings: settings}
 }
