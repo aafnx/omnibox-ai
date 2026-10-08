@@ -111,9 +111,10 @@ func OllamaDisk(dir string) []Details {
 			var c struct {
 				ModelType string `json:"model_type"`
 				FileType  string `json:"file_type"`
+				Family    string `json:"model_family"`
 			}
 			if json.Unmarshal([]byte(cfg), &c) == nil {
-				det.Params, det.Quant = c.ModelType, c.FileType
+				det.Params, det.Quant, det.Family = c.ModelType, c.FileType, c.Family
 			}
 		}
 		if meta, err := header(blob); err == nil {
