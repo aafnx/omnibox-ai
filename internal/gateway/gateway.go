@@ -49,6 +49,8 @@ type Gateway struct {
 	Dir      string // logs/requests
 	Now      func() time.Time
 	HTTP     *http.Client
+	// Cloud serves the exposed OpenRouter models; nil keeps /v1 local only.
+	Cloud CloudRoute
 
 	mu            sync.Mutex
 	gen           uint64
@@ -216,7 +218,16 @@ func (g *Gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer g.inFlight.Add(-1)
+	if model, body, ok := g.cloudModel(r); ok {
+		g.cloudGenerate(w, r, model, body)
+		return
+	}
 	t, gen, err := g.resolve()
+	if err != nil && r.Method == http.MethodGet && len(g.cloudList()) > 0 {
+		// No local model runs: the exposed cloud models are still there.
+		writeModels(w, g.cloudList())
+		return
+	}
 	if err != nil {
 		var a *admissionError
 		errors.As(err, &a)
@@ -264,6 +275,10 @@ func (g *Gateway) models(w http.ResponseWriter, r *http.Request, target *url.URL
 			data = append(data, m)
 		}
 	}
+	writeModels(w, append(data, g.cloudList()...))
+}
+
+func writeModels(w http.ResponseWriter, data []map[string]any) {
 	body, _ := json.Marshal(map[string]any{"object": "list", "data": data})
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
