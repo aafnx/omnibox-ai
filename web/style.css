@@ -576,3 +576,7 @@ details.think .in{padding:8px 12px;color:var(--muted);white-space:pre-wrap;max-h
 .sprite{position:absolute;width:0;height:0;overflow:hidden}
 .verdict.unknown{background:var(--surface2);color:var(--muted)}
 .custom input{width:150px}
+
+/* The attach button sits on the right next to send: the left side holds the chat's settings. */
+.composer .attach-r{margin-left:auto;min-width:0;width:34px;height:34px;padding:0;border-radius:50%}
+.composer .attach-r~.send{margin-left:0}
