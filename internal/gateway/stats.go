@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -264,7 +265,7 @@ func (c *capture) line(r *Record) ([]byte, error) {
 	}
 	e := entry{ID: r.ID, SessionID: r.SessionID, Engine: r.Engine, Model: r.Model, Route: r.Route, Started: r.Started, Status: r.Status, Truncated: c.truncated, Request: json.RawMessage("null")}
 	if c.request != "" {
-		e.Request = rawOrText(c.request)
+		e.Request = rawOrText(dropImages(c.request))
 	}
 	if c.body != nil {
 		e.Response = rawOrText(*c.body)
@@ -273,6 +274,17 @@ func (c *capture) line(r *Record) ([]byte, error) {
 		e.Text, e.Reasoning = &t, c.reasoning.String()
 	}
 	return json.Marshal(e)
+}
+
+var inlineImage = regexp.MustCompile(`data:(image/[a-zA-Z0-9.+-]+);base64,[A-Za-z0-9+/=]+`)
+
+// dropImages replaces images sent inline (base64) with their size: the journal keeps the text of
+// a conversation, and a few photos would fill its file.
+func dropImages(s string) string {
+	return inlineImage.ReplaceAllStringFunc(s, func(m string) string {
+		kind := inlineImage.FindStringSubmatch(m)[1]
+		return fmt.Sprintf("data:%s;base64,[изображение %d КБ не сохранено]", kind, len(m)*3/4/1024)
+	})
 }
 
 // rotate keeps the file and two older copies once it reaches limit.

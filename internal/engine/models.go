@@ -22,7 +22,7 @@ type Model struct {
 var (
 	quantPattern = regexp.MustCompile(`(?i)(?:^|[-_.])((?:UD-)?(?:I?Q\d_[A-Z0-9_]+?|Q\d_\d|T?Q\d_\d|PQ\d_\d|PTQ\d(?:_\d)?|MXFP4|NVFP4|BF16|F16|F32))(?:[-_.](?:\d{5}-of-\d{5}\.)?gguf$|\.gguf$)`)
 	splitPart    = regexp.MustCompile(`^(.+)-(\d{5})-of-(\d{5})\.gguf$`)
-	projector    = regexp.MustCompile(`(?i)mmproj|projector`)
+	projector    = config.ProjectorFile
 )
 
 // Quant extracts the quantization from a GGUF file name, such as Q4_K_M or PQ2_0.

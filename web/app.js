@@ -15,7 +15,7 @@ themes.forEach(t=>$(`theme-${t}`).addEventListener('click',()=>{theme=t;applyThe
 // One switch: top right of the login screen, inside the top bar of the dashboard.
 function placeThemeSwitch(inDashboard){const target=inDashboard?$('topbar-actions'):document.body;if(target)target.append($('theme-switch'));}
 themeMedia.addEventListener('change',()=>{if(theme==='system')applyTheme(theme);});
-const fields = {placement:'placement',context:'context',idle_minutes:'idle',alias:'alias',gpu_layers:'gpu-layers',n_cpu_moe:'n-cpu-moe',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch',kv_offload:'kv-offload',threads:'threads',load_mode:'load-mode',reasoning:'reasoning',reasoning_effort:'reasoning-effort',reasoning_budget:'reasoning-budget',temperature:'temperature',top_k:'top-k',top_p:'top-p',min_p:'min-p',repeat_penalty:'repeat-penalty',presence_penalty:'presence-penalty',frequency_penalty:'frequency-penalty',max_tokens:'max-tokens',seed:'seed'};
+const fields = {placement:'placement',context:'context',idle_minutes:'idle',alias:'alias',mmproj:'mmproj',gpu_layers:'gpu-layers',n_cpu_moe:'n-cpu-moe',flash_attention:'flash',cache_key:'cache-key',cache_value:'cache-value',batch:'batch',ubatch:'ubatch',kv_offload:'kv-offload',threads:'threads',load_mode:'load-mode',reasoning:'reasoning',reasoning_effort:'reasoning-effort',reasoning_budget:'reasoning-budget',temperature:'temperature',top_k:'top-k',top_p:'top-p',min_p:'min-p',repeat_penalty:'repeat-penalty',presence_penalty:'presence-penalty',frequency_penalty:'frequency-penalty',max_tokens:'max-tokens',seed:'seed'};
 const labels = {'engine-install':'Установка движка','engine-update':'Обновление движка','engine-remove':'Удаление движка','model-delete':'Удаление модели',start:'Запуск',stop:'Остановка',restart:'Перезапуск',stopall:'Остановка всех серверов',save:'Сохранение',apply:'Применение',restore:'Восстановление','auto-restart':'Автоперезапуск','self-update':'Обновление программы','preset-save':'Сохранение пресета','preset-delete':'Удаление пресета','preset-apply':'Применение пресета','model-test':'Тест модели',sleep:'Сон ПК',autostart:'Автозапуск','start-engine':'Модель при старте',shutdown:'Выключение OmniBox',load:'Загрузка',unload:'Выгрузка',pull:'Скачивание',download:'Скачивание GGUF'};
 async function api(path, body) {
   const response = await fetch(path, {method:body === undefined?'GET':'POST',credentials:'same-origin',headers:body === undefined?{}:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:body === undefined?undefined:JSON.stringify(body)});
@@ -57,7 +57,7 @@ async function refresh(gpu,snapshotRequested=gpu) {
   const [data,apiConfig,stats]=await Promise.all([api(`/api/status${gpu?'?gpu=1':''}`),api('/api/gateway'),api('/api/activity')]);activity=stats; snapshot=data; $('version').textContent=`v${data.version}`; $('computer').textContent=data.computer;
   $('server-count').textContent=`${data.backends.filter(b=>b.service==='Running').length} / ${data.backends.length}`; renderModelSummary();
   if(gpu) { const g=data.gpu?.[0]; $('gpu-value').textContent=g?`${(g.used/1024).toFixed(1)} / ${(g.total/1024).toFixed(1)} ГБ`:'Нет данных'; $('gpu-bar').value=g?g.used/g.total*100:0; $('gpu-caption').textContent=g?`${g.name} · свободно ${(g.free/1024).toFixed(1)} ГБ`:'nvidia-smi недоступен.'; }
-  renderEngines(); renderOperations(data.operations||[]);
+  renderEngines(); renderOperations(data.operations||[]); renderInlineProgress(data.operations||[]);
   for(const id of ['model-backend']) { const select=$(id), old=select.value; select.replaceChildren(); data.backends.forEach(b=>select.add(new Option(engineName(b.name),b.name))); select.value=data.backends.some(b=>b.name===old)?old:data.default_backend; }
   if(!selectedBackend)selectedBackend=data.default_backend;
   $('model-backend').value=selectedBackend;
@@ -108,11 +108,20 @@ function renderEngines() {
 const completed = new Set();
 // Download progress: done of total, speed and time left.
 function transferText(op){
-  const gb=n=>(n/1024**3).toFixed(2);const percent=Math.floor(100*(op.bytes_done||0)/op.bytes_total);
-  let text=`${gb(op.bytes_done||0)} из ${gb(op.bytes_total)} ГБ (${percent}%)`;
+  const big=op.bytes_total>=1024**3;const size=n=>big?(n/1024**3).toFixed(2):(n/1024**2).toFixed(1);const percent=Math.floor(100*(op.bytes_done||0)/op.bytes_total);
+  let text=`${size(op.bytes_done||0)} из ${size(op.bytes_total)} ${big?'ГБ':'МБ'} (${percent}%)`;
   if(op.bytes_per_second>0){const left=(op.bytes_total-(op.bytes_done||0))/op.bytes_per_second;text+=` · ${(op.bytes_per_second/1024**2).toFixed(1)} МБ/с · осталось ${left>=3600?Math.floor(left/3600)+' ч '+Math.floor(left%3600/60)+' мин':Math.ceil(left/60)+' мин'}`;}
   return text;
 }
+// Running operations are also shown where they were started: model downloads under «Добавить
+// модель», engine installs among the engines, the program update next to its form.
+const inlineProgress={'models-progress':['download','pull','model-delete'],'engines-progress':['engine-install','engine-update','engine-remove'],'update-progress':['self-update']};
+function progressRow(op){const row=document.createElement('div');row.className='inline-progress';
+  const title=document.createElement('span');title.className='inline-progress-title';title.textContent=`${labels[op.action]||op.action}${op.backend?' · '+engineName(op.backend):''}`;
+  const bar=document.createElement('progress');if(op.bytes_total){bar.max=op.bytes_total;bar.value=op.bytes_done||0;}
+  const text=document.createElement('small');text.className='muted';text.textContent=op.bytes_total?transferText(op):op.bytes_done?`${(op.bytes_done/1024**2).toFixed(1)} МБ`:`${Math.floor(op.elapsed_seconds||0)} с`;
+  row.append(title,bar,text);return row;}
+function renderInlineProgress(operations){Object.entries(inlineProgress).forEach(([id,actions])=>{const running=operations.filter(o=>o.state==='running'&&actions.includes(o.action));$(id).replaceChildren(...running.map(progressRow));$(id).hidden=!running.length;});}
 function renderOperations(operations) {
   $('operations').replaceChildren();
   let notified = false;
@@ -180,7 +189,7 @@ function renderSettings() {
   $('model-hint').textContent=b.type==='prismml'?'GGUF из каталога модели на ПК.':'Для списка моделей Ollama должна быть запущена.';
   $('placement').querySelectorAll('option').forEach(o=>o.hidden=b.type==='ollama'&&['gpu','hybrid'].includes(o.value));
   $('placement-hint').textContent=b.type==='ollama'?'Ollama: RAM/CPU или автоматическое распределение. Полностью VRAM гарантировать нельзя.':'VRAM: попытка загрузить все слои на GPU; RAM + VRAM: число слоёв задаётся ниже. Для MoE-моделей больше VRAM выберите VRAM и задайте «Слои MoE в RAM». При нехватке памяти запуск откатится.';
-  Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');aliasModel=$('model-choice').value;
+  ensureProjectorOption(s.mmproj);Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');aliasModel=$('model-choice').value;renderProjectorHint();
   document.querySelectorAll('.prism-field').forEach(el=>el.hidden=b.type!=='prismml');applySettingsMode();syncKvOffload();
   $('settings-status').textContent=b.pending?'Есть сохранённые настройки. Они ещё не применены к работающему серверу.':b.type==='ollama'?'Серверные значения по умолчанию. Параметры внешнего клиента могут их переопределить.':'При ошибке запуска с новыми настройками выполняется откат.';
   $('restore').disabled=!b.can_restore;
@@ -206,7 +215,7 @@ function renderPresets(b){
 // The estimate reads only the GGUF header and is asked for by the owner, never by a timer.
 let lastEstimate=null;
 async function estimatePlacement(){
-  const q=new URLSearchParams({model:$('model-choice').value,context:$('context').value.trim(),cache_key:$('cache-key').value,cache_value:$('cache-value').value});
+  const q=new URLSearchParams({model:$('model-choice').value,context:$('context').value.trim(),cache_key:$('cache-key').value,cache_value:$('cache-value').value,mmproj:$('mmproj').value||'auto'});
   $('estimate').textContent='Оценка…';$('estimate-apply').hidden=true;
   try{lastEstimate=await api(`/api/estimate?${q}`);$('estimate').textContent=lastEstimate.text;$('estimate-apply').hidden=lastEstimate.placement!=='hybrid';}
   catch(e){lastEstimate=null;$('estimate').textContent=e.message;}
@@ -304,9 +313,16 @@ const capabilityLabels={reasoning:'Рассуждения',tools:'Инструм
 const capabilityHints={reasoning:'Шаблон модели умеет размышлять перед ответом (thinking)',tools:'Шаблон модели поддерживает вызов инструментов (function calling)',vision:'Есть проектор изображений (mmproj)',moe:'Mixture of Experts: на токен работает часть весов'};
 function capabilityBadges(list){const row=document.createElement('div');row.className='capabilities';(list||[]).forEach(c=>{const b=document.createElement('span');b.className=`capability ${c}`;b.textContent=capabilityLabels[c]||c;b.title=capabilityHints[c]||'';row.append(b);});return row;}
 function contextText(n){return n>=1024?`${Math.round(n/1024)}K контекст`:n?`${n} контекст`:'';}
+// Vision projectors (mmproj) of the models directory, from the installed models listing.
+let projectors=[],installedModels=[];
+function ensureProjectorOption(value){const select=$('mmproj');if(!value||value==='auto'||value==='off')return;if(![...(select.options||[])].some(o=>o.value===value))select.add(new Option(value.split(/[\\/]/).pop(),value));}
+function renderProjectorOptions(){const select=$('mmproj');const keep=select.value;const fixed=[...(select.options||[])].filter(o=>o.value==='auto'||o.value==='off');select.replaceChildren(...fixed);
+  projectors.forEach(p=>select.add(new Option(`${p.name} · ${formatGb(p.bytes)}`,p.id)));ensureProjectorOption(keep);select.value=keep||'auto';renderProjectorHint();}
+function renderProjectorHint(){const m=installedModels.find(x=>x.id===$('model-choice').value);const v=$('mmproj').value;
+  $('mmproj-hint').textContent=v==='off'?'Изображения не принимаются.':v!=='auto'?'Изображения принимаются с выбранным проектором.':m?.projector?`Найден проектор ${m.projector.split(/[\\/]/).pop()}: модель принимает изображения.`:'Проектор этой модели не найден: изображения не принимаются. Скачайте mmproj из её репозитория в «Добавить модель».';}
 let installedBusy=false;
 async function refreshInstalled(){const b=backend();if(!b||installedBusy)return;installedBusy=true;$('installed-status').textContent='Читаем модели…';
-  try{const data=await api(`/api/models?backend=${encodeURIComponent(b.name)}`);renderInstalled(data.models||[]);}
+  try{const data=await api(`/api/models?backend=${encodeURIComponent(b.name)}`);installedModels=data.models||[];projectors=data.projectors||[];renderInstalled(installedModels);if(b.type==='prismml')renderProjectorOptions();}
   catch(e){$('installed-models').replaceChildren();$('installed-status').textContent=e.message;}
   finally{installedBusy=false;}}
 function renderInstalled(models){const b=backend();$('installed-models').replaceChildren();
@@ -334,8 +350,8 @@ async function searchCatalog(query) {
   }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
 }
 async function showCatalogFiles(repository) {
-  try{const data=await catalogRequest('files',repository);$('catalog-results').replaceChildren();$('catalog-results').append(sourceLink(`${repository} · описание и лицензия ↗`,data.url));if(!data.files.length)$('catalog-status').textContent='Подходящие текстовые GGUF не найдены.';
-  data.files.forEach(f=>{const row=document.createElement('article');row.className='catalog-file';const title=document.createElement('strong');title.textContent=f.name;const meta=document.createElement('span');meta.className='muted';meta.textContent=`${f.bytes?(f.bytes/1024**3).toFixed(2)+' ГБ':'Размер не указан'}${f.prism_only?' · нужен PrismML':''}${f.split?' · многотомный файл':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent='Скачать на ПК';const b=backend();const tag=`hf.co/${repository}:${f.name}`;button.disabled=f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200));button.addEventListener('click',()=>{const b=backend();if(!b||f.split||(b.type==='ollama'&&(f.prism_only||tag.length>200))){notice('Этот файл не поддерживается выбранным движком.',true);return;}const body=b.type==='prismml'?{action:'download',backend:selectedBackend,url:f.url,filename:f.filename,sha256:f.sha256,size:f.bytes?String(f.bytes):''}:{action:'pull',backend:selectedBackend,model:tag};action(body).catch(e=>notice(e.message,true));});row.append(title,meta,button);$('catalog-results').append(row);});
+  try{const data=await catalogRequest('files',repository);$('catalog-results').replaceChildren();$('catalog-results').append(sourceLink(`${repository} · описание и лицензия ↗`,data.url));if(!data.files.length)$('catalog-status').textContent='Подходящие GGUF не найдены.';
+  data.files.forEach(f=>{const row=document.createElement('article');row.className='catalog-file';const title=document.createElement('strong');title.textContent=f.name;const meta=document.createElement('span');meta.className='muted';meta.textContent=`${f.projector?'Проектор изображений (mmproj) — даёт модели этого репозитория зрение · ':''}${f.bytes?(f.bytes/1024**3).toFixed(2)+' ГБ':'Размер не указан'}${f.prism_only?' · нужен PrismML':''}${f.split?' · многотомный файл':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent=f.projector?'Скачать проектор':'Скачать на ПК';const b=backend();const tag=`hf.co/${repository}:${f.name}`;button.disabled=f.split||(b.type==='ollama'&&(f.prism_only||f.projector||tag.length>200));button.addEventListener('click',()=>{const b=backend();if(!b||f.split||(b.type==='ollama'&&(f.prism_only||f.projector||tag.length>200))){notice('Этот файл не поддерживается выбранным движком.',true);return;}const body=b.type==='prismml'?{action:'download',backend:selectedBackend,url:f.url,filename:f.filename,sha256:f.sha256,size:f.bytes?String(f.bytes):''}:{action:'pull',backend:selectedBackend,model:tag};action(body).catch(e=>notice(e.message,true));});row.append(title,meta,button);$('catalog-results').append(row);});
   }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
 }
 // Engine versions come from GitHub only when the owner asks; installs run as panel operations.
@@ -415,7 +431,7 @@ function renderDrives(u){
   (u.drives||[]).forEach(d=>{
     const item=document.createElement('div');item.className='drive'+(d.low?' low':'');
     const head=document.createElement('div');head.className='drive-head';
-    const name=document.createElement('strong');name.textContent=`${d.name}${d.label?' · '+d.label:''}`;
+    const name=document.createElement('strong');name.textContent=`${d.name}${d.label?' · '+d.label:''}${d.kind==='removable'?' · съёмный':d.kind==='network'?' · сетевой':''}`;
     const numbers=document.createElement('span');numbers.textContent=`занято ${formatGb(d.used)} из ${formatGb(d.total)} · свободно ${formatGb(d.free)}`;
     head.append(name,numbers);
     const bar=document.createElement('progress');bar.max=100;bar.value=d.total?Math.round(d.used/d.total*100):0;bar.setAttribute('aria-label',`Занято на ${d.name}`);
@@ -429,11 +445,19 @@ function renderModelDisk(){
   const place=(diskUsage?.models||[]).find(m=>m.name===selectedBackend);const drive=place&&(diskUsage.drives||[]).find(d=>d.name===place.drive);
   $('model-disk').hidden=!drive;if(drive)$('model-disk').textContent=`Свободно на диске моделей ${drive.name}: ${formatGb(drive.free)} · модели ${place.engine} занимают ${formatGb(place.bytes)}.`;
 }
+// Retention: preset values, or the owner's own number of hours or days.
+function showRetention(hours,days){const select=$('log-retention');const preset=hours>0?`h${hours}`:days>0?`d${days}`:'0';
+  const known=[...(select.options||[])].some(o=>o.value===preset);select.value=known?preset:'custom';
+  if(!known){$('log-retention-value').value=hours||days;$('log-retention-unit').value=hours>0?'hours':'days';}
+  $('log-retention-custom').hidden=select.value!=='custom';}
+function retentionBody(){const v=$('log-retention').value;
+  if(v==='custom'){const n=Number($('log-retention-value').value);return $('log-retention-unit').value==='hours'?{log_retention_hours:n}:{log_retention_days:n};}
+  if(v.startsWith('h'))return {log_retention_hours:Number(v.slice(1))};return {log_retention_days:Number(v.replace('d',''))};}
 function renderStorage(u){
   requestLog=u.request_log||'metadata';renderDrives(u);
   $('storage-summary').textContent=`Журналы: ${formatMb(u.logs_bytes)} (файлов: ${u.log_files}${u.content_bytes?`, содержимое запросов: ${formatMb(u.content_bytes)}`:''})${u.engines_bytes?` · движки: ${formatMb(u.engines_bytes)}`:''}${u.temp_bytes?` · временные файлы: ${formatMb(u.temp_bytes)}`:''}`;
   $('storage-warning').hidden=!u.logs_over_limit;$('storage-warning').textContent=`Журналы занимают больше ${u.log_warn_mb} МБ. Сократите срок хранения или удалите устаревшие.`;
-  if(!storageDirty){const select=$('log-retention');if(![...select.options].some(o=>o.value===String(u.log_retention_days)))select.add(new Option(`${u.log_retention_days} дн.`,String(u.log_retention_days)));select.value=String(u.log_retention_days);$('log-warn').value=u.log_warn_mb;$('request-log').value=requestLog;}
+  if(!storageDirty){showRetention(u.log_retention_hours||0,u.log_retention_days||0);$('log-warn').value=u.log_warn_mb;$('request-log').value=requestLog;}
   if(activity&&snapshot)renderActivity();
 }
 async function refreshStorage(notify){const u=await api('/api/storage');renderStorage(u);const low=(u.drives||[]).filter(d=>d.low);if(notify&&low.length)notice(`Мало места на диске ${low.map(d=>`${d.name} (свободно ${formatGb(d.free)})`).join(', ')}.`,true);if(notify&&u.logs_over_limit)notice(`Журналы занимают ${formatMb(u.logs_bytes)} — больше порога ${u.log_warn_mb} МБ. Настройка хранения — в разделе «Журналы».`,true);return u;}
@@ -468,8 +492,9 @@ $('settings-form').addEventListener('submit',e=>{e.preventDefault();action({acti
 $('apply').addEventListener('click',()=>{if($('settings-form').reportValidity())action({action:'apply',backend:selectedBackend,settings:collectSettings()}).catch(e=>notice(e.message,true));});
 $('estimate-button').addEventListener('click',()=>estimatePlacement());
 $('estimate-apply').addEventListener('click',applyEstimate);
-$('model-choice').addEventListener('change',followModelAlias);
-['model-choice','context','cache-key','cache-value','placement'].forEach(id=>$(id).addEventListener('change',checkFit));
+$('model-choice').addEventListener('change',()=>{followModelAlias();renderProjectorHint();});
+$('mmproj').addEventListener('change',renderProjectorHint);
+['model-choice','context','cache-key','cache-value','placement','mmproj'].forEach(id=>$(id).addEventListener('change',checkFit));
 $('fit-base').addEventListener('click',()=>action({action:'preset-apply',backend:selectedBackend,model:'Базовый'}).then(()=>{$('fit-warning').hidden=true;}).catch(e=>notice(e.message,true)));
 $('test-model').addEventListener('click',()=>action({action:'model-test'}).catch(e=>notice(e.message,true)));
 $('preset-choice').addEventListener('change',()=>{const b=backend();if(b)renderPresets(b);});
@@ -485,9 +510,12 @@ $('download-form').addEventListener('submit',e=>{e.preventDefault();const b=back
 $('refresh-logs').addEventListener('click',()=>refreshLogs().catch(e=>notice(e.message,true)));
 $('placement').addEventListener('change',()=>syncKvOffload(true));
 $('storage-form').addEventListener('input',()=>storageDirty=true);
-$('storage-form').addEventListener('submit',async e=>{e.preventDefault();if(requestLog==='content'&&$('request-log').value==='metadata'&&!window.confirm('Выключить запись содержимого? Уже сохранённые запросы и ответы будут удалены.'))return;try{const u=await api('/api/storage',{action:'save',log_retention_days:Number($('log-retention').value),log_warn_mb:Number($('log-warn').value),request_log:$('request-log').value});$('request-content-box').hidden=true;storageDirty=false;renderStorage(u);notice('Настройки хранения журналов сохранены.');}catch(error){notice(error.message,true);}});
+$('storage-form').addEventListener('submit',async e=>{e.preventDefault();if(requestLog==='content'&&$('request-log').value==='metadata'&&!window.confirm('Выключить запись содержимого? Уже сохранённые запросы и ответы будут удалены.'))return;try{const u=await api('/api/storage',{action:'save',...retentionBody(),log_warn_mb:Number($('log-warn').value),request_log:$('request-log').value});$('request-content-box').hidden=true;storageDirty=false;renderStorage(u);notice('Настройки хранения журналов сохранены.');}catch(error){notice(error.message,true);}});
 $('content-search-form').addEventListener('submit',e=>{e.preventDefault();searchContent().catch(err=>notice(err.message,true));});
 $('request-content-close').addEventListener('click',()=>{$('request-content-box').hidden=true;$('request-content').textContent='';});
+$('log-retention').addEventListener('change',()=>{$('log-retention-custom').hidden=$('log-retention').value!=='custom';});
+$('storage-purge').addEventListener('click',async()=>{if(!window.confirm('Удалить все журналы: движков, панели и запросов (с содержимым)? Файлы, которые сейчас пишет работающий движок, останутся до следующей ротации.'))return;
+  try{const u=await api('/api/storage',{action:'purge'});renderStorage(u);notice(`Удалено файлов журналов: ${u.cleanup.removed}, освобождено ${formatMb(u.cleanup.freed_bytes)}.${u.cleanup.busy?` Заняты и остались: ${u.cleanup.busy}.`:''}`);}catch(error){notice(error.message,true);}});
 $('storage-clean').addEventListener('click',async()=>{try{const u=await api('/api/storage',{action:'cleanup'});renderStorage(u);notice(`Удалено файлов: ${u.cleanup.removed}, освобождено ${formatMb(u.cleanup.freed_bytes)}.`);}catch(error){notice(error.message,true);}});
 $('mode-basic').addEventListener('click',()=>setSettingsMode('basic'));$('mode-pro').addEventListener('click',()=>setSettingsMode('pro'));
 $('api-settings-form').addEventListener('input',()=>gatewayDirty=true);

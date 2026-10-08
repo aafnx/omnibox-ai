@@ -327,6 +327,9 @@ func (c *Controller) prepare(name string, e *config.Engine, changes map[string]s
 		for _, m := range models {
 			known = append(known, m.ID)
 		}
+		for _, p := range engine.Projectors(engine.ModelDirectory(e)) {
+			known = append(known, p.ID)
+		}
 	}
 	settings, err := config.Apply(name, e.Settings, changes, known)
 	if err != nil {

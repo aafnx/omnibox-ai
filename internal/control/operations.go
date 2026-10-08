@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/aafnx/omnibox-ai/internal/progress"
 	"slices"
 	"sort"
 	"sync"
@@ -38,14 +39,8 @@ type Operation struct {
 	markDone int64
 }
 
-type progressKey struct{}
-
 // Progress reports download progress for the operation running in ctx.
-func Progress(ctx context.Context, done, total int64) {
-	if f, ok := ctx.Value(progressKey{}).(func(int64, int64)); ok {
-		f(done, total)
-	}
-}
+func Progress(ctx context.Context, done, total int64) { progress.Report(ctx, done, total) }
 
 // Operations runs panel operations in the background, one per category at a time.
 type Operations struct {
@@ -120,7 +115,7 @@ func (o *Operations) Start(r Request) (string, error) {
 	op := &Operation{ID: hex.EncodeToString(b[:]), Action: r.Action, Engine: r.Engine, State: "running", Message: "Выполняется…", Started: o.now().UTC(), category: cat}
 	ctx, cancel := context.WithCancel(context.Background())
 	op.cancel = cancel
-	ctx = context.WithValue(ctx, progressKey{}, func(done, total int64) { o.progress(op, done, total) })
+	ctx = progress.With(ctx, func(done, total int64) { o.progress(op, done, total) })
 	o.list[op.ID] = op
 	go func() {
 		defer cancel()

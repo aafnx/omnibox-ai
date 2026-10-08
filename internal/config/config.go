@@ -151,9 +151,11 @@ func (a API) QueueTimeout() int {
 
 // Storage controls log retention and the request journal.
 type Storage struct {
-	LogRetentionDays int    `json:"log_retention_days"` // 0 keeps logs forever
-	LogWarnMB        int    `json:"log_warn_mb"`
-	RequestLog       string `json:"request_log"` // metadata or content
+	LogRetentionDays int `json:"log_retention_days"` // 0 keeps logs forever
+	// LogRetentionHours, when set, replaces the days: 6 hours keeps only today's work.
+	LogRetentionHours int    `json:"log_retention_hours,omitempty"`
+	LogWarnMB         int    `json:"log_warn_mb"`
+	RequestLog        string `json:"request_log"` // metadata or content
 }
 
 // Default returns a configuration for a new installation; the installer fills in the rest.
@@ -375,9 +377,20 @@ func ClientBaseURL(raw string) bool {
 	return v1Suffix.MatchString(u.Path)
 }
 
+// LogRetention is how long logs are kept; 0 keeps them.
+func (s Storage) LogRetention() time.Duration {
+	if s.LogRetentionHours > 0 {
+		return time.Duration(s.LogRetentionHours) * time.Hour
+	}
+	return time.Duration(s.LogRetentionDays) * 24 * time.Hour
+}
+
 func (s *Storage) validate() error {
 	if s.LogRetentionDays < 0 || s.LogRetentionDays > 365 {
 		return errors.New("Срок хранения журналов: от 0 (не удалять) до 365 дней.")
+	}
+	if s.LogRetentionHours < 0 || s.LogRetentionHours > 8760 {
+		return errors.New("Срок хранения журналов: от 1 часа до 8760 часов (год).")
 	}
 	if s.LogWarnMB < 10 || s.LogWarnMB > 100000 {
 		return errors.New("Порог объёма журналов: от 10 до 100000 МБ.")

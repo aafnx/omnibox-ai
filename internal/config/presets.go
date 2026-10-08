@@ -91,7 +91,7 @@ func PresetFrom(engine string, s map[string]string) map[string]string {
 		return out
 	}
 	for key, v := range s {
-		if key != "model" && key != "alias" {
+		if key != "model" && key != "alias" && key != "mmproj" {
 			out[key] = v
 		}
 	}

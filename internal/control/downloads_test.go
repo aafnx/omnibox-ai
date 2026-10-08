@@ -20,6 +20,7 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/engine"
 	"github.com/aafnx/omnibox-ai/internal/platform"
+	"github.com/aafnx/omnibox-ai/internal/progress"
 )
 
 // toServer sends every request to the test server, as if it were huggingface.co.
@@ -43,8 +44,8 @@ func TestDownloadGGUFFromHuggingFace(t *testing.T) {
 	target, _ := url.Parse(srv.URL)
 	r.c.HTTP = &http.Client{Transport: toServer{target}}
 	link := "https://huggingface.co/author/model/resolve/0123456789abcdef0123456789abcdef01234567/model-Q4_K_M.gguf"
-	var progress [][2]int64
-	ctx := context.WithValue(context.Background(), progressKey{}, func(done, total int64) { progress = append(progress, [2]int64{done, total}) })
+	var steps [][2]int64
+	ctx := progress.With(context.Background(), func(done, total int64) { steps = append(steps, [2]int64{done, total}) })
 	message, err := r.c.Do(ctx, Request{Action: "download", Engine: config.PrismML, URL: link, Filename: "author-model-Q4_K_M.gguf", SHA256: hex.EncodeToString(sum[:]), Size: strconv.Itoa(len(content))})
 	if err != nil || !strings.Contains(message, "Скачано") {
 		t.Fatalf("%s %v", message, err)
@@ -53,8 +54,8 @@ func TestDownloadGGUFFromHuggingFace(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(dir, "author-model-Q4_K_M.gguf")); err != nil {
 		t.Fatal("model not in the models directory")
 	}
-	if len(progress) == 0 || progress[len(progress)-1] != [2]int64{int64(len(content)), int64(len(content))} {
-		t.Fatalf("progress %v", progress)
+	if len(steps) == 0 || steps[len(steps)-1] != [2]int64{int64(len(content)), int64(len(content))} {
+		t.Fatalf("progress %v", steps)
 	}
 	for _, bad := range []Request{
 		{Action: "download", Engine: config.Ollama, URL: link, Filename: "x.gguf"},
@@ -72,7 +73,7 @@ func TestPullStreamsProgressAndReportsErrors(t *testing.T) {
 	r.services.Set(config.ServiceName(config.Ollama), platform.Running)
 	var mu sync.Mutex
 	var last [2]int64
-	ctx := context.WithValue(context.Background(), progressKey{}, func(done, total int64) { mu.Lock(); last = [2]int64{done, total}; mu.Unlock() })
+	ctx := progress.With(context.Background(), func(done, total int64) { mu.Lock(); last = [2]int64{done, total}; mu.Unlock() })
 	if _, err := r.c.Do(ctx, Request{Action: "pull", Engine: config.Ollama, Model: "qwen3:8b"}); err != nil {
 		t.Fatal(err)
 	}

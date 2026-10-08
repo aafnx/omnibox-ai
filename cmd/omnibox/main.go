@@ -258,7 +258,13 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 		},
 		Models: func(ctx context.Context, name string) (any, error) {
 			models, err := controller.InstalledModels(ctx, name)
-			return map[string]any{"backend": name, "models": models}, err
+			out := map[string]any{"backend": name, "models": models, "projectors": []engine.Model{}}
+			if e, ok := current().Engines[name]; ok && name == config.PrismML {
+				if p := engine.Projectors(engine.ModelDirectory(e)); p != nil {
+					out["projectors"] = p
+				}
+			}
+			return out, err
 		},
 		Gateway: func() any { return gateway.SettingsView(current(), api.KeyUsage()) },
 		GatewayAction: func(body map[string]any) (any, error) {
@@ -282,6 +288,9 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 				}
 			case "cleanup":
 				r := storage.Cleanup(*data, current(), time.Now())
+				result = &r
+			case "purge":
+				r := storage.RemoveLogs(*data)
 				result = &r
 			default:
 				return nil, errors.New("Неизвестное действие с журналами.")

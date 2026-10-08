@@ -23,7 +23,9 @@ type Details struct {
 	Source       string   `json:"source,omitempty"` // the model's page
 	// SourceSearch means the page is a search: the model was not downloaded through the panel.
 	SourceSearch bool `json:"source_search,omitempty"`
-	Selected     bool `json:"selected"`
+	// Projector is the model's vision projector (mmproj), when one lies next to it.
+	Projector string `json:"projector,omitempty"`
+	Selected  bool   `json:"selected"`
 	// InUse models are selected or needed for rollback: the panel does not delete them.
 	InUse bool `json:"in_use"`
 }
@@ -100,8 +102,9 @@ func PrismDetails(models []Model, sources map[string]string, selected string, in
 				d.Params = strings.ToUpper(p[1])
 			}
 		}
-		if hasProjector(m.Name, projectors) {
+		if p := MatchProjector(m.Name, projectors); p != "" {
 			d.Capabilities = append(d.Capabilities, "vision")
+			d.Projector = filepath.Join(filepath.Dir(m.ID), p)
 		}
 		if s, ok := sources[m.ID]; ok {
 			d.Source = s
@@ -137,18 +140,72 @@ func family(name string) string {
 
 // hasProjector tells whether a vision projector (mmproj) in the directory belongs to the model.
 func hasProjector(model string, projectors []string) bool {
+	return MatchProjector(model, projectors) != ""
+}
+
+// MatchProjector picks the vision projector (mmproj) file name that belongs to a model file
+// name: the projector's name without "mmproj" and its precision is part of the model's, or both
+// share a long prefix (the repository part of a name the panel's downloads get).
+func MatchProjector(model string, projectors []string) string {
 	base := strings.ToLower(family(model))
+	best, bestLen := "", 0
 	for _, p := range projectors {
 		f := strings.ToLower(family(p))
-		f = strings.Trim(regexp.MustCompile(`(?i)mmproj|projector`).ReplaceAllString(f, ""), "-_. ")
-		if len(f) >= 6 && (strings.Contains(base, f) || strings.HasPrefix(base, f)) {
-			return true
+		f = strings.Trim(projector.ReplaceAllString(f, ""), "-_. ")
+		n := commonPrefix(base, f)
+		if len(f) >= 6 && strings.Contains(base, f) {
+			n = max(n, len(f))
 		}
-		if n := commonPrefix(base, f); n >= 16 {
-			return true
+		if n >= 16 || (len(f) >= 6 && strings.Contains(base, f)) {
+			if n > bestLen {
+				best, bestLen = p, n
+			}
 		}
 	}
-	return false
+	return best
+}
+
+// Projectors lists the vision projector files (mmproj) of a models directory.
+func Projectors(dir string) []Model {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var out []Model
+	for _, e := range entries {
+		if e.IsDir() || !projector.MatchString(e.Name()) || !strings.EqualFold(filepath.Ext(e.Name()), ".gguf") {
+			continue
+		}
+		if info, err := e.Info(); err == nil {
+			out = append(out, Model{ID: filepath.Join(dir, e.Name()), Name: e.Name(), Bytes: info.Size(), Quant: Quant(e.Name())})
+		}
+	}
+	return out
+}
+
+// ProjectorFor is the projector a PrismML launch uses: the one chosen in the settings, none for
+// "off", and for "auto" (the default) the model's own projector from its directory, if any.
+func ProjectorFor(model, setting string) string {
+	switch setting {
+	case "off":
+		return ""
+	case "", "auto":
+		if model == "" {
+			return ""
+		}
+		var names []string
+		for _, p := range Projectors(filepath.Dir(model)) {
+			names = append(names, p.Name)
+		}
+		if name := MatchProjector(filepath.Base(model), names); name != "" {
+			return filepath.Join(filepath.Dir(model), name)
+		}
+		return ""
+	}
+	if _, err := os.Stat(setting); err != nil {
+		return ""
+	}
+	return setting
 }
 
 func commonPrefix(a, b string) int {

@@ -36,6 +36,7 @@ type Usage struct {
 	EnginesBytes     int64        `json:"engines_bytes"`
 	TempBytes        int64        `json:"temp_bytes"`
 	LogRetentionDays int          `json:"log_retention_days"`
+	LogRetentionHrs  int          `json:"log_retention_hours"`
 	LogWarnMB        int          `json:"log_warn_mb"`
 	LogsOverLimit    bool         `json:"logs_over_limit"`
 	Drives           []DriveUsage `json:"drives"`
@@ -65,6 +66,7 @@ type ModelUsage struct {
 type Result struct {
 	Removed int   `json:"removed"`
 	Freed   int64 `json:"freed_bytes"`
+	Busy    int   `json:"busy,omitempty"` // files open by their writer, left in place
 }
 
 // Paths of the data directory that storage knows about.
@@ -130,7 +132,7 @@ func dirSize(path string) int64 {
 // GetUsage measures logs, engines and models and lists the drives. It reads the disk only when
 // the panel asks.
 func GetUsage(data string, cfg *config.Config) Usage {
-	u := Usage{RequestLog: cfg.Storage.RequestLog, LogRetentionDays: cfg.Storage.LogRetentionDays, LogWarnMB: cfg.Storage.LogWarnMB,
+	u := Usage{RequestLog: cfg.Storage.RequestLog, LogRetentionDays: cfg.Storage.LogRetentionDays, LogRetentionHrs: cfg.Storage.LogRetentionHours, LogWarnMB: cfg.Storage.LogWarnMB,
 		Drives: []DriveUsage{}, Models: []ModelUsage{}}
 	for _, f := range logFiles(data) {
 		u.LogsBytes += f.size
@@ -248,8 +250,8 @@ const staleParts = 7 * 24 * time.Hour
 // download writes are recent, so they stay.
 func Cleanup(data string, cfg *config.Config, now time.Time) Result {
 	var items []file
-	if days := cfg.Storage.LogRetentionDays; days > 0 {
-		limit := now.AddDate(0, 0, -days)
+	if keep := cfg.Storage.LogRetention(); keep > 0 {
+		limit := now.Add(-keep)
 		for _, f := range logFiles(data) {
 			if f.mod.Before(limit) {
 				items = append(items, f)
@@ -291,6 +293,22 @@ func Cleanup(data string, cfg *config.Config, now time.Time) Result {
 	return r
 }
 
+// RemoveLogs deletes every log the owner can see in the panel: engine and panel logs and the
+// request journals, rotated copies included. A file its writer holds open (Windows) stays and
+// is counted as busy; the writer starts a fresh one at its next rotation.
+func RemoveLogs(data string) Result {
+	var r Result
+	for _, f := range logFiles(data) {
+		if err := os.Remove(f.path); err == nil || errors.Is(err, fs.ErrNotExist) {
+			r.Removed++
+			r.Freed += f.size
+		} else {
+			r.Busy++
+		}
+	}
+	return r
+}
+
 // RemoveContent deletes the stored request text when the owner turns the content journal off.
 func RemoveContent(data string) int {
 	n := 0
@@ -309,14 +327,21 @@ func Save(data string, store *config.Store, body map[string]any) error {
 		for key, value := range body {
 			switch key {
 			case "action":
-			case "log_retention_days", "log_warn_mb":
+			case "log_retention_days", "log_retention_hours", "log_warn_mb":
 				n, ok := value.(float64)
 				if !ok || n != float64(int(n)) {
 					return errors.New("Срок хранения и порог объёма — целые числа.")
 				}
-				if key == "log_retention_days" {
-					c.Storage.LogRetentionDays = int(n)
-				} else {
+				// Days and hours replace each other: the form sends one of them.
+				switch key {
+				case "log_retention_days":
+					c.Storage.LogRetentionDays, c.Storage.LogRetentionHours = int(n), 0
+				case "log_retention_hours":
+					c.Storage.LogRetentionHours = int(n)
+					if n > 0 {
+						c.Storage.LogRetentionDays = 0
+					}
+				default:
 					c.Storage.LogWarnMB = int(n)
 				}
 			case "request_log":

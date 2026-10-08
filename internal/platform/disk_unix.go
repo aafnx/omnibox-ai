@@ -41,7 +41,7 @@ func Drives() []Drive {
 		if !strings.HasSuffix(root, "/") {
 			root += "/"
 		}
-		out = append(out, Drive{Name: mount, Label: fields[0], Root: root, Total: total, Free: free})
+		out = append(out, Drive{Name: mount, Label: fields[0], Root: root, Total: total, Free: free, Kind: "fixed"})
 	}
 	return out
 }
