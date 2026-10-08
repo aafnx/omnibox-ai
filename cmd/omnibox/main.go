@@ -192,6 +192,7 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 	handler, err := panel.New(panel.Options{
 		Config:       current,
 		LogPath:      filepath.Join(*data, "logs", "panel.log"),
+		Estimate:     estimator{Config: current, GPUs: telemetry.GPUs, RAM: telemetry.RAMTotal}.Estimate,
 		SessionsPath: filepath.Join(*data, "run", "sessions.bin"),
 		Status: func(ctx context.Context, gpu bool) any {
 			d := builder.Build(ctx, gpu)

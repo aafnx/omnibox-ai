@@ -81,3 +81,12 @@ func (s *Sampler) Get(ctx context.Context) Sample {
 	}
 	return s.last
 }
+
+// RAMTotal is the computer's memory in bytes, 0 when unknown.
+func RAMTotal() int64 {
+	total, _, err := memory()
+	if err != nil {
+		return 0
+	}
+	return int64(total)
+}

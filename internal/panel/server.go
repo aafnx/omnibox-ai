@@ -69,6 +69,8 @@ type Options struct {
 	GatewayAction func(body map[string]any) (any, error)
 	// SetPassword stores a new panel password hash.
 	SetPassword func(p config.Password) error
+	// Estimate tells where a model fits with the given context and cache (query parameters).
+	Estimate func(ctx context.Context, q url.Values) (any, error)
 	// LogPath is the panel's own log: internal failures are written there, not shown in full.
 	LogPath string
 	// SessionsPath keeps the sign-ins across a restart of the service.
@@ -238,6 +240,13 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result, err := s.opt.Catalog(r.Context(), q.Get("q"), q.Get("repo"))
 		if err != nil {
 			s.json(w, http.StatusBadGateway, map[string]any{"error": err.Error()})
+			return
+		}
+		s.json(w, http.StatusOK, result)
+	case route == "GET /api/estimate" && s.opt.Estimate != nil:
+		result, err := s.opt.Estimate(r.Context(), r.URL.Query())
+		if err != nil {
+			s.fail(w, r, err)
 			return
 		}
 		s.json(w, http.StatusOK, result)

@@ -18,7 +18,7 @@ const ids=[...html.matchAll(/\bid="([^"]+)"/g)].map(m=>m[1]);assert.equal(new Se
 const nodes=Object.fromEntries(ids.map(id=>[id,new Node(id)]));
 nodes['engine-template'].content={firstElementChild:new Node('engine-card')};
 const store=new Map(),requests=[],bodies=[];
-const context=vm.createContext({document:{documentElement:{dataset:{}},getElementById:id=>{assert.ok(nodes[id],`Missing UI element ${id}`);return nodes[id]},body:new Node('body'),createElement:()=>new Node(),querySelectorAll:()=>[],addEventListener:()=>{},hidden:false,activeElement:null},window:{matchMedia:()=>({matches:false,addEventListener:()=>{}})},localStorage:{getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)},navigator:{},Option:function(text,value){return{text,value}},fetch:async (path,options)=>{requests.push(path);bodies.push(options&&options.body);return{ok:false,status:401,json:async()=>({error:'Login required'})}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,Map,Set,Date,Number,Promise,console});
+const context=vm.createContext({document:{documentElement:{dataset:{}},getElementById:id=>{assert.ok(nodes[id],`Missing UI element ${id}`);return nodes[id]},body:new Node('body'),createElement:()=>new Node(),querySelectorAll:()=>[],addEventListener:()=>{},hidden:false,activeElement:null},window:{matchMedia:()=>({matches:false,addEventListener:()=>{}})},localStorage:{getItem:k=>store.get(k),setItem:(k,v)=>store.set(k,v)},navigator:{},Option:function(text,value){return{text,value}},fetch:async (path,options)=>{requests.push(path);bodies.push(options&&options.body);return{ok:false,status:401,json:async()=>({error:'Login required'})}},setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,Map,Set,Date,Number,Promise,URLSearchParams,console});
 function run(code){return vm.runInContext(code,context);}
 (async()=>{
   run(source);await new Promise(setImmediate);
@@ -119,6 +119,9 @@ function run(code){return vm.runInContext(code,context);}
   // API settings: queue fields, no engine choice; /v1 serves the running engine.
   run("gateway={enabled:true,base_url:'https://llm.fnx.red/v1',require_key:true,has_key:true,queue_depth:4,queue_timeout_seconds:60,public_origin:'https://llm.fnx.red',trusted_proxies:['192.168.1.10','192.168.1.11']};renderGatewayForm()");
   assert.equal(nodes['api-queue-depth'].value,4);assert.equal(nodes['api-queue-timeout'].value,60);
+  // The placement estimate is asked for explicitly and can fill in the recommended GPU layers.
+  const estimateBefore=requests.length;await run("estimatePlacement()");assert.ok(requests[estimateBefore].startsWith('/api/estimate?'));
+  run("lastEstimate={placement:'hybrid',gpu_layers:31,text:'x'};applyEstimate()");assert.equal(nodes.placement.value,'hybrid');assert.equal(nodes['gpu-layers'].value,31);
   // Sleep asks first; the MAC addresses for Wake-on-LAN are listed for Home Assistant.
   context.window.confirm=()=>true;const sleepBefore=requests.length;nodes['sleep-pc'].listeners.click[0]();await new Promise(r=>setTimeout(r,0));
   assert.deepEqual(JSON.parse(bodies[sleepBefore]),{action:'sleep'});
@@ -153,5 +156,5 @@ function run(code){return vm.runInContext(code,context);}
   const before=requests.length;nodes['password-current'].value='old-password-123';nodes['password-new'].value='new-password-1234';nodes['password-repeat'].value='other-password-123';
   await nodes['password-form'].listeners.submit[0]({preventDefault:()=>{}});
   assert.equal(requests.length,before);assert.equal(nodes['password-current'].value,'');assert.equal(nodes['password-new'].value,'');
-  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
+  console.log('UI behavior: theme selection, model summary, stop-all confirmation, KV offload with placement, engine names, settings modes, storage usage, request content, engine manager, drives, idle sampling, start progress, resource fields unknown live counters, update command, download progress and cancel, API queue and NAS settings, named keys, no-key warning, placement estimate, sleep and wake, model test, presets, auto-restart status, self-update and password change passed.');
 })().catch(e=>{console.error(e);process.exitCode=1});
