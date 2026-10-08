@@ -252,7 +252,7 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if c.Chat != nil {
-		if err := c.Chat.validate(); err != nil {
+		if err := c.Chat.Validate(); err != nil {
 			return err
 		}
 	}

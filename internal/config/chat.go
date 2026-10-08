@@ -107,7 +107,8 @@ func ValidCloudModel(id string) bool {
 	return strings.Count(id, "/") == 1 && !strings.HasPrefix(id, "/") && !strings.HasSuffix(id, "/")
 }
 
-func (c *Chat) validate() error {
+// Validate checks the chat settings and normalizes the SearXNG address.
+func (c *Chat) Validate() error {
 	if c.RetentionHours < 0 || c.RetentionHours > 24*3650 {
 		return errors.New("Срок хранения чатов: от 1 часа до 10 лет или «всегда».")
 	}

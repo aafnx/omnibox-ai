@@ -1,0 +1,127 @@
+package main
+
+import (
+	"context"
+	"encoding/base64"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/aafnx/omnibox-ai/internal/config"
+	"github.com/aafnx/omnibox-ai/internal/control"
+	"github.com/aafnx/omnibox-ai/internal/platform"
+	"github.com/aafnx/omnibox-ai/internal/telemetry"
+)
+
+func chatRig(t *testing.T) (*chatSide, string) {
+	data := t.TempDir()
+	cfg := config.Default()
+	cfg.Panel.Hosts = []string{"127.0.0.1"}
+	b64 := base64.StdEncoding.EncodeToString(make([]byte, 32))
+	cfg.Panel.Password = config.Password{Salt: b64, Hash: b64, Iterations: 210000}
+	path := filepath.Join(data, "config.json")
+	if err := cfg.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	store, err := config.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	services := platform.NewFakeServices()
+	c := newChatSide(data, store, services, &control.Controller{Store: store, Services: services, DataDir: data}, estimator{Config: store.Get,
+		GPUs: func(context.Context) []telemetry.GPU { return nil }, RAM: func() int64 { return 32 << 30 }})
+	return c, data
+}
+
+func post(h http.Handler, path, body string) *httptest.ResponseRecorder {
+	r := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+	r.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	return w
+}
+
+func TestChatSettingsAndDeleteAllData(t *testing.T) {
+	c, data := chatRig(t)
+	h := http.HandlerFunc(c.serveSettings)
+	w := post(h, "/api/chat-settings", `{"action":"save","retention_hours":168,"search_url":"https://search.example.com/","search_results":8,"search_default":false}`)
+	if w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	s := c.Store.Get().ChatSettings()
+	if s.RetentionHours != 168 || s.SearchURL != "https://search.example.com" || s.SearchResults != 8 || s.SearchDefault {
+		t.Fatalf("%+v", s)
+	}
+	if w := post(h, "/api/chat-settings", `{"action":"save","search_url":"ftp://x"}`); w.Code != 400 {
+		t.Fatalf("%d", w.Code)
+	}
+	if _, err := c.Chats.Create("a", 1, "", ""); err != nil {
+		t.Fatal(err)
+	}
+	os.MkdirAll(filepath.Join(data, "logs"), 0o755)
+	os.WriteFile(filepath.Join(data, "logs", "panel.log"), []byte("x"), 0o600)
+	if w := post(h, "/api/chat-settings", `{"action":"delete-all-data"}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"deleted_chats":1`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if list, _ := c.Chats.List(); len(list) != 0 {
+		t.Fatal("chats left")
+	}
+	if _, err := os.Stat(filepath.Join(data, "logs", "panel.log")); err == nil {
+		t.Fatal("logs left")
+	}
+}
+
+func TestCloudModelsReachV1OnlyWhenAllowed(t *testing.T) {
+	c, _ := chatRig(t)
+	route := cloudRoute{c}
+	c.Store.Update(func(cfg *config.Config) error {
+		cfg.Favorites = []string{"cloud:openai/gpt-5", "ollama:qwen3:8b"}
+		return nil
+	})
+	if len(route.Models()) != 0 {
+		t.Fatal("exposed without the option and the key")
+	}
+	if w := post(http.HandlerFunc(c.serveCloud), "/api/cloud", `{"action":"settings","expose_api":true}`); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(route.Models()) != 0 {
+		t.Fatal("exposed without a key")
+	}
+	if err := c.Keys.Save("sk-or-v1-0123456789abcdef0123", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	if m := route.Models(); len(m) != 1 || m[0] != "openai/gpt-5" {
+		t.Fatal(m)
+	}
+	// The key is never returned to the panel.
+	r := httptest.NewRequest(http.MethodGet, "/api/cloud", nil)
+	w := httptest.NewRecorder()
+	c.serveCloud(w, r)
+	if strings.Contains(w.Body.String(), "0123456789abcdef") || !strings.Contains(w.Body.String(), `"connected":true`) {
+		t.Fatal(w.Body.String())
+	}
+}
+
+func TestLibraryFavorites(t *testing.T) {
+	c, _ := chatRig(t)
+	h := http.HandlerFunc(c.serveLibrary)
+	if w := post(h, "/api/library", `{"action":"favorite","model":"cloud:openai/gpt-5","on":true}`); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if w := post(h, "/api/library", `{"action":"favorite","model":"../x","on":true}`); w.Code != 400 {
+		t.Fatal(w.Code)
+	}
+	if f := c.Store.Get().Favorites; len(f) != 1 {
+		t.Fatal(f)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/library", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"models":[]`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
