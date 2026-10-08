@@ -61,7 +61,7 @@ PowerShell-версия удалена из `main` по решению влад�
 
 ## Порядок работы
 
-- **Ветки и PR.** Не коммить напрямую в `main`. Одна задача — одна ветка и pull request; сливать только при зелёном CI.
+- **Ветки и PR.** Не коммить напрямую в `main`. Одна задача — одна ветка и pull request; сливать только при зелёном CI (PR только с документацией — после локального `go test .`).
 - **Коммиты:** `тип: описание`, где тип — `feat`, `fix`, `docs`, `test`, `ci`, `build`, `refactor`. К релизному коммиту допиши версию в скобках: `feat: ... (0.18.0)`.
 - **Выпуск:** после слияния версии владелец запускает workflow **Release**; тег `v<VERSION>` и файлы выпуска создаёт workflow, а не агент.
 - **Каждая пользовательская версия:** обнови `VERSION`, добавь раздел `## x.y.z — дата` в начало `CHANGELOG.md`, поправь `Версия **x.y.z**` в `README.md` и строку «Состояние на …» в `docs/roadmap.md`, добавь `### x.y.z` в «Выполнено по версиям». Иначе упадёт `TestVersionIsTheSingleSource`.
@@ -106,7 +106,7 @@ node tests/web_test.cjs
 
 ## CI
 
-`.github/workflows/ci.yml` запускается на push в любую ветку и на pull request:
+`.github/workflows/ci.yml` запускается на каждое обновление pull request (и вручную); push в ветку и слияние в `main` его не запускают — минуты Actions ограничены, Windows считается вдвое. Новый push в тот же PR отменяет незавершённый прогон. PR только с документацией (`docs/`, `*.md`) CI не запускает: перед слиянием такого PR прогони `go test .` локально (проверка единой версии). Укрупняй изменения: меньше PR и выпусков, больше работы в каждом.
 
 - **Windows** (`windows-latest`): `go vet`, `go test` (в том числе хост движка с Job Object), сборка `omnibox.exe`, разбор `install.ps1` и `scripts/remove-old-version.ps1` во встроенном Windows PowerShell 5.1.
 - **Linux** (`ubuntu-latest`): `gofmt`, `go vet` для обеих ОС, `go test -race`, сборки для Linux и Windows без cgo, `web_test.cjs`, проверка синтаксиса `install.sh`.

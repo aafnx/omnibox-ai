@@ -1,16 +1,23 @@
 name: CI
 
+# Actions minutes are limited (Windows counts double): CI runs once per pull request update, not
+# again for the branch push or the merge into main, which only ever takes tested pull requests.
+# Documentation-only changes do not run it; a version bump always changes VERSION, so the single
+# version test runs whenever the version lines in the docs change.
 on:
-  push:
-    branches: ['**']
   pull_request:
+    paths:
+      - '**'
+      - '!docs/**'
+      - '!**/*.md'
   workflow_dispatch:
 
 permissions:
   contents: read
 
+# A new push to the same pull request cancels its run still in progress.
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
 jobs:
