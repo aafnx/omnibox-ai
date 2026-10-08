@@ -23,15 +23,34 @@ async function api(path, body) {
   if (!response.ok) { if(response.status===401 && path!=='/api/login') showLogin(); throw new Error(data.error||`Ошибка ${response.status}`); }
   return data;
 }
-function notice(message, error=false) { $('notice').hidden=false; $('notice').textContent=message; $('notice').classList.toggle('error',error); }
+// Notices pop up for a few seconds and stay in the history: this browser only, the last 50.
+let noticeLog=[];try{noticeLog=JSON.parse(localStorage.getItem('omnibox-notices')||'[]');if(!Array.isArray(noticeLog))noticeLog=[];}catch{noticeLog=[];}
+let unreadNotices=0;const toasts=[];
+function notice(message, error=false) {
+  if(!message)return;const item={at:new Date().toISOString(),text:String(message),error:!!error};
+  noticeLog.unshift(item);noticeLog=noticeLog.slice(0,50);try{localStorage.setItem('omnibox-notices',JSON.stringify(noticeLog));}catch{}
+  if($('notifications').hidden)unreadNotices++;renderNotifications();
+  const toast=document.createElement('div');toast.className=`toast${error?' error':''}`;toast.setAttribute('role',error?'alert':'status');
+  const text=document.createElement('span');text.textContent=item.text;const close=document.createElement('button');close.type='button';close.className='toast-close';close.setAttribute('aria-label','Закрыть');close.textContent='×';
+  const remove=()=>{toast.remove?.();const i=toasts.indexOf(toast);if(i>=0)toasts.splice(i,1);};close.addEventListener('click',remove);
+  toast.append(text,close);$('toasts').append(toast);toasts.push(toast);while(toasts.length>4)toasts[0].remove?.(),toasts.shift();
+  setTimeout(remove,error?10000:5000);
+}
+function noticeTime(at){const d=new Date(at);return Number.isNaN(d.getTime())?'':d.toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit'});}
+function renderNotifications(){
+  $('notifications-count').hidden=!unreadNotices;$('notifications-count').textContent=unreadNotices>9?'9+':String(unreadNotices);
+  $('notifications-list').replaceChildren(...noticeLog.map(n=>{const li=document.createElement('li');li.className=n.error?'error':'';const time=document.createElement('time');time.textContent=noticeTime(n.at);const text=document.createElement('span');text.textContent=n.text;li.append(time,text);return li;}));
+  $('notifications-empty').hidden=noticeLog.length>0;
+}
+function toggleNotifications(open=$('notifications').hidden){$('notifications').hidden=!open;$('notifications-button').setAttribute('aria-expanded',String(open));if(open)unreadNotices=0;renderNotifications();}
 function showLogin() { placeThemeSwitch(false); $('new-api-key').hidden=true;$('key-copy').replaceChildren();gatewayDirty=false;loggedIn=false; clearTimeout(pollTimer); $('login').hidden=false; $('dashboard').hidden=true; csrf=''; }
 async function showDashboard() { const session=await api('/api/session'); csrf=session.csrf; panelPort=session.port; loggedIn=true; $('login').hidden=true; $('dashboard').hidden=false; placeThemeSwitch(true); await refresh(true); schedulePoll(); refreshStorage(true).catch(()=>{}); }
 function monitoringActive(){return activity?.active||snapshot?.backends.some(b=>b.service==='StartPending'||(b.service==='Running'&&b.sleeping!==true&&(b.type==='prismml'||!['(none)','-',undefined,null].includes(b.loaded_model))));}
 function schedulePoll() { clearTimeout(pollTimer); if(!loggedIn)return; pollTimer=setTimeout(async()=>{ if(!document.hidden) { try { await refresh(false); } catch(e) { notice(e.message,true); } } schedulePoll(); },document.hidden?10000:(monitoringActive()||snapshot?.operations?.some(o=>o.state==='running')||pendingActions.size?3000:10000)); }
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&loggedIn)refresh(false,true).catch(e=>notice(e.message,true));});
 function backend() { return snapshot?.backends.find(b=>b.name===selectedBackend); }
-function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; $('catalog-results').replaceChildren(); $('catalog-status').textContent=''; renderSettings(); checkFit(); }
-function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='models'){refreshStorage(false).catch(()=>{});checkFit();}if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates'){renderUpdateInfo();refreshEngines().catch(e=>notice(e.message,true));} }
+function chooseBackend(name) { selectedBackend=name; $('model-backend').value=name; settingsDirty=false; formRevision++; $('catalog-results').replaceChildren(); $('catalog-status').textContent=''; renderSettings(); checkFit(); if(activeTab==='models')refreshInstalled().catch(()=>{}); }
+function switchTab(tab) { activeTab=tab; document.querySelectorAll('.tab').forEach(s=>s.hidden=s.id!==`tab-${tab}`); document.querySelectorAll('[data-tab]').forEach(b=>b.classList.toggle('active',b.dataset.tab===tab)); if(tab==='models'){refreshStorage(false).catch(()=>{});checkFit();refreshInstalled().catch(()=>{});}if(tab==='logs'){refreshLogs().catch(e=>notice(e.message,true));refreshStorage(false).catch(e=>notice(e.message,true));} if(tab==='updates'){renderUpdateInfo();refreshEngines().catch(e=>notice(e.message,true));} }
 async function refresh(gpu,snapshotRequested=gpu) {
   if(refreshBusy)return;refreshBusy=true;
   try{
@@ -104,7 +123,7 @@ function renderOperations(operations) {
     const title=document.createElement('span');title.textContent=`${labels[op.action]||op.action}${op.backend?' · '+engineName(op.backend):''}`;
     const message=document.createElement('span');message.className='operation-message';message.textContent=op.message;
     row.append(icon,title,message);if(op.state==='running'){const box=document.createElement('div');box.className='operation-progress';const progress=document.createElement('progress');const text=document.createElement('span');text.textContent=`${Math.floor(op.elapsed_seconds||0)} с · ${labels[op.action]||op.action}…`;if(op.bytes_total){progress.max=op.bytes_total;progress.value=op.bytes_done||0;text.textContent=`${transferText(op)} · ${labels[op.action]||op.action}`;}else if(op.bytes_done){text.textContent=`${(op.bytes_done/1024**3).toFixed(2)} ГБ · ${labels[op.action]||op.action}`;}box.append(progress,text);if(['download','pull'].includes(op.action)){const cancel=document.createElement('button');cancel.type='button';cancel.className='text-button small';cancel.textContent='Отменить';cancel.addEventListener('click',()=>api('/api/actions',{action:'cancel',id:op.id}).then(()=>notice('Скачивание отменяется.')).catch(e=>notice(e.message,true)));box.append(cancel);}row.append(box);}$('operations').append(row);
-    if(op.state!=='running'&&!completed.has(op.id)){completed.add(op.id);if(String(op.action).startsWith('engine-')&&activeTab==='updates')refreshEngines().catch(()=>{});if(!notified){notice(op.message,op.state==='failed');notified=true;}if(op.state==='done'&&op.backend===selectedBackend&&submittedForms.get(op.id)===formRevision)settingsDirty=false;submittedForms.delete(op.id);}
+    if(op.state!=='running'&&!completed.has(op.id)){completed.add(op.id);if(String(op.action).startsWith('engine-')&&activeTab==='updates')refreshEngines().catch(()=>{});if(['download','pull','model-delete'].includes(op.action)&&activeTab==='models')refreshInstalled().catch(()=>{});if(!notified){notice(op.message,op.state==='failed');notified=true;}if(op.state==='done'&&op.backend===selectedBackend&&submittedForms.get(op.id)===formRevision)settingsDirty=false;submittedForms.delete(op.id);}
   });
 }
 // Idle panel: no periodic sampling. The user gets one sample when opening or refreshing the panel.
@@ -161,18 +180,22 @@ function renderSettings() {
   $('model-hint').textContent=b.type==='prismml'?'GGUF из каталога модели на ПК.':'Для списка моделей Ollama должна быть запущена.';
   $('placement').querySelectorAll('option').forEach(o=>o.hidden=b.type==='ollama'&&['gpu','hybrid'].includes(o.value));
   $('placement-hint').textContent=b.type==='ollama'?'Ollama: RAM/CPU или автоматическое распределение. Полностью VRAM гарантировать нельзя.':'VRAM: попытка загрузить все слои на GPU; RAM + VRAM: число слоёв задаётся ниже. Для MoE-моделей больше VRAM выберите VRAM и задайте «Слои MoE в RAM». При нехватке памяти запуск откатится.';
-  Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');
+  Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');aliasModel=$('model-choice').value;
   document.querySelectorAll('.prism-field').forEach(el=>el.hidden=b.type!=='prismml');applySettingsMode();syncKvOffload();
   $('settings-status').textContent=b.pending?'Есть сохранённые настройки. Они ещё не применены к работающему серверу.':b.type==='ollama'?'Серверные значения по умолчанию. Параметры внешнего клиента могут их переопределить.':'При ошибке запуска с новыми настройками выполняется откат.';
   $('restore').disabled=!b.can_restore;
   renderPresets(b);
   $('auto-restart').checked=!!b.auto_restart;$('restart-status').textContent=restartText(b);
   $('loaded-model').textContent=b.sleeping?'Модель спит; новый запрос может её загрузить.':b.loaded_model==='-'||b.loaded_model==='(none)'?'Модель не загружена.':b.loaded_model;
-  $('load-model').disabled=!(b.models||[]).length;$('delete-model').disabled=!(b.models||[]).length; $('unload-model').disabled=b.service!=='Running';$('test-model').disabled=b.service!=='Running';
+  $('load-model').disabled=!(b.models||[]).length;$('unload-model').disabled=b.service!=='Running';$('test-model').disabled=b.service!=='Running';
   const prism=b.type==='prismml';$('pull-label').hidden=prism;['url-label','filename-label','sha-label'].forEach(id=>$(id).hidden=!prism);
   renderModelDisk();
   $('download-hint').textContent=prism?'Скачайте GGUF по прямой ссылке Hugging Face. Формат Bonsai PQ2 поддерживает только PrismML.':'Укажите имя и тег из библиотеки Ollama. Сначала запустите сервер Ollama.';
 }
+// The API name follows the model file unless the owner typed their own (same rule as the server).
+function autoAlias(path){const stem=String(path||'').split(/[\\/]/).pop().replace(/\.gguf$/i,'');let s=stem.toLowerCase().replace(/[^a-z0-9._-]/g,'-').replace(/-+/g,'-').replace(/^[-._]+|[-._]+$/g,'');if(s.length>80)s=s.slice(0,80).replace(/[-._]+$/,'');return s||'model';}
+let aliasModel='';
+function followModelAlias(){const model=$('model-choice').value;const alias=$('alias').value.trim();if(!alias||alias===autoAlias(aliasModel))$('alias').value=autoAlias(model);aliasModel=model;}
 function presetText(p){if(p.auto)return 'под модель и видеокарту: Flash Attention, KV-кеш q8_0, контекст до 128k в VRAM';return Object.entries(p.settings||{}).map(([k,v])=>`${k}=${v}`).join(', ');}
 function renderPresets(b){
   const list=b.presets||[];const select=$('preset-choice');const old=select.value;select.replaceChildren();
@@ -276,10 +299,38 @@ async function catalogRequest(mode,value) {
   try{const data=await api(`/api/catalog?${mode==='search'?'q':'repo'}=${encodeURIComponent(value)}`);$('catalog-status').textContent='';return data;}
   finally{catalogBusy=false;$('catalog-search-button').disabled=false;}
 }
+// Capabilities as small badges, like on openrouter.ai.
+const capabilityLabels={reasoning:'Рассуждения',tools:'Инструменты',vision:'Зрение',moe:'MoE'};
+const capabilityHints={reasoning:'Шаблон модели умеет размышлять перед ответом (thinking)',tools:'Шаблон модели поддерживает вызов инструментов (function calling)',vision:'Есть проектор изображений (mmproj)',moe:'Mixture of Experts: на токен работает часть весов'};
+function capabilityBadges(list){const row=document.createElement('div');row.className='capabilities';(list||[]).forEach(c=>{const b=document.createElement('span');b.className=`capability ${c}`;b.textContent=capabilityLabels[c]||c;b.title=capabilityHints[c]||'';row.append(b);});return row;}
+function contextText(n){return n>=1024?`${Math.round(n/1024)}K контекст`:n?`${n} контекст`:'';}
+let installedBusy=false;
+async function refreshInstalled(){const b=backend();if(!b||installedBusy)return;installedBusy=true;$('installed-status').textContent='Читаем модели…';
+  try{const data=await api(`/api/models?backend=${encodeURIComponent(b.name)}`);renderInstalled(data.models||[]);}
+  catch(e){$('installed-models').replaceChildren();$('installed-status').textContent=e.message;}
+  finally{installedBusy=false;}}
+function renderInstalled(models){const b=backend();$('installed-models').replaceChildren();
+  const total=models.reduce((n,m)=>n+(m.bytes||0),0);$('installed-status').textContent=models.length?`Моделей: ${models.length} · ${formatGb(total)}`:'Моделей пока нет. Добавьте модель ниже.';
+  models.forEach(m=>{const row=document.createElement('article');row.className=`installed-model${m.selected?' selected':''}`;
+    const head=document.createElement('div');head.className='installed-head';const name=document.createElement('strong');name.textContent=m.name;head.append(name);
+    if(m.selected||m.in_use){const tag=document.createElement('span');tag.className='badge';tag.textContent=m.selected?'Выбрана':'Нужна для отката';head.append(tag);}
+    const meta=document.createElement('span');meta.className='muted installed-meta';meta.textContent=[m.params,m.quant,formatGb(m.bytes),contextText(m.context),m.parts>1?`частей: ${m.parts}`:''].filter(Boolean).join(' · ');
+    const actions=document.createElement('div');actions.className='button-row installed-actions';
+    if(!m.selected){const pick=document.createElement('button');pick.type='button';pick.className='secondary small';pick.textContent='Выбрать';pick.addEventListener('click',()=>pickModel(m));actions.append(pick);}
+    if(m.source){const link=sourceLink(m.source_search?'Найти на Hugging Face ↗':m.source.includes('ollama.com')?'Ollama ↗':'Hugging Face ↗',m.source);link.className='text-button small';actions.append(link);}
+    const del=document.createElement('button');del.type='button';del.className='text-button small danger-text';del.textContent='Удалить';del.disabled=!!m.in_use;
+    if(m.in_use)del.title='Модель выбрана в настройках или нужна для отката: сначала выберите и сохраните другую.';
+    del.addEventListener('click',()=>{if(!window.confirm(b.type==='prismml'?`Удалить модель ${m.name}? Файл будет удалён с диска, освободится ${formatGb(m.bytes)}.`:`Удалить модель ${m.name} из Ollama?`))return;
+      action({action:'model-delete',backend:selectedBackend,model:m.id}).catch(e=>notice(e.message,true));});actions.append(del);
+    row.append(head,meta,capabilityBadges(m.capabilities),actions);$('installed-models').append(row);});}
+// Choosing a model fills the settings form; saving or applying stays the owner's action.
+function pickModel(m){const select=$('model-choice');if(![...(select.options||select.children||[])].some(o=>o.value===m.id))select.add(new Option(m.name,m.id));select.value=m.id;
+  if(backend()?.type==='prismml')followModelAlias();settingsDirty=true;formRevision++;checkFit();
+  notice(backend()?.type==='prismml'?`Выбрана ${m.name}. Нажмите «Сохранить» или «Применить и запустить».`:`Выбрана ${m.name}. Нажмите «Загрузить».`);}
 function sourceLink(label,url) {const a=document.createElement('a');a.textContent=label;a.href=url;a.target='_blank';a.rel='noopener noreferrer';return a;}
 async function searchCatalog(query) {
   try{const data=await catalogRequest('search',query);$('catalog-results').replaceChildren();if(!data.models.length)$('catalog-status').textContent='Модели не найдены. Измените запрос или откройте каталог источника.';
-  data.models.forEach(m=>{const card=document.createElement('article');card.className='catalog-card';const h=document.createElement('h3');h.textContent=m.name;const p=document.createElement('p');p.className='muted';p.textContent=`Скачиваний: ${Number(m.downloads).toLocaleString('ru-RU')}${m.gated?' · требуется доступ автора':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent='Выбрать GGUF';button.addEventListener('click',()=>showCatalogFiles(m.id));card.append(h,p,sourceLink('Страница и описание ↗',m.url),button);$('catalog-results').append(card);});
+  data.models.forEach(m=>{const card=document.createElement('article');card.className='catalog-card';const h=document.createElement('h3');h.textContent=m.name;const p=document.createElement('p');p.className='muted';p.textContent=`Скачиваний: ${Number(m.downloads).toLocaleString('ru-RU')}${m.gated?' · требуется доступ автора':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent='Выбрать GGUF';button.addEventListener('click',()=>showCatalogFiles(m.id));card.append(h,p,capabilityBadges(m.capabilities),sourceLink('Страница и описание ↗',m.url),button);$('catalog-results').append(card);});
   }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
 }
 async function showCatalogFiles(repository) {
@@ -390,6 +441,10 @@ async function refreshLogs() { if(!snapshot)return; const data=await api('/api/l
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();$('login-error').textContent='';const button=e.currentTarget.querySelector('button');button.disabled=true;try{await api('/api/login',{password:$('password').value});$('password').value='';await showDashboard();}catch(error){$('login-error').textContent=error.message;}finally{button.disabled=false;}});
 $('logout').addEventListener('click',()=>api('/api/logout',{}).finally(showLogin));
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
+$('notifications-button').addEventListener('click',()=>toggleNotifications());
+$('notifications-close').addEventListener('click',()=>toggleNotifications(false));
+$('notifications-clear').addEventListener('click',()=>{noticeLog=[];unreadNotices=0;try{localStorage.setItem('omnibox-notices','[]');}catch{}renderNotifications();});
+renderNotifications();
 $('refresh').addEventListener('click',()=>refresh(true).catch(e=>notice(e.message,true)));
 $('stop-all').addEventListener('click',()=>{
   // Stopping interrupts the current generation: ask first when something runs.
@@ -413,6 +468,7 @@ $('settings-form').addEventListener('submit',e=>{e.preventDefault();action({acti
 $('apply').addEventListener('click',()=>{if($('settings-form').reportValidity())action({action:'apply',backend:selectedBackend,settings:collectSettings()}).catch(e=>notice(e.message,true));});
 $('estimate-button').addEventListener('click',()=>estimatePlacement());
 $('estimate-apply').addEventListener('click',applyEstimate);
+$('model-choice').addEventListener('change',followModelAlias);
 ['model-choice','context','cache-key','cache-value','placement'].forEach(id=>$(id).addEventListener('change',checkFit));
 $('fit-base').addEventListener('click',()=>action({action:'preset-apply',backend:selectedBackend,model:'Базовый'}).then(()=>{$('fit-warning').hidden=true;}).catch(e=>notice(e.message,true)));
 $('test-model').addEventListener('click',()=>action({action:'model-test'}).catch(e=>notice(e.message,true)));
@@ -424,9 +480,6 @@ $('preset-save').addEventListener('click',()=>{const name=$('preset-name').value
 $('auto-restart').addEventListener('change',e=>action({action:'auto-restart',backend:selectedBackend,enabled:e.target.checked}).catch(err=>{e.target.checked=!e.target.checked;notice(err.message,true);}));
 $('restore').addEventListener('click',()=>action({action:'restore',backend:selectedBackend}).catch(e=>notice(e.message,true)));
 $('load-model').addEventListener('click',()=>{const b=backend();const body={action:'load',backend:selectedBackend};if(b.type==='prismml'){if(!$('settings-form').reportValidity())return;body.settings=collectSettings();}else {body.model=$('model-choice').value;if(settingsDirty){if(!$('settings-form').reportValidity())return;body.settings=collectSettings();}}action(body).catch(e=>notice(e.message,true));});
-$('delete-model').addEventListener('click',()=>{const b=backend();const select=$('model-choice');const label=select.options[select.selectedIndex]?.text||select.value;if(!select.value)return;
-  if(!window.confirm(b.type==='prismml'?`Удалить модель ${label}? Файл будет удалён с диска.`:`Удалить модель ${label} из Ollama?`))return;
-  action({action:'model-delete',backend:selectedBackend,model:select.value}).catch(e=>notice(e.message,true));});
 $('unload-model').addEventListener('click',()=>action({action:'unload',backend:selectedBackend,model:$('model-choice').value}).catch(e=>notice(e.message,true)));
 $('download-form').addEventListener('submit',e=>{e.preventDefault();const b=backend();const body=b.type==='prismml'?{action:'download',backend:selectedBackend,url:$('download-url').value.trim(),filename:$('download-filename').value.trim(),sha256:$('download-sha').value.trim()}:{action:'pull',backend:selectedBackend,model:$('pull-name').value.trim()};action(body).catch(error=>notice(error.message,true));});
 $('refresh-logs').addEventListener('click',()=>refreshLogs().catch(e=>notice(e.message,true)));
@@ -443,7 +496,8 @@ $('generate-api-key').addEventListener('click',()=>{if(!window.confirm('Заме
 $('add-api-key').addEventListener('click',()=>{const name=$('api-key-name').value.trim();if(!name){notice('Введите имя клиента для ключа.',true);return;}
   saveGateway({action:'add',name}).then(()=>{$('api-key-name').value='';}).catch(e=>notice(e.message,true));});
 $('catalog-form').addEventListener('submit',e=>{e.preventDefault();searchCatalog($('catalog-query').value.trim());});
-document.querySelectorAll('[data-search]').forEach(button=>button.addEventListener('click',()=>{$('catalog-query').value=button.dataset.search;searchCatalog(button.dataset.search);}));
+document.querySelectorAll('[data-repo]').forEach(button=>button.addEventListener('click',()=>showCatalogFiles(button.dataset.repo)));
+$('installed-refresh').addEventListener('click',()=>refreshInstalled().catch(e=>notice(e.message,true)));
 showDashboard().catch(()=>showLogin());
 
 function idleText(b){

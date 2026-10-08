@@ -125,3 +125,19 @@ func TestHybridAttentionKeepsKVInFewLayers(t *testing.T) {
 		t.Fatalf("hybrid %d, full %d", h.KVCache, f.KVCache)
 	}
 }
+
+func TestChatTemplateFeatures(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "q.gguf")
+	os.WriteFile(path, header([]any{
+		"general.architecture", "qwen3", "general.name", "Qwen3 8B", "general.size_label", "8B",
+		"qwen3.block_count", uint32(36),
+		"tokenizer.chat_template", "{%- if tools %}<tool_call>{{ tools }}</tool_call>{% endif %}{%- if enable_thinking %}<think>{% endif %}",
+	}), 0o644)
+	m, err := Read(path)
+	if err != nil || !m.Thinking || !m.Tools || m.Name != "Qwen3 8B" || m.SizeLabel != "8B" {
+		t.Fatalf("%+v %v", m, err)
+	}
+	if th, tl := templateFeatures("{{ messages }}"); th || tl {
+		t.Fatal("a plain template claims features")
+	}
+}

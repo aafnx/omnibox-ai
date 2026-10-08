@@ -173,7 +173,7 @@ func TestApplyOllamaSettingsAndView(t *testing.T) {
 
 func TestPrismViewFillsDefaults(t *testing.T) {
 	v := View(PrismML, map[string]string{"model": `D:\models\ornith-Q4_K_M.gguf`, "gpu_layers": "30"})
-	if v["alias"] != "ornith-Q4_K_M" || v["placement"] != "hybrid" || v["cache_key"] != "f16" || v["kv_offload"] != "on" || v["context"] != "(model default)" || v["n_cpu_moe"] != "0" {
+	if v["alias"] != "ornith-q4_k_m" || v["placement"] != "hybrid" || v["cache_key"] != "f16" || v["kv_offload"] != "on" || v["context"] != "(model default)" || v["n_cpu_moe"] != "0" {
 		t.Fatalf("%v", v)
 	}
 	if v := View(PrismML, map[string]string{}); v["placement"] != "gpu" || v["idle_minutes"] != nil {
@@ -204,5 +204,32 @@ func TestFullyQualifiedAcceptsBothSystems(t *testing.T) {
 		if FullyQualified(p) {
 			t.Errorf("%s accepted", p)
 		}
+	}
+}
+
+func TestAPINameFollowsTheModel(t *testing.T) {
+	for in, want := range map[string]string{
+		`D:\models\prism-ml-Ternary-Bonsai-2-27B-gguf-Ternary-Bonsai-2-27B-PQ2_0.gguf`: "prism-ml-ternary-bonsai-2-27b-gguf-ternary-bonsai-2-27b-pq2_0",
+		"/m/Модель (v2) Q4.gguf": "v2-q4", "/m/---.gguf": "model", "/m/X.GGUF": "x", "/m/" + strings.Repeat("a", 90) + ".gguf": strings.Repeat("a", 80),
+	} {
+		if got := AutoAlias(in); got != want || !aliasPattern.MatchString(got) {
+			t.Fatalf("%s: %q", in, got)
+		}
+	}
+	known := []string{"/m/old-Q4_K_M.gguf", "/m/New-Q8_0.gguf"}
+	// An automatic name follows a new model; the owner's own name stays; an empty one is made again.
+	auto := map[string]string{"model": known[0], "alias": "old-q4_k_m"}
+	if s, err := Apply(PrismML, auto, map[string]string{"model": known[1]}, known); err != nil || s["alias"] != "new-q8_0" {
+		t.Fatalf("%v %v", s, err)
+	}
+	own := map[string]string{"model": known[0], "alias": "coder"}
+	if s, _ := Apply(PrismML, own, map[string]string{"model": known[1]}, known); s["alias"] != "coder" {
+		t.Fatalf("own name replaced: %v", s)
+	}
+	if s, _ := Apply(PrismML, own, map[string]string{"model": known[1], "alias": " "}, known); s["alias"] != "new-q8_0" {
+		t.Fatalf("empty name: %v", s)
+	}
+	if s, _ := Apply(PrismML, auto, map[string]string{"model": known[1], "alias": "mine"}, known); s["alias"] != "mine" {
+		t.Fatalf("given name: %v", s)
 	}
 }

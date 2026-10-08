@@ -18,6 +18,7 @@ import (
 
 	"github.com/aafnx/omnibox-ai/internal/catalog"
 	"github.com/aafnx/omnibox-ai/internal/config"
+	"github.com/aafnx/omnibox-ai/internal/engine"
 	"github.com/aafnx/omnibox-ai/internal/platform"
 )
 
@@ -121,5 +122,43 @@ func TestOperationsCancelOnlyDownloadsAndShowProgress(t *testing.T) {
 	}
 	if err := ops.Cancel(download); err == nil {
 		t.Fatal("a finished operation was canceled")
+	}
+}
+
+func TestInstalledModelsShowSourceAndUse(t *testing.T) {
+	r := newRig(t)
+	r.c.DataDir = t.TempDir()
+	content := append([]byte("GGUF"), make([]byte, 100)...)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) { w.Write(content) }))
+	defer srv.Close()
+	target, _ := url.Parse(srv.URL)
+	r.c.HTTP = &http.Client{Transport: toServer{target}}
+	link := "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF/resolve/main/gemma-3-12b-it-Q4_K_M.gguf"
+	if _, err := r.c.Do(context.Background(), Request{Action: "download", Engine: config.PrismML, URL: link, Filename: "unsloth-gemma-3-12b-it-GGUF-gemma-3-12b-it-Q4_K_M.gguf"}); err != nil {
+		t.Fatal(err)
+	}
+	models, err := r.c.InstalledModels(context.Background(), config.PrismML)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]engine.Details{}
+	for _, m := range models {
+		byName[m.Name] = m
+	}
+	got := byName["unsloth-gemma-3-12b-it-GGUF-gemma-3-12b-it-Q4_K_M.gguf"]
+	if got.Source != "https://huggingface.co/unsloth/gemma-3-12b-it-GGUF" || got.SourceSearch || got.InUse || got.Params != "12B" {
+		t.Fatalf("%+v", got)
+	}
+	// A model from before has a search link; the selected one cannot be deleted.
+	if good := byName["good-Q4_K_M.gguf"]; !good.Selected || !good.InUse || !good.SourceSearch || !strings.Contains(good.Source, "search=good") {
+		t.Fatalf("%+v", good)
+	}
+	// A removed model leaves the sources file.
+	os.Remove(got.ID)
+	if _, ok := r.c.sources()[got.ID]; ok {
+		t.Fatal("a removed model kept its source")
+	}
+	if _, err := r.c.InstalledModels(context.Background(), config.Ollama); err == nil {
+		t.Fatal("a stopped Ollama listed its models")
 	}
 }
