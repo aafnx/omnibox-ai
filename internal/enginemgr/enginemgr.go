@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/aafnx/omnibox-ai/internal/config"
+	"github.com/aafnx/omnibox-ai/internal/progress"
 	"github.com/aafnx/omnibox-ai/internal/storage"
 )
 
@@ -369,7 +370,7 @@ func (m *Manager) download(ctx context.Context, a Asset, path string) error {
 	}
 	defer f.Close()
 	hash := sha256.New()
-	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(resp.Body, a.Size+1))
+	n, err := io.Copy(io.MultiWriter(f, hash), io.LimitReader(progress.Reader(ctx, resp.Body, a.Size), a.Size+1))
 	if err != nil {
 		return fmt.Errorf("Не удалось скачать %s: %v", a.Name, err)
 	}

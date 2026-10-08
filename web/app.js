@@ -57,7 +57,7 @@ async function refresh(gpu,snapshotRequested=gpu) {
   const [data,apiConfig,stats]=await Promise.all([api(`/api/status${gpu?'?gpu=1':''}`),api('/api/gateway'),api('/api/activity')]);activity=stats; snapshot=data; $('version').textContent=`v${data.version}`; $('computer').textContent=data.computer;
   $('server-count').textContent=`${data.backends.filter(b=>b.service==='Running').length} / ${data.backends.length}`; renderModelSummary();
   if(gpu) { const g=data.gpu?.[0]; $('gpu-value').textContent=g?`${(g.used/1024).toFixed(1)} / ${(g.total/1024).toFixed(1)} ГБ`:'Нет данных'; $('gpu-bar').value=g?g.used/g.total*100:0; $('gpu-caption').textContent=g?`${g.name} · свободно ${(g.free/1024).toFixed(1)} ГБ`:'nvidia-smi недоступен.'; }
-  renderEngines(); renderOperations(data.operations||[]);
+  renderEngines(); renderOperations(data.operations||[]); renderInlineProgress(data.operations||[]);
   for(const id of ['model-backend']) { const select=$(id), old=select.value; select.replaceChildren(); data.backends.forEach(b=>select.add(new Option(engineName(b.name),b.name))); select.value=data.backends.some(b=>b.name===old)?old:data.default_backend; }
   if(!selectedBackend)selectedBackend=data.default_backend;
   $('model-backend').value=selectedBackend;
@@ -108,11 +108,20 @@ function renderEngines() {
 const completed = new Set();
 // Download progress: done of total, speed and time left.
 function transferText(op){
-  const gb=n=>(n/1024**3).toFixed(2);const percent=Math.floor(100*(op.bytes_done||0)/op.bytes_total);
-  let text=`${gb(op.bytes_done||0)} из ${gb(op.bytes_total)} ГБ (${percent}%)`;
+  const big=op.bytes_total>=1024**3;const size=n=>big?(n/1024**3).toFixed(2):(n/1024**2).toFixed(1);const percent=Math.floor(100*(op.bytes_done||0)/op.bytes_total);
+  let text=`${size(op.bytes_done||0)} из ${size(op.bytes_total)} ${big?'ГБ':'МБ'} (${percent}%)`;
   if(op.bytes_per_second>0){const left=(op.bytes_total-(op.bytes_done||0))/op.bytes_per_second;text+=` · ${(op.bytes_per_second/1024**2).toFixed(1)} МБ/с · осталось ${left>=3600?Math.floor(left/3600)+' ч '+Math.floor(left%3600/60)+' мин':Math.ceil(left/60)+' мин'}`;}
   return text;
 }
+// Running operations are also shown where they were started: model downloads under «Добавить
+// модель», engine installs among the engines, the program update next to its form.
+const inlineProgress={'models-progress':['download','pull','model-delete'],'engines-progress':['engine-install','engine-update','engine-remove'],'update-progress':['self-update']};
+function progressRow(op){const row=document.createElement('div');row.className='inline-progress';
+  const title=document.createElement('span');title.className='inline-progress-title';title.textContent=`${labels[op.action]||op.action}${op.backend?' · '+engineName(op.backend):''}`;
+  const bar=document.createElement('progress');if(op.bytes_total){bar.max=op.bytes_total;bar.value=op.bytes_done||0;}
+  const text=document.createElement('small');text.className='muted';text.textContent=op.bytes_total?transferText(op):op.bytes_done?`${(op.bytes_done/1024**2).toFixed(1)} МБ`:`${Math.floor(op.elapsed_seconds||0)} с`;
+  row.append(title,bar,text);return row;}
+function renderInlineProgress(operations){Object.entries(inlineProgress).forEach(([id,actions])=>{const running=operations.filter(o=>o.state==='running'&&actions.includes(o.action));$(id).replaceChildren(...running.map(progressRow));$(id).hidden=!running.length;});}
 function renderOperations(operations) {
   $('operations').replaceChildren();
   let notified = false;

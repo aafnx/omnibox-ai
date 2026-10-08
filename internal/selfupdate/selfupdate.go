@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/aafnx/omnibox-ai/internal/enginemgr"
+	"github.com/aafnx/omnibox-ai/internal/progress"
 )
 
 // Repo is where the releases are published.
@@ -180,7 +181,7 @@ func (u *Updater) download(ctx context.Context, r Release, name, path string) er
 	if err != nil {
 		return err
 	}
-	n, err := io.Copy(f, io.LimitReader(resp.Body, archiveLimit+1))
+	n, err := io.Copy(f, io.LimitReader(progress.Reader(ctx, resp.Body, max(resp.ContentLength, 0)), archiveLimit+1))
 	if cerr := f.Close(); err == nil {
 		err = cerr
 	}
