@@ -180,7 +180,7 @@ func parse(in io.Reader) (Meta, error) {
 		case "general.size_label":
 			m.SizeLabel = s
 		case "tokenizer.chat_template":
-			m.Thinking, m.Tools = templateFeatures(s)
+			m.Thinking, m.Tools = TemplateFeatures(s)
 		}
 		numbers[key] = n
 	}
@@ -210,9 +210,9 @@ func parse(in io.Reader) (Meta, error) {
 	return m, nil
 }
 
-// templateFeatures reads what a Jinja chat template handles: thinking blocks (<think>, Qwen's
+// TemplateFeatures reads what a Jinja chat template handles: thinking blocks (<think>, Qwen's
 // enable_thinking, gpt-oss channels) and tool calls.
-func templateFeatures(t string) (thinking, tools bool) {
+func TemplateFeatures(t string) (thinking, tools bool) {
 	l := strings.ToLower(t)
 	for _, s := range []string{"<think>", "enable_thinking", "reasoning_content", "<|channel|>", "thinking"} {
 		thinking = thinking || strings.Contains(l, s)

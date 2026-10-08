@@ -174,6 +174,8 @@ footer{display:flex;justify-content:space-between;font-size:12px;color:var(--mut
 .summary-card h2.long-value{font-size:16px;line-height:1.35}
 .summary-card progress{margin:0 0 6px}
 .summary-card p{font-size:12px;margin:auto 0 0}
+.card-head{display:flex;justify-content:space-between;align-items:center;gap:8px;min-height:22px}
+.card-head .text-button{padding:2px 8px}
 .monitor-note{font-size:12px;margin:14px 0 0}
 .resource-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-top:8px}
 .resource-card{padding:12px 16px;display:grid;gap:6px;align-content:start}
@@ -245,9 +247,19 @@ pre{background:var(--field);border:1px solid var(--border);border-radius:var(--r
 .installed-actions a{text-decoration:none}
 .capabilities{display:flex;flex-wrap:wrap;gap:4px}
 .capabilities:empty{display:none}
-.capability{font-size:11px;font-weight:600;letter-spacing:.02em;padding:2px 8px;border-radius:20px;border:1px solid var(--accent-line);color:var(--accent-text);background:var(--accent-soft)}
+.capability{position:relative;display:inline-flex;align-items:center;justify-content:center;min-width:26px;height:24px;padding:0 6px;font-size:11px;font-weight:600;border-radius:8px;border:1px solid var(--accent-line);color:var(--accent-text);background:var(--accent-soft);cursor:help}
+.capability .icon{width:15px;height:15px}
 .capability.vision{border-color:color-mix(in srgb,var(--warn) 40%,transparent);color:var(--warn);background:var(--warn-soft)}
-.capability.moe{border-color:var(--border-strong);color:var(--muted);background:var(--surface2)}
+.capability.moe,.capability.context{border-color:var(--border-strong);color:var(--muted);background:var(--surface2)}
+.capability:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+/* Tooltip of a capability icon: on hover and on keyboard focus. */
+.capability[data-tip]:hover::after,.capability[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;left:50%;bottom:calc(100% + 8px);transform:translateX(-50%);z-index:30;width:max-content;max-width:260px;padding:8px 10px;border-radius:var(--radius-s);background:var(--text);color:var(--surface);font-size:12px;font-weight:500;line-height:1.4;white-space:normal;box-shadow:var(--shadow);pointer-events:none}
+.repo-head{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;margin-bottom:8px}
+.fit{font-size:12px;grid-column:1}
+.fit-gpu{color:var(--ok)}
+.fit-short,.fit-moe{color:var(--accent-text)}
+.fit-hybrid{color:var(--warn)}
+.fit-none{color:var(--error)}
 #direct-download{margin-top:10px}
 .inline-progress-list{display:grid;gap:8px;margin:8px 0 12px}
 .inline-progress{display:grid;grid-template-columns:minmax(0,220px) minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 12px;border:1px solid var(--accent-line);border-radius:var(--radius-s);background:var(--accent-soft);font-size:13px}
@@ -261,7 +273,7 @@ pre{background:var(--field);border:1px solid var(--border);border-radius:var(--r
 .catalog-file{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:7px 14px;padding:15px;border:1px solid var(--border);border-radius:var(--radius-s)}
 .catalog-file strong{font-size:13px;overflow-wrap:anywhere}
 .catalog-file span{font-size:12px;grid-column:1}
-.catalog-file button{grid-column:2;grid-row:1/3;align-self:center}
+.catalog-file button{grid-column:2;grid-row:1/4;align-self:center}
 
 /* ---- Connection ---- */
 .connect-card{margin-bottom:18px;padding:25px}

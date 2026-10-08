@@ -250,8 +250,15 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 		Catalog: func(ctx context.Context, query, repo string) (any, error) {
 			// Hugging Face is asked only when the owner searches.
 			if repo != "" {
-				files, err := hub.Files(ctx, repo)
-				return map[string]any{"repository": repo, "files": files, "url": "https://huggingface.co/" + repo}, err
+				r, err := hub.Repo(ctx, repo)
+				vram, _ := estimates.vram(ctx)
+				for i, f := range r.Files {
+					if !f.Projector && !f.Split && f.Bytes != nil {
+						fit := FileFit(*f.Bytes, r.MoE, vram, telemetry.RAMTotal())
+						r.Files[i].Fit = &fit
+					}
+				}
+				return map[string]any{"repository": repo, "files": r.Files, "capabilities": r.Capabilities, "context": r.Context, "url": "https://huggingface.co/" + repo}, err
 			}
 			models, err := hub.Search(ctx, query)
 			return map[string]any{"models": models, "source": "Hugging Face", "query": query}, err

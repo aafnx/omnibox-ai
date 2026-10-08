@@ -15,6 +15,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"github.com/aafnx/omnibox-ai/internal/gguf"
 )
 
 var (
@@ -125,6 +127,9 @@ func (h *Hub) Search(ctx context.Context, query string) ([]Model, error) {
 	return out, nil
 }
 
+// capabilityOrder is how capabilities are shown.
+var capabilityOrder = []string{"reasoning", "tools", "vision", "moe"}
+
 // capabilities reads a repository's task and tags; names say MoE (35B-A3B) and reasoning (R1).
 func capabilities(id, task string, tags []string) []string {
 	has := func(names ...string) bool {
@@ -165,16 +170,48 @@ type File struct {
 	PrismOnly bool   `json:"prism_only"`
 	// Projector files (mmproj) are not models: they give a model of the same repository vision.
 	Projector bool `json:"projector"`
+	// Fit says whether the file runs on this PC and how; the panel fills it in.
+	Fit *Fit `json:"fit,omitempty"`
+}
+
+// Fit is a short verdict on a model file for this PC: gpu, short (VRAM with a short context),
+// moe (experts in RAM), hybrid (layers in RAM, slow) or none.
+type Fit struct {
+	Level string `json:"level"`
+	Text  string `json:"text"`
+}
+
+// Repo is a repository's GGUF files and what its model can do.
+type Repo struct {
+	Files []File `json:"files"`
+	// Capabilities come from the chat template and context of the GGUF metadata Hugging Face
+	// reports, the tags and task, and a projector among the files (vision).
+	Capabilities []string `json:"capabilities"`
+	Context      int      `json:"context,omitempty"`
+	MoE          bool     `json:"moe"`
 }
 
 // Files lists a repository's GGUF files with download links pinned to the current revision,
 // so a resumed download continues the same file.
 func (h *Hub) Files(ctx context.Context, repo string) ([]File, error) {
+	r, err := h.Repo(ctx, repo)
+	return r.Files, err
+}
+
+// Repo lists a repository's GGUF files and the model's capabilities.
+func (h *Hub) Repo(ctx context.Context, repo string) (Repo, error) {
 	if !repoPattern.MatchString(repo) || strings.Contains(repo, "..") {
-		return nil, errors.New("Нужен Hugging Face repo в формате author/model.")
+		return Repo{}, errors.New("Нужен Hugging Face repo в формате author/model.")
 	}
 	var info struct {
-		SHA      string `json:"sha"`
+		SHA         string   `json:"sha"`
+		Tags        []string `json:"tags"`
+		PipelineTag string   `json:"pipeline_tag"`
+		GGUF        struct {
+			Architecture  string `json:"architecture"`
+			ContextLength int    `json:"context_length"`
+			ChatTemplate  string `json:"chat_template"`
+		} `json:"gguf"`
 		Siblings []struct {
 			Name string `json:"rfilename"`
 			Size *int64 `json:"size"`
@@ -184,7 +221,7 @@ func (h *Hub) Files(ctx context.Context, repo string) ([]File, error) {
 		} `json:"siblings"`
 	}
 	if err := h.get(ctx, "/"+repo+"?blobs=true", &info); err != nil {
-		return nil, err
+		return Repo{}, err
 	}
 	rev := "main"
 	if revision.MatchString(info.SHA) {
@@ -213,7 +250,28 @@ func (h *Hub) Files(ctx context.Context, repo string) ([]File, error) {
 			break
 		}
 	}
-	return out, nil
+	r := Repo{Files: out, Context: info.GGUF.ContextLength, Capabilities: capabilities(repo, info.PipelineTag, info.Tags)}
+	add := func(c string) {
+		if !slices.Contains(r.Capabilities, c) {
+			r.Capabilities = append(r.Capabilities, c)
+		}
+	}
+	thinking, tools := gguf.TemplateFeatures(info.GGUF.ChatTemplate)
+	if thinking {
+		add("reasoning")
+	}
+	if tools {
+		add("tools")
+	}
+	if slices.ContainsFunc(out, func(f File) bool { return f.Projector }) {
+		add("vision")
+	}
+	if strings.Contains(strings.ToLower(info.GGUF.Architecture), "moe") {
+		add("moe")
+	}
+	r.MoE = slices.Contains(r.Capabilities, "moe")
+	slices.SortStableFunc(r.Capabilities, func(a, b string) int { return slices.Index(capabilityOrder, a) - slices.Index(capabilityOrder, b) })
+	return r, nil
 }
 
 // ModelURL checks a direct Hugging Face file link.

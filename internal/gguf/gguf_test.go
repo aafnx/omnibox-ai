@@ -137,7 +137,7 @@ func TestChatTemplateFeatures(t *testing.T) {
 	if err != nil || !m.Thinking || !m.Tools || m.Name != "Qwen3 8B" || m.SizeLabel != "8B" {
 		t.Fatalf("%+v %v", m, err)
 	}
-	if th, tl := templateFeatures("{{ messages }}"); th || tl {
+	if th, tl := TemplateFeatures("{{ messages }}"); th || tl {
 		t.Fatal("a plain template claims features")
 	}
 }

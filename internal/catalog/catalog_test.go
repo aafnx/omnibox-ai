@@ -71,7 +71,7 @@ func (f *fileServer) serve(w http.ResponseWriter, r *http.Request) {
 	w.Write(body)
 }
 
-func gguf(n int, fill byte) []byte {
+func ggufBytes(n int, fill byte) []byte {
 	b := make([]byte, n)
 	copy(b, "GGUF")
 	for i := 4; i < n; i++ {
@@ -101,7 +101,7 @@ func parts(t *testing.T, dir string) []string {
 }
 
 func TestDownloadResumesFromTheSameByte(t *testing.T) {
-	content := gguf(300000, 1)
+	content := ggufBytes(300000, 1)
 	f := newFileServer(t, content)
 	f.cutAt = 120000
 	dir := t.TempDir()
@@ -129,14 +129,14 @@ func TestDownloadResumesFromTheSameByte(t *testing.T) {
 }
 
 func TestChangedFileStartsOver(t *testing.T) {
-	first := gguf(200000, 1)
+	first := ggufBytes(200000, 1)
 	f := newFileServer(t, first)
 	f.cutAt = 50000
 	dir := t.TempDir()
 	d := f.download(t, dir, "/author/model/resolve/main/model-Q4_K_M.gguf", first)
 	d.SHA256, d.Size = "", 0
 	d.Run(context.Background())
-	second := gguf(210000, 9)
+	second := ggufBytes(210000, 9)
 	f.content, f.etag, f.cutAt = second, `"v2"`, 0
 	if err := d.Run(context.Background()); err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestChangedFileStartsOver(t *testing.T) {
 }
 
 func TestUnpinnedLinkWithoutETagDoesNotResume(t *testing.T) {
-	content := gguf(100000, 3)
+	content := ggufBytes(100000, 3)
 	f := newFileServer(t, content)
 	f.etag = ""
 	f.cutAt = 40000
@@ -165,7 +165,7 @@ func TestUnpinnedLinkWithoutETagDoesNotResume(t *testing.T) {
 }
 
 func TestCancelRemovesPartAndStallKeepsIt(t *testing.T) {
-	content := gguf(100000, 5)
+	content := ggufBytes(100000, 5)
 	f := newFileServer(t, content)
 	f.stall = true
 	dir := t.TempDir()
@@ -189,7 +189,7 @@ func TestVerificationFailuresRemoveTheFile(t *testing.T) {
 	if err := f.download(t, dir, pinned, notGGUF).Run(context.Background()); err == nil || !strings.Contains(err.Error(), "заголовка GGUF") {
 		t.Fatalf("header: %v", err)
 	}
-	content := gguf(1000, 2)
+	content := ggufBytes(1000, 2)
 	f.content = content
 	d := f.download(t, dir, pinned, content)
 	d.SHA256 = strings.Repeat("0", 64)
@@ -286,5 +286,18 @@ func TestSearchFallsBackWhenTheGGUFFilterIsEmpty(t *testing.T) {
 	if !slices.Equal(models[0].Capabilities, []string{"vision"}) || !slices.Equal(models[1].Capabilities, []string{"tools"}) ||
 		!slices.Equal(models[2].Capabilities, []string{"reasoning", "moe"}) {
 		t.Fatalf("%+v", models)
+	}
+}
+
+func TestRepoCapabilitiesFromGGUFMetadata(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]any{"sha": "0123456789abcdef0123456789abcdef01234567", "tags": []string{"gguf"},
+			"gguf":     map[string]any{"architecture": "qwen35moe", "context_length": 262144, "chat_template": "{% if tools %}<tool_call>{% endif %}<think>"},
+			"siblings": []map[string]any{{"rfilename": "Ornith-1.5-35B-Q4_K_M.gguf", "size": 21 << 30}, {"rfilename": "mmproj-Ornith-1.5-35B-BF16.gguf", "size": 900 << 20}}})
+	}))
+	defer srv.Close()
+	r, err := (&Hub{Base: srv.URL}).Repo(context.Background(), "ornith-ai/Ornith-1.5-35B-A3B-GGUF")
+	if err != nil || !slices.Equal(r.Capabilities, []string{"reasoning", "tools", "vision", "moe"}) || !r.MoE || r.Context != 262144 || len(r.Files) != 2 {
+		t.Fatalf("%+v %v", r, err)
 	}
 }

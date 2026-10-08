@@ -76,7 +76,7 @@ function renderModelSummary(){
   const running=snapshot.backends.find(b=>b.service==='Running'||b.service==='StartPending');
   // A sleeping engine has unloaded its model: nothing is in memory, whatever name it still reports.
   const model=running&&!running.sleeping&&!['-','(none)',undefined,null,''].includes(running.loaded_model)?running.loaded_model:'';
-  $('kpi-model').textContent=model||'Нет';
+  $('kpi-model').textContent=model||'Нет';$('kpi-unload').hidden=!model;$('kpi-unload').dataset.backend=running?.name||'';$('kpi-unload').dataset.model=model;
   $('kpi-model-caption').textContent=!running?'Серверы остановлены. Одновременно работает одна модель.':running.sleeping?`${engineName(running.name)} · модель выгружена после простоя, загрузится по первому запросу`:`${engineName(running.name)} · ${badgeText(running).toLowerCase()}`;
 }
 function badgeText(b) { if(b.service==='Running') return b.sleeping?'Модель спит':b.api==='Ready'?'API готов':'API недоступен'; return ({Stopped:'Остановлен',Missing:'Не установлен',StartPending:'Запускается',StopPending:'Останавливается'})[b.service]||b.service; }
@@ -310,9 +310,14 @@ async function catalogRequest(mode,value) {
   finally{catalogBusy=false;$('catalog-search-button').disabled=false;}
 }
 // Capabilities as small badges, like on openrouter.ai.
-const capabilityLabels={reasoning:'Рассуждения',tools:'Инструменты',vision:'Зрение',moe:'MoE'};
-const capabilityHints={reasoning:'Шаблон модели умеет размышлять перед ответом (thinking)',tools:'Шаблон модели поддерживает вызов инструментов (function calling)',vision:'Есть проектор изображений (mmproj)',moe:'Mixture of Experts: на токен работает часть весов'};
-function capabilityBadges(list){const row=document.createElement('div');row.className='capabilities';(list||[]).forEach(c=>{const b=document.createElement('span');b.className=`capability ${c}`;b.textContent=capabilityLabels[c]||c;b.title=capabilityHints[c]||'';row.append(b);});return row;}
+// Capabilities are icons with a tooltip on hover or focus, the same everywhere in the panel.
+const capabilityLabels={reasoning:'Рассуждения',tools:'Инструменты',vision:'Зрение',moe:'MoE',context:'Контекст'};
+const capabilityHints={reasoning:'Рассуждения: модель умеет думать перед ответом (thinking) — точнее, но дольше.',tools:'Инструменты: вызов функций (function calling) — для агентов и Open WebUI tools.',vision:'Зрение: принимает изображения; нужен проектор mmproj этой модели.',moe:'MoE (Mixture of Experts): на каждый токен работает часть весов — быстро даже частично в RAM.',context:'Обученный контекст: сколько токенов модель держит в одном разговоре.'};
+const capabilityIcons={reasoning:'<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-3.5 10.9c.6.5 1 1.2 1 2.1h5c0-.9.4-1.6 1-2.1A6 6 0 0 0 12 3z"/>',tools:'<path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L3 18l3 3 6.3-6.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.8-.7-.7-2.8z"/>',vision:'<path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/>',moe:'<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>'};
+function capabilityBadge(c,text){const b=document.createElement('span');b.className=`capability ${c}`;b.tabIndex=0;b.setAttribute('role','img');b.setAttribute('aria-label',capabilityHints[c]||c);b.dataset.tip=capabilityHints[c]||c;
+  if(capabilityIcons[c])b.innerHTML=`<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${capabilityIcons[c]}</svg>`;else b.textContent=text||capabilityLabels[c]||c;return b;}
+function capabilityBadges(list,context){const row=document.createElement('div');row.className='capabilities';(list||[]).forEach(c=>row.append(capabilityBadge(c)));
+  if(context)row.append(capabilityBadge('context',context>=1024?`${Math.round(context/1024)}K`:String(context)));return row;}
 function contextText(n){return n>=1024?`${Math.round(n/1024)}K контекст`:n?`${n} контекст`:'';}
 // Vision projectors (mmproj) of the models directory, from the installed models listing.
 let projectors=[],installedModels=[];
@@ -331,7 +336,7 @@ function renderInstalled(models){const b=backend();$('installed-models').replace
   models.forEach(m=>{const row=document.createElement('article');row.className=`installed-model${m.selected?' selected':''}`;
     const head=document.createElement('div');head.className='installed-head';const name=document.createElement('strong');name.textContent=m.name;head.append(name);
     if(m.selected||m.in_use){const tag=document.createElement('span');tag.className='badge';tag.textContent=m.selected?'Выбрана':'Нужна для отката';head.append(tag);}
-    const meta=document.createElement('span');meta.className='muted installed-meta';meta.textContent=[m.params,m.quant,formatGb(m.bytes),contextText(m.context),m.parts>1?`частей: ${m.parts}`:''].filter(Boolean).join(' · ');
+    const meta=document.createElement('span');meta.className='muted installed-meta';meta.textContent=[m.params,m.quant,formatGb(m.bytes),m.parts>1?`частей: ${m.parts}`:''].filter(Boolean).join(' · ');
     const actions=document.createElement('div');actions.className='button-row installed-actions';
     if(!m.selected){const pick=document.createElement('button');pick.type='button';pick.className='secondary small';pick.textContent='Выбрать';pick.addEventListener('click',()=>pickModel(m));actions.append(pick);}
     if(m.source){const link=sourceLink(m.source_search?'Найти на Hugging Face ↗':m.source.includes('ollama.com')?'Ollama ↗':'Hugging Face ↗',m.source);link.className='text-button small';actions.append(link);}
@@ -339,7 +344,7 @@ function renderInstalled(models){const b=backend();$('installed-models').replace
     if(m.in_use)del.title='Модель выбрана в настройках или нужна для отката: сначала выберите и сохраните другую.';
     del.addEventListener('click',()=>{if(!window.confirm(b.type==='prismml'?`Удалить модель ${m.name}? Файл будет удалён с диска, освободится ${formatGb(m.bytes)}.`:`Удалить модель ${m.name} из Ollama?`))return;
       action({action:'model-delete',backend:selectedBackend,model:m.id}).catch(e=>notice(e.message,true));});actions.append(del);
-    row.append(head,meta,capabilityBadges(m.capabilities),actions);$('installed-models').append(row);});}
+    row.append(head,meta,capabilityBadges(m.capabilities,m.context),actions);$('installed-models').append(row);});}
 // Choosing a model fills the settings form; saving or applying stays the owner's action.
 function pickModel(m){const select=$('model-choice');if(![...(select.options||select.children||[])].some(o=>o.value===m.id))select.add(new Option(m.name,m.id));select.value=m.id;
   if(backend()?.type==='prismml')followModelAlias();settingsDirty=true;formRevision++;checkFit();
@@ -351,8 +356,8 @@ async function searchCatalog(query) {
   }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
 }
 async function showCatalogFiles(repository) {
-  try{const data=await catalogRequest('files',repository);$('catalog-results').replaceChildren();$('catalog-results').append(sourceLink(`${repository} · описание и лицензия ↗`,data.url));if(!data.files.length)$('catalog-status').textContent='Подходящие GGUF не найдены.';
-  data.files.forEach(f=>{const row=document.createElement('article');row.className='catalog-file';const title=document.createElement('strong');title.textContent=f.name;const meta=document.createElement('span');meta.className='muted';meta.textContent=`${f.projector?'Проектор изображений (mmproj) — даёт модели этого репозитория зрение · ':''}${f.bytes?(f.bytes/1024**3).toFixed(2)+' ГБ':'Размер не указан'}${f.prism_only?' · нужен PrismML':''}${f.split?' · многотомный файл':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent=f.projector?'Скачать проектор':'Скачать на ПК';const b=backend();const tag=`hf.co/${repository}:${f.name}`;button.disabled=f.split||(b.type==='ollama'&&(f.prism_only||f.projector||tag.length>200));button.addEventListener('click',()=>{const b=backend();if(!b||f.split||(b.type==='ollama'&&(f.prism_only||f.projector||tag.length>200))){notice('Этот файл не поддерживается выбранным движком.',true);return;}const body=b.type==='prismml'?{action:'download',backend:selectedBackend,url:f.url,filename:f.filename,sha256:f.sha256,size:f.bytes?String(f.bytes):''}:{action:'pull',backend:selectedBackend,model:tag};action(body).catch(e=>notice(e.message,true));});row.append(title,meta,button);$('catalog-results').append(row);});
+  try{const data=await catalogRequest('files',repository);$('catalog-results').replaceChildren();const repoHead=document.createElement('div');repoHead.className='repo-head';repoHead.append(sourceLink(`${repository} · описание и лицензия ↗`,data.url),capabilityBadges(data.capabilities,data.context));$('catalog-results').append(repoHead);if(!data.files.length)$('catalog-status').textContent='Подходящие GGUF не найдены.';
+  data.files.forEach(f=>{const row=document.createElement('article');row.className='catalog-file';const title=document.createElement('strong');title.textContent=f.name;const meta=document.createElement('span');meta.className='muted';meta.textContent=`${f.projector?'Проектор изображений (mmproj) — даёт модели этого репозитория зрение · ':''}${f.bytes?(f.bytes/1024**3).toFixed(2)+' ГБ':'Размер не указан'}${f.prism_only?' · нужен PrismML':''}${f.split?' · многотомный файл':''}`;const button=document.createElement('button');button.className='secondary small';button.textContent=f.projector?'Скачать проектор':'Скачать на ПК';const b=backend();const tag=`hf.co/${repository}:${f.name}`;button.disabled=f.split||(b.type==='ollama'&&(f.prism_only||f.projector||tag.length>200));button.addEventListener('click',()=>{const b=backend();if(!b||f.split||(b.type==='ollama'&&(f.prism_only||f.projector||tag.length>200))){notice('Этот файл не поддерживается выбранным движком.',true);return;}const body=b.type==='prismml'?{action:'download',backend:selectedBackend,url:f.url,filename:f.filename,sha256:f.sha256,size:f.bytes?String(f.bytes):''}:{action:'pull',backend:selectedBackend,model:tag};action(body).catch(e=>notice(e.message,true));});const fit=document.createElement('span');fit.className=`fit fit-${f.fit?.level||'none'}`;fit.textContent=f.fit?.text||'';fit.hidden=!f.fit;row.append(title,meta,fit,button);$('catalog-results').append(row);});
   }catch(e){$('catalog-status').textContent=e.message;notice(e.message,true);}
 }
 // Engine versions come from GitHub only when the owner asks; installs run as panel operations.
@@ -466,6 +471,9 @@ async function refreshLogs() { if(!snapshot)return; const data=await api('/api/l
 $('login-form').addEventListener('submit',async e=>{e.preventDefault();$('login-error').textContent='';const button=e.currentTarget.querySelector('button');button.disabled=true;try{await api('/api/login',{password:$('password').value});$('password').value='';await showDashboard();}catch(error){$('login-error').textContent=error.message;}finally{button.disabled=false;}});
 $('logout').addEventListener('click',()=>api('/api/logout',{}).finally(showLogin));
 document.querySelectorAll('[data-tab]').forEach(b=>b.addEventListener('click',()=>switchTab(b.dataset.tab)));
+$('kpi-unload').addEventListener('click',()=>{const b=snapshot?.backends.find(x=>x.name===$('kpi-unload').dataset.backend);if(!b)return;
+  if(!window.confirm(b.type==='prismml'?`Выгрузить ${$('kpi-unload').dataset.model}? Сервер PrismML остановится и освободит память; новый запрос его не запустит.`:`Выгрузить ${$('kpi-unload').dataset.model} из Ollama? Сервер останется работать.`))return;
+  action({action:'unload',backend:b.name,...(b.type==='ollama'?{model:$('kpi-unload').dataset.model}:{})}).catch(e=>notice(e.message,true));});
 $('notifications-button').addEventListener('click',()=>toggleNotifications());
 $('notifications-close').addEventListener('click',()=>toggleNotifications(false));
 $('notifications-clear').addEventListener('click',()=>{noticeLog=[];unreadNotices=0;try{localStorage.setItem('omnibox-notices','[]');}catch{}renderNotifications();});
