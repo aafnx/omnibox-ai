@@ -60,6 +60,10 @@ func githubToken() (string, error) {
 			}
 		}
 	}
+	// The token saved in the panel for updates, readable from an administrator's terminal.
+	if t, ok := loadToken(platform.DataDir()); ok {
+		return t.Token, nil
+	}
 	fmt.Print("GitHub token с правом чтения репозитория aafnx/omnibox-ai (ввод скрыт): ")
 	v, err := platform.ReadSecret()
 	if v == "" {
@@ -69,15 +73,19 @@ func githubToken() (string, error) {
 }
 
 // runUpdate is "ai update [версия]": it downloads the release, checks it and runs its installer,
-// which updates the program with rollback and keeps every setting.
+// which updates the program with rollback and keeps every setting. "ai update --check" only
+// tells whether a newer release exists.
 func runUpdate(args []string, u updater, stdout, stderr io.Writer) int {
-	version := ""
+	version, check := "", false
+	if len(args) == 1 && args[0] == "--check" {
+		check, args = true, nil
+	}
 	switch len(args) {
 	case 0:
 	case 1:
 		version = args[0]
 	default:
-		fmt.Fprintln(stderr, "Используйте: ai update [версия]")
+		fmt.Fprintln(stderr, "Используйте: ai update [версия] или ai update --check")
 		return 2
 	}
 	token, err := u.Token()
@@ -91,6 +99,17 @@ func runUpdate(args []string, u updater, stdout, stderr io.Writer) int {
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
+	}
+	if check {
+		if !newer(release.Version(), u.Current) {
+			fmt.Fprintf(stdout, "Установлена последняя версия %s.\n", u.Current)
+			return 0
+		}
+		fmt.Fprintf(stdout, "Доступна версия %s (установлена %s). Обновить: ai update\n", release.Version(), u.Current)
+		if release.Notes != "" {
+			fmt.Fprintf(stdout, "\n%s\n", release.Notes)
+		}
+		return 0
 	}
 	if version == "" && release.Version() == u.Current {
 		fmt.Fprintf(stdout, "Установлена последняя версия %s. Переустановить её: ai update %s\n", u.Current, u.Current)

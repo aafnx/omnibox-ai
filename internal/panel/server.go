@@ -72,6 +72,10 @@ type Options struct {
 	// Gateway shows the API settings; GatewayAction saves them or creates a key.
 	Gateway       func() any
 	GatewayAction func(body map[string]any) (any, error)
+	// Update shows the installed version and whether a GitHub token for updates is saved;
+	// UpdateAction checks for a release or saves or forgets that token.
+	Update       func() any
+	UpdateAction func(ctx context.Context, body map[string]any) (any, error)
 	// SetPassword stores a new panel password hash.
 	SetPassword func(p config.Password) error
 	// Estimate tells where a model fits with the given context and cache (query parameters).
@@ -291,6 +295,18 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			var result any
 			if result, err = s.opt.GatewayAction(body); err == nil {
+				s.json(w, http.StatusOK, result)
+				return
+			}
+		}
+		s.fail(w, r, err)
+	case route == "GET /api/update" && s.opt.Update != nil:
+		s.json(w, http.StatusOK, s.opt.Update())
+	case route == "POST /api/update" && s.opt.UpdateAction != nil:
+		body, err := readJSON(r)
+		if err == nil {
+			var result any
+			if result, err = s.opt.UpdateAction(r.Context(), body); err == nil {
 				s.json(w, http.StatusOK, result)
 				return
 			}

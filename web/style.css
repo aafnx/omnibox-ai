@@ -261,6 +261,11 @@ pre{background:var(--field);border:1px solid var(--border);border-radius:var(--r
 .fit-hybrid{color:var(--warn)}
 .fit-none{color:var(--error)}
 #direct-download{margin-top:10px}
+.update-result{margin:12px 0;padding:12px 14px;border:1px solid var(--accent-line);border-radius:var(--radius-s);background:var(--accent-soft)}
+.update-result p{margin:0 0 8px}
+.update-result pre{max-height:260px;overflow:auto;white-space:pre-wrap;font-size:12px;margin:0 0 8px}
+.token-steps{margin:8px 0 12px;padding-left:20px;display:grid;gap:6px;font-size:13px}
+.token-steps a{display:inline-block;text-decoration:none}
 .inline-progress-list{display:grid;gap:8px;margin:8px 0 12px}
 .inline-progress{display:grid;grid-template-columns:minmax(0,220px) minmax(0,1fr) auto;gap:10px;align-items:center;padding:8px 12px;border:1px solid var(--accent-line);border-radius:var(--radius-s);background:var(--accent-soft);font-size:13px}
 .inline-progress-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
