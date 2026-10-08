@@ -190,7 +190,7 @@ function renderSettings() {
   $('model-hint').textContent=b.type==='prismml'?'GGUF из каталога модели на ПК.':'Для списка моделей Ollama должна быть запущена.';
   $('placement').querySelectorAll('option').forEach(o=>o.hidden=b.type==='ollama'&&['gpu','hybrid'].includes(o.value));
   $('placement-hint').textContent=b.type==='ollama'?'Ollama: RAM/CPU или автоматическое распределение. Полностью VRAM гарантировать нельзя.':'VRAM: попытка загрузить все слои на GPU; RAM + VRAM: число слоёв задаётся ниже. Для MoE-моделей больше VRAM выберите VRAM и задайте «Слои MoE в RAM». При нехватке памяти запуск откатится.';
-  ensureProjectorOption(s.mmproj);Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');aliasModel=$('model-choice').value;renderProjectorHint();
+  ensureProjectorOption(s.mmproj);Object.entries(fields).forEach(([key,id])=>$(id).value=s[key]??'');aliasModel=$('model-choice').value;renderAliasHint();renderProjectorHint();
   document.querySelectorAll('.prism-field').forEach(el=>el.hidden=b.type!=='prismml');applySettingsMode();syncKvOffload();
   $('settings-status').textContent=b.pending?'Есть сохранённые настройки. Они ещё не применены к работающему серверу.':b.type==='ollama'?'Серверные значения по умолчанию. Параметры внешнего клиента могут их переопределить.':'При ошибке запуска с новыми настройками выполняется откат.';
   $('restore').disabled=!b.can_restore;
@@ -202,10 +202,11 @@ function renderSettings() {
   renderModelDisk();
   $('download-hint').textContent=prism?'Скачайте GGUF по прямой ссылке Hugging Face. Формат Bonsai PQ2 поддерживает только PrismML.':'Укажите имя и тег из библиотеки Ollama. Сначала запустите сервер Ollama.';
 }
-// The API name follows the model file unless the owner typed their own (same rule as the server).
-function autoAlias(path){const stem=String(path||'').split(/[\\/]/).pop().replace(/\.gguf$/i,'');let s=stem.toLowerCase().replace(/[^a-z0-9._-]/g,'-').replace(/-+/g,'-').replace(/^[-._]+|[-._]+$/g,'');if(s.length>80)s=s.slice(0,80).replace(/[-._]+$/,'');return s||'model';}
+// The API name is made from the model file (same rule as the server); a new model gets its own name.
+function autoAlias(path){let stem=String(path||'').split(/[\\/]/).pop().replace(/\.gguf$/i,'');const repo=stem.toLowerCase().lastIndexOf('-gguf-');if(repo>=0&&repo+6<stem.length)stem=stem.slice(repo+6);let s=stem.toLowerCase().replace(/[^a-z0-9._-]/g,'-').replace(/-+/g,'-').replace(/^[-._]+|[-._]+$/g,'');if(s.length>80)s=s.slice(0,80).replace(/[-._]+$/,'');return s||'model';}
 let aliasModel='';
-function followModelAlias(){const model=$('model-choice').value;const alias=$('alias').value.trim();if(!alias||alias===autoAlias(aliasModel))$('alias').value=autoAlias(model);aliasModel=model;}
+function followModelAlias(){const model=$('model-choice').value;if(model!==aliasModel)$('alias').value=autoAlias(model);aliasModel=model;renderAliasHint();}
+function renderAliasHint(){const auto=autoAlias($('model-choice').value);const own=$('alias').value.trim();$('alias').placeholder=auto;$('alias-reset').hidden=!own||own===auto;$('alias-reset').textContent=`Вернуть «${auto}»`;$('alias-hint').textContent=!own||own===auto?'Из названия модели; можно изменить. Это имя указывается во внешнем клиенте.':'Своё имя. При выборе другой модели имя снова составится из её названия.';}
 function presetText(p){if(p.auto)return 'под модель и видеокарту: Flash Attention, KV-кеш q8_0, контекст до 128k в VRAM';return Object.entries(p.settings||{}).map(([k,v])=>`${k}=${v}`).join(', ');}
 function renderPresets(b){
   const list=b.presets||[];const select=$('preset-choice');const old=select.value;select.replaceChildren();
@@ -513,6 +514,8 @@ $('apply').addEventListener('click',()=>{if($('settings-form').reportValidity())
 $('estimate-button').addEventListener('click',()=>estimatePlacement());
 $('estimate-apply').addEventListener('click',applyEstimate);
 $('model-choice').addEventListener('change',()=>{followModelAlias();renderProjectorHint();});
+$('alias').addEventListener('input',renderAliasHint);
+$('alias-reset').addEventListener('click',()=>{$('alias').value=autoAlias($('model-choice').value);renderAliasHint();settingsDirty=true;formRevision++;});
 $('mmproj').addEventListener('change',renderProjectorHint);
 $('mmproj-download').addEventListener('click',()=>downloadProjector().catch(e=>notice(e.message,true)));
 document.querySelectorAll('[data-search]').forEach(button=>button.addEventListener('click',()=>{$('catalog-query').value=button.dataset.search;searchCatalog(button.dataset.search);}));

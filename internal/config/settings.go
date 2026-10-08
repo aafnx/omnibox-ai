@@ -270,11 +270,10 @@ func Apply(engine string, current map[string]string, changes map[string]string, 
 		if !slices.Contains(knownModels, v) || ProjectorFile.MatchString(modelStem(v)) {
 			return nil, errors.New("Выбери существующий GGUF из каталога моделей; произвольные пути запрещены.")
 		}
-		// The API name follows the model unless the owner gave it one of their own.
+		// A new model gets its own API name: a name given to the old model would now point clients at
+		// a different one. The form may send a name with the model; the owner can still edit it.
 		if old := current["model"]; v != old && !hasAlias(changes) {
-			if a := current["alias"]; a == "" || a == AutoAlias(old) || a == modelStem(old) {
-				next["alias"] = AutoAlias(v)
-			}
+			next["alias"] = AutoAlias(v)
 		}
 		next["model"] = v
 	}
@@ -468,13 +467,17 @@ func keepAliveMinutes(keep string) any {
 	return nil
 }
 
-// modelStem is the file name without directory and .gguf, for both path separators.
 // AutoAlias is the API model name made from the file name: lower case, with characters the API
-// name does not allow turned into dashes.
+// name does not allow turned into dashes. The panel names a downloaded file "<owner>-<repo>-<file>"
+// and repositories end in "-GGUF", so the part before the last "-gguf-" is the repository and is
+// dropped: the name is the model file's own.
 func AutoAlias(path string) string {
 	stem := modelStem(path)
 	if n := len(stem); n > 5 && strings.EqualFold(stem[n-5:], ".gguf") {
 		stem = stem[:n-5]
+	}
+	if i := strings.LastIndex(strings.ToLower(stem), "-gguf-"); i >= 0 && i+6 < len(stem) {
+		stem = stem[i+6:]
 	}
 	var b strings.Builder
 	dash := false
@@ -508,6 +511,7 @@ func hasAlias(changes map[string]string) bool {
 // ProjectorFile matches vision projector (mmproj) file names: they are not models.
 var ProjectorFile = regexp.MustCompile(`(?i)mmproj|projector`)
 
+// modelStem is the file name without directory and .gguf, for both path separators.
 func modelStem(path string) string {
 	if i := strings.LastIndexAny(path, `\/`); i >= 0 {
 		path = path[i+1:]

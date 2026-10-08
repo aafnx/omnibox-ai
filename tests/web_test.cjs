@@ -184,10 +184,14 @@ function run(code){return vm.runInContext(code,context);}
   nodes['model-choice'].value='/m/a.gguf';nodes.mmproj.value='auto';run("installedModels=[{id:'/m/a.gguf',name:'a.gguf',source:'https://huggingface.co/u/a-GGUF'}];renderProjectorHint()");
   assert.equal(nodes['mmproj-download'].hidden,false);assert.ok(nodes['mmproj-hint'].textContent.includes('не найден'));
   run("installedModels=[{id:'/m/a.gguf',name:'a.gguf',projector:'/m/a-mmproj-F16.gguf'}];renderProjectorHint()");assert.equal(nodes['mmproj-download'].hidden,true);
-  // The API name follows the model unless the owner typed their own.
-  nodes['model-choice'].value='/m/Old-Q4.gguf';run("aliasModel='/m/Old-Q4.gguf'");nodes.alias.value='old-q4';nodes['model-choice'].value='/m/Ternary-Bonsai-2-27B-PQ2_0.gguf';
-  run("followModelAlias()");assert.equal(nodes.alias.value,'ternary-bonsai-2-27b-pq2_0');
-  nodes.alias.value='coder';nodes['model-choice'].value='/m/Other.gguf';run("followModelAlias()");assert.equal(nodes.alias.value,'coder');
+  // A new model gets its API name from the file, without the repository prefix, even when the old
+  // model had a name the owner typed; a name of their own shows how to get the automatic one back.
+  nodes['model-choice'].value='/m/Old-Q4.gguf';run("aliasModel='/m/Old-Q4.gguf'");nodes.alias.value='bonsia';nodes['model-choice'].value='/m/prism-ml-Ternary-Bonsai-2-27B-gguf-Ternary-Bonsai-2-27B-PQ2_0.gguf';
+  run("followModelAlias()");assert.equal(nodes.alias.value,'ternary-bonsai-2-27b-pq2_0');assert.equal(nodes['alias-reset'].hidden,true);
+  nodes.alias.value='coder';nodes.alias.listeners.input[0]();assert.equal(nodes['alias-reset'].hidden,false);assert.ok(nodes['alias-hint'].textContent.startsWith('Своё имя'));
+  run("followModelAlias()");assert.equal(nodes.alias.value,'coder');
+  nodes['alias-reset'].listeners.click[0]();assert.equal(nodes.alias.value,'ternary-bonsai-2-27b-pq2_0');assert.equal(nodes['alias-reset'].hidden,true);
+  nodes['model-choice'].value='/m/Other.gguf';run("followModelAlias()");assert.equal(nodes.alias.value,'other');
   // Settings that put everything on the GPU but overflow VRAM are flagged, with the base preset as the fix.
   nodes.placement.value='gpu';run("selectedBackend='prismml';lastEstimate={placement:'hybrid',vram_total:17095983104,weights_bytes:7194070000,kv_cache_bytes:12884901888};renderFit()");
   assert.equal(nodes['fit-warning'].hidden,false);assert.ok(nodes['fit-text'].textContent.includes('замедлится'));

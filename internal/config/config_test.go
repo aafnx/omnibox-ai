@@ -209,7 +209,8 @@ func TestFullyQualifiedAcceptsBothSystems(t *testing.T) {
 
 func TestAPINameFollowsTheModel(t *testing.T) {
 	for in, want := range map[string]string{
-		`D:\models\prism-ml-Ternary-Bonsai-2-27B-gguf-Ternary-Bonsai-2-27B-PQ2_0.gguf`: "prism-ml-ternary-bonsai-2-27b-gguf-ternary-bonsai-2-27b-pq2_0",
+		`D:\models\prism-ml-Ternary-Bonsai-2-27B-gguf-Ternary-Bonsai-2-27B-PQ2_0.gguf`: "ternary-bonsai-2-27b-pq2_0",
+		"/m/unsloth-gpt-oss-20b-GGUF-gpt-oss-20b-Q4_K_M.gguf":                          "gpt-oss-20b-q4_k_m", "/m/a-GGUF-.gguf": "a-gguf",
 		"/m/Модель (v2) Q4.gguf": "v2-q4", "/m/---.gguf": "model", "/m/X.GGUF": "x", "/m/" + strings.Repeat("a", 90) + ".gguf": strings.Repeat("a", 80),
 	} {
 		if got := AutoAlias(in); got != want || !aliasPattern.MatchString(got) {
@@ -217,14 +218,18 @@ func TestAPINameFollowsTheModel(t *testing.T) {
 		}
 	}
 	known := []string{"/m/old-Q4_K_M.gguf", "/m/New-Q8_0.gguf"}
-	// An automatic name follows a new model; the owner's own name stays; an empty one is made again.
+	// A new model gets its own name, even when the old one had a name the owner typed; a name sent
+	// with the model is kept; an empty one is made again; the same model keeps the owner's name.
 	auto := map[string]string{"model": known[0], "alias": "old-q4_k_m"}
 	if s, err := Apply(PrismML, auto, map[string]string{"model": known[1]}, known); err != nil || s["alias"] != "new-q8_0" {
 		t.Fatalf("%v %v", s, err)
 	}
-	own := map[string]string{"model": known[0], "alias": "coder"}
-	if s, _ := Apply(PrismML, own, map[string]string{"model": known[1]}, known); s["alias"] != "coder" {
-		t.Fatalf("own name replaced: %v", s)
+	own := map[string]string{"model": known[0], "alias": "bonsia"}
+	if s, _ := Apply(PrismML, own, map[string]string{"model": known[1]}, known); s["alias"] != "new-q8_0" {
+		t.Fatalf("old model's name kept for a new model: %v", s)
+	}
+	if s, _ := Apply(PrismML, own, map[string]string{"model": known[0], "context": "32k"}, known); s["alias"] != "bonsia" {
+		t.Fatalf("own name replaced without a model change: %v", s)
 	}
 	if s, _ := Apply(PrismML, own, map[string]string{"model": known[1], "alias": " "}, known); s["alias"] != "new-q8_0" {
 		t.Fatalf("empty name: %v", s)
