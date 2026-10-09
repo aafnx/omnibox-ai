@@ -123,6 +123,19 @@ function watchOps(){clearTimeout(opTimer);opTimer=setTimeout(async()=>{try{await
   if(waiting.size||ops.some(o=>o.state==='running'))watchOps();},waiting.size?1200:3000);}
 // Starts an operation and tells the result; returns the finished operation.
 async function operation(body,{quiet=false}={}){const {done}=await runAction(body);const op=await done;if(!quiet||op.state==='failed')notice(op.message,op.state==='failed');return op;}
+// Model start: engines do not report how much of the model is loaded, so the bar estimates it from
+// the file size (about 1.2 GB/s from disk into memory) and names the stage from the engine status.
+const LOAD={key:'',t0:0,wasUp:false,down:false,timer:0};
+function loadBegin(m){const b=(S.status?.backends||[]).find(x=>x.name===m.engine);Object.assign(LOAD,{key:m.key,t0:Date.now(),wasUp:b?.api==='Ready',prev:b?.loaded_model||'',down:false});
+  clearInterval(LOAD.timer);LOAD.timer=setInterval(paintLoad,500);paintLoad();}
+function loadEnd(){LOAD.key='';clearInterval(LOAD.timer);paintLoad();}
+function loadInfo(){const m=LOAD.key&&modelByKey(LOAD.key);if(!m)return null;const t=(Date.now()-LOAD.t0)/1000,exp=5+(m.bytes||4e9)/1.2e9;
+  const bs=S.status?.backends||[],b=bs.find(x=>x.name===m.engine),other=bs.some(x=>x.name!==m.engine&&x.service==='Running');
+  if(!b||b.api!=='Ready'||(b.loaded_model||'')!==LOAD.prev)LOAD.down=true;
+  const stage=other||(LOAD.wasUp&&!LOAD.down)?'Выгружаем прежнюю модель':!b||b.service==='Stopped'?'Запускаем движок':b.api!=='Ready'?'Загружаем модель в память':'Проверяем модель';
+  const pct=t<exp?90*t/exp:90+8*(1-Math.exp(-(t-exp)/exp));return {stage,t:Math.floor(t),pct:Math.min(98,Math.floor(pct))};}
+function paintLoad(){const l=loadInfo();document.querySelectorAll('[data-load]').forEach(el=>{el.hidden=!l;if(!l)return;
+  setHTML(el,`<div class="line"><span><b>${esc(l.stage)}</b> · ${l.t} с</span><span>${l.pct}%</span></div><div class="meter"><i data-w="${l.pct}%"></i></div>`);});}
 function transferText(op){if(!op.bytes_total)return op.bytes_done?`${(op.bytes_done/1048576).toFixed(1)} МБ`:`${Math.floor(op.elapsed_seconds||0)} с`;
   const big=op.bytes_total>=1073741824,size=n=>big?(n/1073741824).toFixed(2).replace('.',','):(n/1048576).toFixed(1).replace('.',',');const pct=Math.floor(100*(op.bytes_done||0)/op.bytes_total);
   let t=`${size(op.bytes_done||0)} из ${size(op.bytes_total)} ${big?'ГБ':'МБ'} (${pct}%)`;if(op.bytes_per_second>0){const left=(op.bytes_total-(op.bytes_done||0))/op.bytes_per_second;t+=` · ${(op.bytes_per_second/1048576).toFixed(1).replace('.',',')} МБ/с · осталось ${left>=3600?Math.floor(left/3600)+' ч '+Math.floor(left%3600/60)+' мин':Math.max(1,Math.ceil(left/60))+' мин'}`;}return t;}

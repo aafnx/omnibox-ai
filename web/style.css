@@ -439,7 +439,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .sub-nav{display:grid;gap:2px;position:sticky;top:0}
 .sub-nav a{padding:7px 10px;border-radius:var(--r-s);color:var(--muted);text-decoration:none;font-weight:500}
 .sub-nav a:hover{background:var(--surface2);color:var(--text)}
-.sections{display:grid;gap:16px}
+.sections{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
 .copy{display:flex;gap:6px} #base{font-family:var(--mono);font-size:12.5px}
 .okline{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ok)}
 .confirm{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 12px;border-radius:var(--r-s);background:var(--err-soft);font-size:13px}
@@ -580,3 +580,50 @@ details.think .in{padding:8px 12px;color:var(--muted);white-space:pre-wrap;max-h
 /* The attach button sits on the right next to send: the left side holds the chat's settings. */
 .composer .attach-r{margin-left:auto;min-width:0;width:34px;height:34px;padding:0;border-radius:50%}
 .composer .attach-r~.send{margin-left:0}
+/* ── 0.21.1: phones and polish ── */
+/* Safari on iPhone zooms the page into any field with text under 16 px; touch screens get 16 px. */
+@media (hover:none) and (pointer:coarse){input,select,textarea{font-size:16px!important}}
+/* Fields show focus by their border; a second outline around them reads as a frame. */
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none}
+.composer textarea{padding:6px 4px;line-height:1.45}
+.composer form:focus-within{border-color:var(--iris-line)}
+/* Disclosure rows: a chevron on the right instead of the browser's triangle. */
+details.more>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;font-weight:500;color:var(--text);padding:6px 0;font-size:14px}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::after{content:"";width:8px;height:8px;border-right:1.7px solid var(--faint);border-bottom:1.7px solid var(--faint);transform:rotate(45deg) translate(-2px,-2px);transition:transform .15s;flex:none}
+details.more[open]>summary::after{transform:rotate(-135deg) translate(-2px,-2px)}
+details.more[open]>summary{margin-bottom:8px}
+details.more{border-top:1px solid var(--line);padding-top:6px}
+/* Model loading: a determinate bar with the stage and memory loaded. */
+.load{display:grid;gap:6px;font-size:13px;color:var(--muted)}
+.load .line{gap:8px}
+.load .meter{height:6px}
+.load .meter i{transition:width .6s ease}
+.load b{color:var(--text);font-weight:500}
+.model .load{grid-column:1/-1}
+/* Engines on the Server page: one panel with rows. */
+.erow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:12px 0;border-top:1px solid var(--line)}
+.erow:first-of-type{border-top:0;padding-top:0}
+.erow .t{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.erow p{margin:0;grid-column:1/-1;font-size:13px;color:var(--muted)}
+.erow .acts{display:flex;gap:4px;flex-wrap:wrap;grid-column:1/-1;align-items:center}
+.erow .acts .switchline{display:flex;align-items:center;gap:8px;margin-left:auto;font-size:13px;color:var(--muted)}
+.drive .line b{font-weight:500}
+.busy{display:grid;gap:6px}.busy .load{min-width:0}
+#theme button{display:inline-flex;align-items:center;gap:6px;width:auto;height:30px;padding:0 10px}
+#theme svg.i{width:16px;height:16px}
+/* Rows opened by a delegated tap: Safari on iPhone sends clicks only to elements that look clickable. */
+[data-model],[data-cloud],[data-thread],[data-pick-model],[data-go]{cursor:pointer}
+.switch input{z-index:1}
+.adv-head{cursor:pointer;scroll-margin-top:12px}
+.themeline{flex-wrap:wrap;gap:8px}
+/* Single-column grids shrink to the screen: an implicit column grows to its widest content
+   (charts, tables, rows of buttons) and pushed panels past the right edge on 320–375 px phones. */
+.panel>.body,.stack,.stack8,.stack12,.stack14,.spend,.adv-stack{grid-template-columns:minmax(0,1fr)}
+.line>select{flex:0 1 auto;min-width:0;max-width:55%}.line>div:first-child{min-width:0}
+/* No browser triangles anywhere: disclosures draw their own chevron. */
+summary{list-style:none}summary::-webkit-details-marker{display:none}
+details.mini>summary{display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--muted);font-size:13px;padding:2px 0}
+details.mini>summary::after{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translate(-1px,-1px);transition:transform .15s}
+details.mini[open]>summary::after{transform:rotate(-135deg) translate(-1px,-1px)}
+details.mini>summary:hover{color:var(--text)}
