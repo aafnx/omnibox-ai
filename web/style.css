@@ -621,3 +621,9 @@ details.more{border-top:1px solid var(--line);padding-top:6px}
    (charts, tables, rows of buttons) and pushed panels past the right edge on 320–375 px phones. */
 .panel>.body,.stack,.stack8,.stack12,.stack14,.spend,.adv-stack{grid-template-columns:minmax(0,1fr)}
 .line>select{flex:0 1 auto;min-width:0;max-width:55%}.line>div:first-child{min-width:0}
+/* No browser triangles anywhere: disclosures draw their own chevron. */
+summary{list-style:none}summary::-webkit-details-marker{display:none}
+details.mini>summary{display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--muted);font-size:13px;padding:2px 0}
+details.mini>summary::after{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translate(-1px,-1px);transition:transform .15s}
+details.mini[open]>summary::after{transform:rotate(-135deg) translate(-1px,-1px)}
+details.mini>summary:hover{color:var(--text)}
