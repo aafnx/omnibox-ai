@@ -498,10 +498,12 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .nowrap{white-space:nowrap}
 .lbl-mid{vertical-align:-2px}
 /* login */
-.login-screen{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(ellipse at 15% 10%,#7c6cff14,transparent 55%),var(--bg)}
-.login-card{width:420px;max-width:100%;padding:32px;background:var(--surface);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);display:grid;gap:14px}
+.login-screen{min-height:100vh;min-height:100dvh;display:grid;grid-template-columns:minmax(0,1fr);place-items:center;padding:24px;background:radial-gradient(ellipse at 15% 10%,#7c6cff14,transparent 55%),var(--bg)}
+.login-card{width:min(420px,100%);padding:32px;background:var(--surface);border:1px solid var(--line);border-radius:20px;box-shadow:var(--shadow);display:grid;gap:14px}
 .login-card .brand-logo{width:250px;max-width:100%;margin:-6px 0 6px -10px}
-.login-card .brand-logo img{width:100%;display:block}
+.login-card .brand-logo img{width:100%}
+/* One logo per theme; the light one is the default. */
+.brand-light{display:block}
 .brand-dark{display:none}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .brand-light{display:none}:root:not([data-theme="light"]) .brand-dark{display:block}}
 :root[data-theme="dark"] .brand-light{display:none}:root[data-theme="dark"] .brand-dark{display:block}
@@ -627,3 +629,4 @@ details.mini>summary{display:inline-flex;align-items:center;gap:6px;cursor:point
 details.mini>summary::after{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translate(-1px,-1px);transition:transform .15s}
 details.mini[open]>summary::after{transform:rotate(-135deg) translate(-1px,-1px)}
 details.mini>summary:hover{color:var(--text)}
+@media (max-width:420px){.login-card{padding:24px 20px}}
