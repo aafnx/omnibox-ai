@@ -630,3 +630,14 @@ details.mini>summary::after{content:"";width:6px;height:6px;border-right:1.5px s
 details.mini[open]>summary::after{transform:rotate(-135deg) translate(-1px,-1px)}
 details.mini>summary:hover{color:var(--text)}
 @media (max-width:420px){.login-card{padding:24px 20px}}
+/* Phones: the tab bar sits on the bottom edge of the screen (dynamic viewport, not the tallest one);
+   while the keyboard is open the panel fills the visible part and the tab bar steps aside. */
+@media (max-width:860px){
+  .app{height:100vh;height:100dvh}
+  .kb body{overflow:hidden}
+  .kb .app{position:fixed;left:0;right:0;top:var(--vvt,0px);height:var(--vvh,100dvh)}
+  .kb .nav{display:none}
+  .kb .composer{padding-bottom:8px}
+  .kb #chat-foot{display:none}
+  .kb .empty{padding-top:16px}
+}

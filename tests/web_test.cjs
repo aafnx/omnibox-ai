@@ -168,6 +168,16 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run("M.advOn=false");nodes.adv.hidden=true;nodes['adv-on'].checked=true;run("syncAdv()");assert.equal(nodes.adv.hidden,false);
   nodes['adv-on'].checked=false;run("syncAdv()");assert.equal(nodes.adv.hidden,true);
 
+  // Phones: with the keyboard open the panel takes the visible height and the tab bar steps aside.
+  const rootEl=document.documentElement;rootEl.style={setProperty(k,v){this[k]=v;},removeProperty(k){delete this[k];}};
+  Object.assign(context.window,{innerHeight:800,scrollY:0,scrollTo(){},visualViewport:{height:800,offsetTop:0}});
+  run('fitViewport()');assert.equal(rootEl.classList.contains('kb'),false);
+  document.activeElement={matches:()=>true};Object.assign(context.window.visualViewport,{height:420,offsetTop:36});run('fitViewport()');
+  assert.equal(rootEl.classList.contains('kb'),true);assert.equal(rootEl.style['--vvh'],'420px');assert.equal(rootEl.style['--vvt'],'36px');
+  document.activeElement=null;run('fitViewport()');assert.equal(rootEl.classList.contains('kb'),false,'a shrunk viewport without a focused field is not the keyboard');
+  assert.equal(rootEl.style['--vvh'],undefined);
+  Object.assign(context.window.visualViewport,{height:800,offsetTop:0});
+
   // Logged out: the API answers 401 and the login form is shown.
   winListeners.DOMContentLoaded.forEach(fn=>fn());await new Promise(r=>setTimeout(r,10));
   assert.ok(requests.includes('/api/session'));assert.equal(nodes.login.hidden,false);assert.equal(nodes.app.hidden,true);
