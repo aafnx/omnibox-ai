@@ -533,6 +533,18 @@ details.mini>summary{display:inline-flex;align-items:center;gap:6px;cursor:point
 details.mini>summary::after{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translate(-1px,-1px);transition:transform .15s}
 details.mini[open]>summary::after{transform:rotate(-135deg) translate(-1px,-1px)}
 details.mini>summary:hover{color:var(--text)}
+/* Phones: the tab bar sits on the bottom edge of the screen (dynamic viewport, not the tallest one);
+   while the keyboard is open the panel fills the visible part and the tab bar steps aside. */
+@media (max-width:860px){
+  .app{height:100vh;height:100dvh}
+  .kb body{overflow:hidden}
+  .kb .app{position:fixed;left:0;right:0;top:var(--vvt,0px);height:var(--vvh,100dvh)}
+  .kb .nav{display:none}
+  .kb .composer{padding-bottom:8px}
+  .kb #chat-foot{display:none}
+  .kb .empty{padding-top:16px}
+}
+
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -1384,4 +1396,14 @@ $('#composer').addEventListener('submit',e=>{e.preventDefault();const t=$('#prom
   $('#prompt').value='';$('#messages').scrollTop=1e9;});
 $('#prompt').addEventListener('keydown',e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();$('#composer').requestSubmit();}});
 const start=(location.hash||'').slice(1);if(['chat','models','server','settings'].includes(start))go(start);
+
+let fullHeight=0;
+function fitViewport(){const vv=window.visualViewport;if(!vv)return;const root=document.documentElement;
+  fullHeight=Math.max(fullHeight,window.innerHeight,vv.height);
+  const kb=vv.height<fullHeight*0.75&&!!document.activeElement?.matches?.('input,textarea,select,[contenteditable]');
+  root.classList.toggle('kb',kb);
+  if(kb){root.style.setProperty('--vvh',Math.round(vv.height)+'px');root.style.setProperty('--vvt',Math.round(vv.offsetTop)+'px');}
+  else{root.style.removeProperty('--vvh');root.style.removeProperty('--vvt');if(window.scrollY)window.scrollTo(0,0);}}
+if(window.visualViewport){visualViewport.addEventListener('resize',fitViewport);visualViewport.addEventListener('scroll',fitViewport);
+  window.addEventListener('orientationchange',()=>{fullHeight=0;});document.addEventListener('focusout',()=>setTimeout(fitViewport,50));}
 </script>

@@ -225,6 +225,20 @@ async function showApp(){const s=await api('/api/session');csrf=s.csrf;loggedIn=
   if((S.status?.operations||[]).some(o=>o.state==='running'))watchOps();}
 byId('login-form').addEventListener('submit',async e=>{e.preventDefault();byId('login-error').textContent='';const b=e.currentTarget.querySelector('button');b.disabled=true;
   try{await api('/api/login',{password:byId('password').value});byId('password').value='';await showApp();}catch(err){byId('login-error').textContent=err.message;}finally{b.disabled=false;}});
+// ── phones: the on-screen keyboard ──
+// Safari on iPhone shrinks only the visual viewport for the keyboard: the page keeps its height, so the
+// tab bar stayed where it was with empty space under it. While the keyboard is open the panel takes the
+// visible height and hides the tab bar, as apps do; closed, the tab bar sits on the bottom edge.
+// Driven by the viewport's own events, no timers.
+let fullHeight=0;
+function fitViewport(){const vv=window.visualViewport;if(!vv)return;const root=document.documentElement;
+  fullHeight=Math.max(fullHeight,window.innerHeight,vv.height);
+  const kb=vv.height<fullHeight*0.75&&!!document.activeElement?.matches?.('input,textarea,select,[contenteditable]');
+  root.classList.toggle('kb',kb);
+  if(kb){root.style.setProperty('--vvh',Math.round(vv.height)+'px');root.style.setProperty('--vvt',Math.round(vv.offsetTop)+'px');}
+  else{root.style.removeProperty('--vvh');root.style.removeProperty('--vvt');if(window.scrollY)window.scrollTo(0,0);}}
+if(window.visualViewport){visualViewport.addEventListener('resize',fitViewport);visualViewport.addEventListener('scroll',fitViewport);
+  window.addEventListener('orientationchange',()=>{fullHeight=0;});document.addEventListener('focusout',()=>setTimeout(fitViewport,50));}
 window.addEventListener('DOMContentLoaded',()=>{showApp().catch(()=>showLogin());});
 // Returning to the tab refreshes what is shown once.
 document.addEventListener('visibilitychange',()=>{if(!document.hidden&&loggedIn)PAGES[S.page]?.show?.(true);});
