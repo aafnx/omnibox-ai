@@ -282,4 +282,3 @@ func TestProjectorSetting(t *testing.T) {
 		t.Fatalf("%v", v)
 	}
 }
-
