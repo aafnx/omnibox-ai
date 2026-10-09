@@ -171,6 +171,19 @@ func TestApplyOllamaSettingsAndView(t *testing.T) {
 	}
 }
 
+func TestEmptyIdleMeansNeverInsteadOfKeepingTheOldTimer(t *testing.T) {
+	for _, name := range EngineNames {
+		current := map[string]string{"idle_minutes": "30", "keep_alive": "30m"}
+		s, err := Apply(name, current, map[string]string{"idle_minutes": ""}, nil)
+		if err != nil || s["idle_minutes"] != "" {
+			t.Fatalf("%s: %v %v", name, s, err)
+		}
+		if name == Ollama && s["keep_alive"] != "-1" {
+			t.Fatalf("Ollama never must retain the model indefinitely: %v", s)
+		}
+	}
+}
+
 func TestPrismViewFillsDefaults(t *testing.T) {
 	v := View(PrismML, map[string]string{"model": `D:\models\ornith-Q4_K_M.gguf`, "gpu_layers": "30"})
 	if v["alias"] != "ornith-q4_k_m" || v["placement"] != "hybrid" || v["cache_key"] != "f16" || v["kv_offload"] != "on" || v["context"] != "(model default)" || v["n_cpu_moe"] != "0" {
@@ -269,3 +282,4 @@ func TestProjectorSetting(t *testing.T) {
 		t.Fatalf("%v", v)
 	}
 }
+

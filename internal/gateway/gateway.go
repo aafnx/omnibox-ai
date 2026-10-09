@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -27,7 +28,8 @@ import (
 )
 
 const (
-	bodyLimit       = 32 << 20 // images for vision models come base64-encoded in the request
+	bodyLimit       = 32 << 20  // external clients; images arrive base64-encoded
+	chatBodyLimit   = 128 << 20 // the panel has per-file and aggregate attachment limits
 	maxInFlight     = 32
 	requestTimeout  = 30 * time.Minute
 	resolveCacheTTL = time.Second
@@ -381,21 +383,25 @@ func jsonEncoder(w io.Writer) *json.Encoder {
 }
 
 func (g *Gateway) generate(w http.ResponseWriter, r *http.Request, cfg *config.Config, target *url.URL, t Target, gen uint64, keyID string) {
-	if r.ContentLength > bodyLimit {
-		fail(w, http.StatusRequestEntityTooLarge, "Request exceeds 8 MiB.")
+	limit := bodyLimit
+	if r.Context().Value(internalRequest{}) == "chat" {
+		limit = chatBodyLimit
+	}
+	if r.ContentLength > int64(limit) {
+		fail(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("Request exceeds %d MiB.", limit>>20))
 		return
 	}
 	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") {
 		fail(w, http.StatusUnsupportedMediaType, "JSON content required.")
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, bodyLimit+1))
+	body, err := io.ReadAll(io.LimitReader(r.Body, int64(limit)+1))
 	if err != nil {
 		fail(w, http.StatusBadRequest, "The request body could not be read.")
 		return
 	}
-	if len(body) > bodyLimit {
-		fail(w, http.StatusRequestEntityTooLarge, "Request exceeds 8 MiB.")
+	if len(body) > limit {
+		fail(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("Request exceeds %d MiB.", limit>>20))
 		return
 	}
 	var c *capture

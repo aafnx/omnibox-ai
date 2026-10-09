@@ -90,6 +90,7 @@ func modelChanges(name string, e *config.Engine, path string, prefs map[string]s
 	changes["kv_offload"] = "on"
 	changes["mmproj"] = "auto"
 	changes["alias"] = ""
+	changes["idle_minutes"] = ""
 	maps.Copy(changes, prefs)
 	changes["model"] = path
 	derivePlacement(changes, prefs)

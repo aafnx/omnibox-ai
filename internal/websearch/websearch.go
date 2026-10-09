@@ -11,8 +11,10 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -98,12 +100,72 @@ func (c Client) Search(ctx context.Context, query, lang string, n int) ([]Result
 			continue
 		}
 		seen[r.URL] = true
-		out = append(out, Result{Title: clip(r.Title, 200), URL: r.URL, Snippet: clip(r.Content, 600)})
-		if len(out) == n {
-			break
-		}
+		out = append(out, Result{Title: clip(r.Title, 200), URL: r.URL, Snippet: clip(r.Content, 1500)})
+	}
+	out = Relevant(out, query)
+	if n < 1 {
+		n = 1
+	}
+	if n > 20 {
+		n = 20
+	}
+	if len(out) > n {
+		out = out[:n]
 	}
 	return out, nil
+}
+
+// Relevant prefers identifiable subjects (cities, products, names) to generic question words.
+// If no snippets match, retain SearXNG's ranking: results may be in a different language.
+func Relevant(results []Result, query string) []Result {
+	stop := " какая какие какой как что где когда сегодня сейчас завтра вчера погода погоды температура температур прогноз прогнозы пожалуйста расскажи покажи найди the what how where when today weather temperature forecast "
+	terms := []string{}
+	for _, word := range words(query) {
+		if len([]rune(word)) < 3 || strings.Contains(stop, " "+word+" ") {
+			continue
+		}
+		terms = append(terms, stem(word))
+	}
+	scores := map[string]int{}
+	matched := false
+	for _, res := range results {
+		tokens := words(res.Title + " " + res.Snippet)
+		for _, term := range terms {
+			for _, token := range tokens {
+				if stem(token) == term {
+					scores[res.URL]++
+					matched = true
+					break
+				}
+			}
+		}
+	}
+	if !matched {
+		return results
+	}
+	out := []Result{}
+	for _, res := range results {
+		if scores[res.URL] > 0 {
+			out = append(out, res)
+		}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return scores[out[i].URL] > scores[out[j].URL] })
+	return out
+}
+
+func words(s string) []string {
+	return strings.FieldsFunc(strings.ToLower(strings.ReplaceAll(s, "ё", "е")), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+}
+
+func stem(s string) string {
+	s = strings.TrimSuffix(s, "ь")
+	r := []rune(s)
+	if len(r) > 4 && strings.ContainsRune("аяеиоуыю", r[len(r)-1]) {
+		return string(r[:len(r)-1])
+	}
+	return s
 }
 
 // Check makes a test search and reports how long it took.

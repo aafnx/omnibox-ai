@@ -118,6 +118,7 @@ const KINDS={image:{name:'изображения',need:'vision',ext:['png','jpg'
   word:{name:'документы Word',need:'',ext:['docx']},excel:{name:'таблицы Excel',need:'',ext:['xlsx','csv']},text:{name:'текстовые файлы',need:'',ext:['txt','md','json','log','yaml','yml','xml','html','go','py','js','ts','ps1','sh','ini','conf']}};
 const KIND_ICON={image:'i-eye',video:'i-video',audio:'i-audio',word:'i-file',excel:'i-table',text:'i-file'};
 const MAX_FILE=25*1024*1024;
+const MAX_FILES_BYTES=75*1024*1024;
 function kindOf(name){const ext=(String(name).split('.').pop()||'').toLowerCase();for(const [k,v] of Object.entries(KINDS))if(v.ext.includes(ext))return k;return null;}
 function canRead(m,k){const need=KINDS[k].need;return !need||has(m,need);}
 function tokensOf(size,k){if(k==='image')return 1500;if(k==='audio'||k==='video')return null;return Math.round(size/(k==='word'||k==='excel'?6:4));}
@@ -128,6 +129,7 @@ function addFiles(list){const m=curModel();const refused=[];
     if(!m){refused.push('Сначала выберите модель: от неё зависит, какие файлы она понимает.');break;}
     if(!canRead(m,k)){refused.push(`${m.name} не понимает ${KINDS[k].name} — «${f.name}» не прикреплён.`);continue;}
     if(C.attached.length>=10){refused.push('Не больше 10 файлов в одном сообщении.');break;}
+    if(C.attached.reduce((n,a)=>n+a.size,0)+f.size>MAX_FILES_BYTES){refused.push('Вложения в одном сообщении: не больше 75 МБ суммарно.');continue;}
     C.attached.push({name:f.name,size:f.size,kind:k,tok:tokensOf(f.size,k),file:f});}
   renderAttached();if(refused.length)attachWarn(refused);}
 function attachWarn(lines){const w=byId('attach-warn');w.innerHTML=lines.map(l=>`<div>${esc(l)}</div>`).join('')+'<button type="button" class="btn ghost sm" id="attach-warn-x">Понятно</button>';w.hidden=false;}
@@ -146,22 +148,24 @@ async function send(opts={}){if(C.busy)return;const m=curModel();
   if(!text&&!files.length&&!opts.retry)return;
   if(m.source==='local'&&!m.running){await startLocal(m);if(!modelByKey(m.key)?.running)return;}
   if(!C.chat){C.chat=await api('/api/chats',{action:'create',model:m.key,assistant_id:chatAsst()||''});C.chat.messages=[];C.threads.unshift(C.chat);renderThreads();}
+  const chat=C.chat;
   let data;try{data=await Promise.all(files.map(async a=>({name:a.name,data:await readB64(a.file)})));}catch(e){fail(e);return;}
+  if(C.chat?.id!==chat.id)return;
   const box=byId('message-list');if(!C.chat.messages.length)box.innerHTML='';
   if(!opts.retry){box.insertAdjacentHTML('beforeend',userHTML({text,attachments:files.map(a=>({name:a.name,kind:a.kind,size:a.size}))}));if(opts.text===undefined){byId('prompt').value='';C.attached=[];renderAttached();byId('attach-warn').hidden=true;}}
   box.insertAdjacentHTML('beforeend','<div class="msg bot live"><div class="trace"></div><details class="think" hidden><summary><svg class="i i15"><use href="#i-brain"/></svg><span>Размышляет…</span></summary><div class="in"></div></details><div class="md caret"></div><div class="sources-slot"></div><div class="status-line" hidden></div></div>');
   const live=box.lastElementChild;scrollDown(true);
   const ctrl=new AbortController();C.busy=ctrl;renderSend();
-  const body={chat_id:C.chat.id,model:m.key,text,files:data,web:!!(C.web&&S.chatSettings?.search_url),effort:C.effort||'',assistant_id:chatAsst()||''};if(opts.retry)body.retry=opts.retry;
-  let answer='',thinking='',sources=[],done=null;
+  const body={chat_id:chat.id,model:m.key,text,files:data,web:!!(C.web&&S.chatSettings?.search_url),effort:C.effort||'',assistant_id:chatAsst()||''};if(opts.retry)body.retry=opts.retry;
+  let answer='',thinking='',sources=[],done=null,userMessage=null;
   try{const r=await fetch('/api/chat/send',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:JSON.stringify(body),signal:ctrl.signal});
     if(!r.ok){let msg=`Ошибка ${r.status}`;try{msg=(await r.json()).error||msg;}catch(e){}if(r.status===401)showLogin();throw new Error(msg);}
     const reader=r.body.getReader(),dec=new TextDecoder();let buf='',pending=0;
-    const paintAnswer=()=>{pending=0;live.querySelector('.md').innerHTML=md(answer,sources);scrollDown();};
+    const paintAnswer=()=>{pending=0;live.querySelector('.md').innerHTML=md(answer,sources);if(C.chat?.id===chat.id)scrollDown();};
     for(;;){const {value,done:end}=await reader.read();if(end)break;buf+=dec.decode(value,{stream:true});let i;
       while((i=buf.indexOf('\n\n'))>=0){const block=buf.slice(0,i);buf=buf.slice(i+2);let ev='',dt='';block.split('\n').forEach(l=>{if(l.startsWith('event: '))ev=l.slice(7);else if(l.startsWith('data: '))dt+=l.slice(6);});
         let v;try{v=JSON.parse(dt);}catch(e){continue;}
-        if(ev==='user'){const u=box.querySelector('.msg.user:not([data-id]),.msg.user[data-id=""]');if(u&&!opts.retry)u.dataset.id=v.id;}
+        if(ev==='user'){userMessage=v;const u=box.querySelector('.msg.user:not([data-id]),.msg.user[data-id=""]');if(u&&!opts.retry)u.dataset.id=v.id;}
         else if(ev==='delta'){answer+=v.t;if(!pending)pending=requestAnimationFrame(paintAnswer);}
         else if(ev==='reasoning'){thinking+=v.t;const d=live.querySelector('details.think');d.hidden=false;d.querySelector('.in').textContent=thinking;}
         else if(ev==='search'){live.querySelector('.trace').insertAdjacentHTML('beforeend',`<span class="status-line"><svg class="i i15"><use href="#i-globe"/></svg>Ищу: «${esc(v.query)}»</span>`);scrollDown();}
@@ -170,14 +174,14 @@ async function send(opts={}){if(C.busy)return;const m=curModel();
         else if(ev==='done'){done=v;}}}
   }catch(e){if(e.name!=='AbortError'){live.querySelector('.md').classList.remove('caret');live.insertAdjacentHTML('beforeend',`<div class="err">${esc(e.message)}</div>`);}}
   finally{C.busy=null;renderSend();}
-  if(done?.message){const msg=done.message;C.chat.messages=C.chat.messages||[];
-    if(opts.retry){const i=C.chat.messages.findIndex(x=>x.id===opts.retry);C.chat.messages=C.chat.messages.slice(0,i+1);}
-    else if(text||files.length){C.chat.messages.push({id:[...box.querySelectorAll('.msg.user')].pop()?.dataset.id,role:'user',text,attachments:files.map(a=>({name:a.name,kind:a.kind,size:a.size}))});}
-    C.chat.messages.push(msg);live.outerHTML=botHTML(msg);paint(box);
-    if(done.chat){const i=C.threads.findIndex(t=>t.id===done.chat.id);if(i>=0)C.threads[i]=done.chat;else C.threads.unshift(done.chat);C.chat.title=done.chat.title;}
-    renderThreads();showChatCost();renderFoot();if(msg.meta?.cost_usd)refreshAccount();
-  }else if(C.chat){setTimeout(()=>openChat(C.chat.id).catch(()=>{}),400);}
-  scrollDown();}
+  if(done?.message){const msg=done.message,target=C.chat?.id===chat.id?C.chat:chat;target.messages=target.messages||[];
+    if(opts.retry){const i=target.messages.findIndex(x=>x.id===opts.retry);if(i>=0)target.messages=target.messages.slice(0,i+1);}
+    else if((text||files.length)&&!target.messages.some(x=>userMessage?.id&&x.id===userMessage.id)){target.messages.push(userMessage||{role:'user',text,attachments:files.map(a=>({name:a.name,kind:a.kind,size:a.size}))});}
+    if(!target.messages.some(x=>x.id===msg.id))target.messages.push(msg);
+    if(done.chat){const i=C.threads.findIndex(t=>t.id===done.chat.id);if(i>=0)C.threads[i]=done.chat;else C.threads.unshift(done.chat);target.title=done.chat.title;}
+    renderThreads();if(C.chat?.id===chat.id){renderChat();showChatCost();renderFoot();}if(msg.meta?.cost_usd)refreshAccount();
+  }else if(C.chat?.id===chat.id){setTimeout(()=>{if(C.chat?.id===chat.id)openChat(chat.id).catch(()=>{});},400);}
+  if(C.chat?.id===chat.id)scrollDown();}
 function renderSend(){const b=byId('send');b.classList.toggle('stop',!!C.busy);b.setAttribute('aria-label',C.busy?'Остановить ответ':'Отправить');b.title=C.busy?'Остановить ответ':'';
   b.innerHTML=`<svg class="i"><use href="#${C.busy?'i-stop':'i-up'}"/></svg>`;b.disabled=false;}
 
@@ -243,3 +247,4 @@ PAGES.chat={show(again){if(!C.chosen||!modelByKey(C.chosen)){const r=runningMode
   if(again){refreshLibrary().catch(()=>{});}
   loadThreads().then(()=>{if(!C.chat)C.web=webDefault(chatAsst());renderAll();}).catch(fail);renderAll();}};
 document.addEventListener('keydown',e=>{if(e.key==='Escape')['think-pop','web-pop','asst-menu','picker-menu'].forEach(id=>byId(id).hidden=true);});
+
