@@ -485,6 +485,44 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 /* The attach button sits on the right next to send: the left side holds the chat's settings. */
 .composer .attach-r{margin-left:auto;min-width:0;width:34px;height:34px;padding:0;border-radius:50%}
 .composer .attach-r~.send{margin-left:0}
+/* ── 0.21.1: phones and polish ── */
+/* Safari on iPhone zooms the page into any field with text under 16 px; touch screens get 16 px. */
+@media (hover:none) and (pointer:coarse){input,select,textarea{font-size:16px!important}}
+/* Fields show focus by their border; a second outline around them reads as a frame. */
+input:focus-visible,select:focus-visible,textarea:focus-visible{outline:none}
+.composer textarea{padding:6px 4px;line-height:1.45}
+.composer form:focus-within{border-color:var(--iris-line)}
+/* Disclosure rows: a chevron on the right instead of the browser's triangle. */
+details.more>summary{list-style:none;display:flex;align-items:center;justify-content:space-between;gap:12px;cursor:pointer;font-weight:500;color:var(--text);padding:6px 0;font-size:14px}
+details.more>summary::-webkit-details-marker{display:none}
+details.more>summary::after{content:"";width:8px;height:8px;border-right:1.7px solid var(--faint);border-bottom:1.7px solid var(--faint);transform:rotate(45deg) translate(-2px,-2px);transition:transform .15s;flex:none}
+details.more[open]>summary::after{transform:rotate(-135deg) translate(-2px,-2px)}
+details.more[open]>summary{margin-bottom:8px}
+details.more{border-top:1px solid var(--line);padding-top:6px}
+/* Model loading: a determinate bar with the stage and memory loaded. */
+.load{display:grid;gap:6px;font-size:13px;color:var(--muted)}
+.load .line{gap:8px}
+.load .meter{height:6px}
+.load .meter i{transition:width .6s ease}
+.load b{color:var(--text);font-weight:500}
+.model .load{grid-column:1/-1}
+/* Engines on the Server page: one panel with rows. */
+.erow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 12px;align-items:center;padding:12px 0;border-top:1px solid var(--line)}
+.erow:first-of-type{border-top:0;padding-top:0}
+.erow .t{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.erow p{margin:0;grid-column:1/-1;font-size:13px;color:var(--muted)}
+.erow .acts{display:flex;gap:4px;flex-wrap:wrap;grid-column:1/-1;align-items:center}
+.erow .acts .switchline{display:flex;align-items:center;gap:8px;margin-left:auto;font-size:13px;color:var(--muted)}
+.drive .line b{font-weight:500}
+.busy{display:grid;gap:6px}.busy .load{min-width:0}
+#theme button{display:inline-flex;align-items:center;gap:6px;width:auto;height:30px;padding:0 10px}
+#theme svg.i{width:16px;height:16px}
+/* Rows opened by a delegated tap: Safari on iPhone sends clicks only to elements that look clickable. */
+[data-model],[data-cloud],[data-thread],[data-pick-model],[data-go]{cursor:pointer}
+.switch input{z-index:1}
+.adv-head{cursor:pointer;scroll-margin-top:12px}
+.line:has(>#theme){flex-wrap:wrap;gap:8px}
+
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -591,9 +629,10 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
           </div>
         </div></div>
         <div class="composer">
+          <div class="busy" id="p-load" hidden><div class="load" data-load></div></div>
           <form id="composer">
             <div class="attach-warn" id="attach-warn" role="alert" hidden></div><div class="attached" id="attached" hidden></div>
-            <textarea id="prompt" rows="2" placeholder="Спросите что-нибудь… Файлы можно перетащить сюда"></textarea>
+            <textarea id="prompt" rows="2" placeholder="Спросите о чём угодно…"></textarea>
             <div class="row">
               <div class="picker asst-picker"><button type="button" id="asst-btn" class="asst-chip" aria-expanded="false" aria-haspopup="true"></button><div class="menu" id="asst-menu" hidden></div></div>
               
@@ -649,10 +688,10 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
           <div class="res"><div class="line"><span class="muted">Процессор</span><b>6 %</b></div><div class="meter"><i style="width:6%"></i></div></div>
         </div>
       </div>
-      <div class="engines">
-        <div class="panel engine"><div class="line"><h2>PrismML</h2><span class="pill ok">Работает</span></div><span class="muted small">llama-server · сборка b6120 · порт 8801</span><div><button class="btn sm" type="button">Есть обновление b6185</button></div></div>
-        <div class="panel engine"><div class="line"><h2>Ollama</h2><span class="pill">Выключен</span></div><span class="muted small">версия 0.12.4 · порт 8802 · включается при запуске его модели</span><div><button class="btn sm ghost" type="button">Версии</button></div></div>
-      </div>
+      <div class="panel"><header><h2>Движки локальных моделей</h2></header><div class="body"><span class="hint">Программы, которые запускают модели на этом ПК: PrismML — файлы GGUF (Bonsai, Gemma…), Ollama — модели из её библиотеки. Движок включается сам, когда вы запускаете его модель, и выключается вместе с ней.</span><div>
+        <div class="erow"><span class="t"><b>PrismML</b><span class="pill ok">Работает</span></span><span class="muted small">версия b6120 · 127.0.0.1:8801</span><p>Запускает файлы GGUF. Сейчас: <b>Gemma 4 · 12B</b>.</p><div class="acts"><button class="btn sm ghost" type="button">Журнал</button><button class="btn sm" type="button">Есть обновление b6185</button><span class="switchline" title="Если движок упадёт во время работы, OmniBox запустит его снова с той же моделью. После «Остановить» не запускает.">Перезапуск после сбоя<label class="switch"><input type="checkbox" checked aria-label="Перезапускать PrismML после сбоя"><span></span></label></span></div></div>
+        <div class="erow"><span class="t"><b>Ollama</b><span class="pill">Выключен</span></span><span class="muted small">версия 0.12.4 · 127.0.0.1:8802</span><p>Запускает модели Ollama. Сейчас без модели.</p><div class="acts"><button class="btn sm ghost" type="button">Журнал</button><button class="btn sm ghost" type="button">Версии</button><span class="switchline" title="Если движок упадёт во время работы, OmniBox запустит его снова с той же моделью. После «Остановить» не запускает.">Перезапуск после сбоя<label class="switch"><input type="checkbox" aria-label="Перезапускать Ollama после сбоя"><span></span></label></span></div></div>
+      </div></div></div>
       <div class="panel">
         <header><h2>Последние запросы</h2><a class="btn ghost sm" href="#server">Все журналы</a></header>
         <div class="body tablewrap"><table>
@@ -740,7 +779,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
             <div class="body"><div class="line"><div><b>Доступна версия 0.21.0</b><div class="small muted">Новый интерфейс, чат и веб-поиск. Токен GitHub сохранён до 08.10.2027.</div></div><button class="btn primary" type="button">Обновить</button></div></div></div>
           <div class="panel" id="s-panel"><header><h2>Панель</h2></header>
             <div class="body">
-              <div class="line"><span>Тема</span><div class="seg" role="group" aria-label="Тема" id="theme"><button type="button" aria-pressed="true" data-theme-set="" title="Как в системе" aria-label="Как в системе"><svg class="i"><use href="#i-monitor"/></svg></button><button type="button" aria-pressed="false" data-theme-set="light" title="Светлая" aria-label="Светлая"><svg class="i"><use href="#i-sun"/></svg></button><button type="button" aria-pressed="false" data-theme-set="dark" title="Тёмная" aria-label="Тёмная"><svg class="i"><use href="#i-moon"/></svg></button></div></div>
+              <div class="line"><span>Тема</span><div class="seg" role="group" aria-label="Тема" id="theme"><button type="button" aria-pressed="true" data-theme-set="" title="Как в системе" aria-label="Как в системе"><svg class="i"><use href="#i-monitor"/></svg><span>Авто</span></button><button type="button" aria-pressed="false" data-theme-set="light" title="Светлая" aria-label="Светлая"><svg class="i"><use href="#i-sun"/></svg><span>Светлая</span></button><button type="button" aria-pressed="false" data-theme-set="dark" title="Тёмная" aria-label="Тёмная"><svg class="i"><use href="#i-moon"/></svg><span>Тёмная</span></button></div></div>
               <div class="line"><span>Пароль панели</span><button class="btn sm" type="button">Сменить</button></div>
             </div></div>
         </div>
@@ -990,11 +1029,19 @@ function renderPicker(){const q=pickerQ.toLowerCase();const match=o=>!q||(o.name
   const grp=(title,body)=>{if(!body)return '';const key='p:'+title;const shut=!q&&collapsed.has(key);return `<button type="button" class="grp-btn h4" data-grp="${key}" aria-expanded="${!shut}"><span>${title}</span><span class="grp-n">${(body.match(/data-pick-model/g)||[]).length}</span><svg class="i chev${shut?' shut':''}"><use href="#i-down"/></svg></button>${shut?'':body}`;};
   $('#picker-list').innerHTML=grp('Избранные',favs)+grp('Локальные модели',locs)+grp('OpenRouter',cls)||'<div class="note">Ничего не найдено</div>';
   const isCloud=chosen[0]==='c';$('#picker-note').textContent=isCloud?'Облачная модель: запрос уходит в OpenRouter, локальная модель продолжает работать.':'Другая локальная модель запустится вместо текущей, это займёт 10–30 секунд.';}
+// Model start in the prototype: the real panel names the stage from the engine status and
+// estimates the share from the file size.
+let loadTimer=0;
+function simulateLoad(o){clearInterval(loadTimer);const t0=Date.now(),gb=parseFloat(String(o.size).replace(',','.'))||5,exp=(5+gb/1.2)*0.4,box=$('#p-load');box.hidden=false;
+  const tick=()=>{const t=(Date.now()-t0)/1000;const stage=t<1.2?'Выгружаем прежнюю модель':t<2.4?'Запускаем движок':t<exp?'Загружаем модель в память':'Проверяем модель';const pct=Math.min(98,Math.floor(t<exp?90*t/exp:90+8*(1-Math.exp(-(t-exp)/exp))));
+    box.querySelector('.load').innerHTML=`<div class="line"><span><b>${stage}</b> · ${Math.floor(t)} с</span><span>${pct}%</span></div><div class="meter"><i style="width:${pct}%"></i></div>`;
+    if(t>exp+1.2){clearInterval(loadTimer);box.hidden=true;models.forEach(m=>{if(m.state==='live')m.state='';});o.state='live';if(typeof renderPicker==='function')renderPicker();}};
+  tick();loadTimer=setInterval(tick,400);}
 function pickModel(key){chosen=key;const o=key[0]==='l'?models[+key.slice(1)]:cloud[+key.slice(1)];const isCloud=key[0]==='c';
   $('#picker-btn').innerHTML=`${isCloud?'<svg class="i" style="width:15px;height:15px"><use href="#i-cloud"/></svg>':'<span class="dot"></span>'}<span class="pname">${o.name}</span><svg class="i" style="width:15px;height:15px"><use href="#i-down"/></svg>`;
   const est=(2600*o.inp+500*o.out)/1e6||0;
   $('#chat-foot').innerHTML=isCloud?`<span class="cloudnote" title="Оценка: история чата ≈2 600 токенов на входе и ≈500 в ответе. Точная стоимость придёт от OpenRouter после ответа."><svg class="i"><use href="#i-cloud"/></svg>OpenRouter · ≈${money(est)} за ответ</span><span class="sep"> · </span><span class="disc">ИИ может ошибаться — проверяйте важное.</span>`:'ИИ может ошибаться — проверяйте важное.';
-  $('#picker-menu').hidden=true;renderPicker();if(typeof renderThink==='function')renderThink();if(typeof recheckAttached==='function')recheckAttached();}
+  $('#picker-menu').hidden=true;if(!isCloud&&o.state!=='live')simulateLoad(o);renderPicker();if(typeof renderThink==='function')renderThink();if(typeof recheckAttached==='function')recheckAttached();}
 const thinkState={};
 function curModel(){return chosen[0]==='l'?models[+chosen.slice(1)]:cloud[+chosen.slice(1)];}
 // One effort scale for every model: the steps come from the model's profile, so "off" appears only
@@ -1296,7 +1343,9 @@ function openModel(i){const m=models[i];drawerModel=i;
   $('#d-custom').value='';renderCtx();$('#adv-on').checked=!!models[i].advOn;$('#adv').hidden=!models[i].advOn;renderAdv();
   show($('#drawer'));}
 $('#drawer').addEventListener('click',e=>{const b=e.target.closest('[data-k]');if(!b)return;models[drawerModel].cur=+b.dataset.k;$('#d-custom').value='';renderCtx();renderModels();});
-$('#adv-on').addEventListener('change',e=>{models[drawerModel].advOn=e.target.checked;$('#adv').hidden=!e.target.checked;});
+function syncAdv(){const on=$('#adv-on').checked;models[drawerModel].advOn=on;const was=$('#adv').hidden;$('#adv').hidden=!on;if(on&&was)$('.adv-head').scrollIntoView({behavior:'smooth',block:'start'});}
+['change','input','click'].forEach(t=>$('#adv-on').addEventListener(t,()=>setTimeout(syncAdv)));
+$('.adv-head').addEventListener('click',e=>{if(!e.target.closest('.switch')){$('#adv-on').checked=!$('#adv-on').checked;}setTimeout(syncAdv);});
 $('#adv-groups').addEventListener('input',e=>{const el=e.target.closest('input[data-adv]');if(!el)return;const m=models[drawerModel];const a=ADV.find(x=>x.k===el.dataset.adv);const v=el.value.trim();if(!v||v===a.d)delete m.adv[a.k];else m.adv[a.k]=v;applyCheck();});
 $('#adv-groups').addEventListener('change',e=>{const el=e.target.closest('[data-adv]');if(!el)return;const m=models[drawerModel];const a=ADV.find(x=>x.k===el.dataset.adv);const v=el.value.trim()||a.d;if(v===a.d)delete m.adv[a.k];else m.adv[a.k]=v;updateMeta();if(a.kv){renderCtx();renderModels();}});
 $('#adv-groups').addEventListener('click',e=>{

@@ -55,8 +55,8 @@ function renderAll(){renderThreads();renderChat();renderPicker();renderAssist();
 function setChosen(key,start=true){C.chosen=key;try{localStorage.setItem('omnibox-model',key);}catch(e){}
   renderPicker();renderThink();recheckAttached();renderFoot();const m=modelByKey(key);if(start&&m?.source==='local'&&!m.running)startLocal(m).catch(fail);}
 const curModel=()=>modelByKey(C.chosen);
-async function startLocal(m){if(C.starting)return;C.starting=true;renderBusy(`Запускаем ${m.name}… Это займёт 10–60 секунд.`);
-  try{const op=await operation({action:'model-start',model:m.key},{quiet:true});if(op.state==='failed')return;await refreshLibrary();}finally{C.starting=false;renderBusy();}}
+async function startLocal(m){if(C.starting)return;C.starting=true;loadBegin(m);renderBusy(`Запускаем ${m.name}`);
+  try{const op=await operation({action:'model-start',model:m.key},{quiet:true});if(op.state==='failed')return;await refreshLibrary();}finally{C.starting=false;loadEnd();renderBusy();}}
 function renderBusy(text){byId('model-busy').hidden=!text;if(text)byId('model-busy-text').textContent=text;byId('send').disabled=!!text&&!C.busy;}
 function pickerItem(m){const pill=m.source==='cloud'?`<span class="pill sky">${price(m.prompt_usd)} / ${price(m.completion_usd)}</span>`:m.running?'<span class="pill ok">Работает</span>':'<span class="pill">Локальная</span>';
   return `<button type="button" data-pick-model="${esc(m.key)}"${m.key===C.chosen?' aria-current="true"':''}><b>${m.favorite?'★ ':''}${esc(m.name)}</b>${pill}${capIcons(m)}</button>`;}

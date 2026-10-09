@@ -42,7 +42,7 @@ const context=vm.createContext({document,window:{addEventListener:(t,fn)=>(winLi
   localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,String(v))},navigator:{hardwareConcurrency:16},innerWidth:1280,
   matchMedia:()=>({matches:false,addEventListener:()=>{}}),requestAnimationFrame:fn=>{fn();return 1;},
   fetch:async(path)=>{requests.push(path);return {ok:false,status:401,json:async()=>({error:'Войди в панель.'})};},
-  setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,console,URL,TextDecoder,AbortController,FileReader:function(){},Promise,Map,Set,Date,Number,JSON,Math,Object,Array,String,Error});
+  setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,clearInterval:()=>{},console,URL,TextDecoder,AbortController,FileReader:function(){},Promise,Map,Set,Date,Number,JSON,Math,Object,Array,String,Error});
 const run=code=>vm.runInContext(code,context);
 // Values made in the page's realm are compared as JSON: their prototypes differ from the test's.
 const J=code=>JSON.parse(run(`JSON.stringify(${code})`));
@@ -138,6 +138,31 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   const foot=run("metaHTML({model:'cloud:o/m',meta:{seconds:5.8,output_tokens:480,tokens_per_second:83.2,cost_usd:0.0042}})");
   assert.ok(foot.includes('Облачная')&&foot.includes('5,8 с')&&foot.includes('480 токенов')&&foot.includes('83,2 ток/с')&&foot.includes('$0,0042'));
   assert.ok(!run("metaHTML({model:'prismml:a.gguf',meta:{seconds:1}})").includes('cost'));
+
+  // Model start: the stage comes from the engine status, the share is estimated from the file size.
+  run("S.library.models.push({key:'prismml:big.gguf',source:'local',engine:'prismml',name:'Big',bytes:12e9,caps:{},reasoning:{mode:'none'}});S.status={backends:[{name:'prismml',service:'Running',api:'Ready',loaded_model:'a.gguf'},{name:'ollama',service:'Stopped'}]};loadBegin(modelByKey('prismml:big.gguf'))");
+  assert.equal(run('loadInfo().stage'),'Выгружаем прежнюю модель');
+  run("S.status.backends[0]={name:'prismml',service:'Stopped'}");assert.equal(run('loadInfo().stage'),'Запускаем движок');
+  run("S.status.backends[0]={name:'prismml',service:'StartPending',api:'Starting'};LOAD.t0=Date.now()-7000");
+  assert.equal(run('loadInfo().stage'),'Загружаем модель в память');assert.equal(run('loadInfo().pct'),42,'7 s of the expected 15 s');
+  run("S.status.backends[0]={name:'prismml',service:'Running',api:'Ready',loaded_model:'big.gguf'};LOAD.t0=Date.now()-3600000");
+  assert.equal(run('loadInfo().stage'),'Проверяем модель');assert.equal(run('loadInfo().pct'),98,'never 100 before the engine answers');
+  run('loadEnd()');assert.equal(run('loadInfo()'),null);
+  // A model row being started carries the bar.
+  run("LOAD.key='prismml:big.gguf';renderModels()");assert.ok(nodes['model-list'].innerHTML.includes('data-load'));run("LOAD.key=''");
+
+  // Engines on the Server page say what they run now and what the restart switch does.
+  run("SV.engines=[{name:'prismml',installed:true,version:'b9000'},{name:'ollama',installed:true}];S.status={backends:[{name:'prismml',service:'Running',api:'Ready',loaded_model:'big.gguf',endpoint:'http://127.0.0.1:8801/v1'},{name:'ollama',service:'Stopped'}]};renderEngines()");
+  const eng=nodes.engines.innerHTML;
+  assert.ok(eng.includes('Сейчас: <b>big.gguf</b>')&&eng.includes('Сейчас без модели')&&eng.includes('версия b9000')&&eng.includes('Перезапуск после сбоя'));
+
+  // Storage lists every drive, also those without OmniBox data.
+  run("ST.storage={log_retention_days:30,drives:[{name:'C:',total:1e12,used:5e11,free:5e11,roles:['OmniBox AI']},{name:'D:',total:2e12,used:1e11,free:1.9e12,roles:[]}]};renderStorage()");
+  const dr=nodes.drives.innerHTML;assert.ok(dr.includes('C:')&&dr.includes('D:')&&dr.includes('Данных OmniBox нет'));
+
+  // Advanced mode opens from the switch and from a tap anywhere on its row (Safari on iPhone).
+  run("M.advOn=false");nodes.adv.hidden=true;nodes['adv-on'].checked=true;run("syncAdv()");assert.equal(nodes.adv.hidden,false);
+  nodes['adv-on'].checked=false;run("syncAdv()");assert.equal(nodes.adv.hidden,true);
 
   // Logged out: the API answers 401 and the login form is shown.
   winListeners.DOMContentLoaded.forEach(fn=>fn());await new Promise(r=>setTimeout(r,10));

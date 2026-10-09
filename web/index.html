@@ -104,9 +104,9 @@
         <div class="messages" id="messages"><div id="message-list"></div></div>
         <div class="composer">
           <form id="composer">
-            <div class="busy" id="model-busy" hidden><span id="model-busy-text">Модель запускается…</span><div class="meter run"><i></i></div></div>
+            <div class="busy" id="model-busy" hidden><span id="model-busy-text">Модель запускается…</span><div class="load" data-load></div></div>
             <div class="attach-warn" id="attach-warn" role="alert" hidden></div><div class="attached" id="attached" hidden></div>
-            <textarea id="prompt" rows="2" placeholder="Спросите что-нибудь… Файлы можно перетащить сюда" aria-label="Сообщение"></textarea>
+            <textarea id="prompt" rows="2" placeholder="Спросите о чём угодно…" aria-label="Сообщение"></textarea>
             <div class="row">
               <div class="picker asst-picker"><button type="button" id="asst-btn" class="asst-chip" aria-expanded="false" aria-haspopup="true"></button><div class="menu" id="asst-menu" hidden></div></div>
               
@@ -153,7 +153,7 @@
         <div class="stats" id="hero-stats"></div>
       </div>
       <div class="ops" id="server-ops" hidden></div>
-      <div class="engines" id="engines"></div>
+      <div class="panel"><header><h2>Движки локальных моделей</h2></header><div class="body"><span class="hint">Программы, которые запускают модели на этом ПК: PrismML — файлы GGUF (Bonsai, Gemma…), Ollama — модели из её библиотеки. Движок включается сам, когда вы запускаете его модель, и выключается вместе с ней.</span><div id="engines"></div></div></div>
       <div class="panel">
         <header><h2>Последние запросы</h2><button class="btn ghost sm" type="button" id="journals-toggle" aria-expanded="false">Все журналы</button></header>
         <div class="body tablewrap"><table>
@@ -274,7 +274,7 @@
             </div></div>
           <div class="panel" id="s-panel"><header><h2>Панель</h2></header>
             <div class="body">
-              <div class="line"><span>Тема</span><div class="seg" role="group" aria-label="Тема" id="theme"><button type="button" aria-pressed="true" data-theme-set="system" title="Как в системе" aria-label="Как в системе"><svg class="i"><use href="#i-monitor"/></svg></button><button type="button" aria-pressed="false" data-theme-set="light" title="Светлая" aria-label="Светлая"><svg class="i"><use href="#i-sun"/></svg></button><button type="button" aria-pressed="false" data-theme-set="dark" title="Тёмная" aria-label="Тёмная"><svg class="i"><use href="#i-moon"/></svg></button></div></div>
+              <div class="line"><span>Тема</span><div class="seg" role="group" aria-label="Тема" id="theme"><button type="button" aria-pressed="true" data-theme-set="system" title="Как в системе" aria-label="Как в системе"><svg class="i"><use href="#i-monitor"/></svg><span>Авто</span></button><button type="button" aria-pressed="false" data-theme-set="light" title="Светлая" aria-label="Светлая"><svg class="i"><use href="#i-sun"/></svg><span>Светлая</span></button><button type="button" aria-pressed="false" data-theme-set="dark" title="Тёмная" aria-label="Тёмная"><svg class="i"><use href="#i-moon"/></svg><span>Тёмная</span></button></div></div>
               <details class="more"><summary>Пароль панели</summary>
                 <form id="password-form" class="stack8"><input type="password" id="pw-current" autocomplete="current-password" placeholder="Текущий пароль" aria-label="Текущий пароль" required><input type="password" id="pw-new" autocomplete="new-password" minlength="12" placeholder="Новый пароль, от 12 символов" aria-label="Новый пароль" required><input type="password" id="pw-repeat" autocomplete="new-password" minlength="12" placeholder="Повтор нового пароля" aria-label="Повтор нового пароля" required><div><button class="btn" type="submit">Сменить пароль</button></div><span class="hint">После смены другие сеансы входа завершаются.</span></form></details>
               <div class="line"><span class="muted small" id="panel-version"></span><button class="btn ghost sm" type="button" id="logout">Выйти</button></div>

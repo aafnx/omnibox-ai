@@ -74,12 +74,12 @@ function curCtx(m){const own=+m.settings?.context;if(own)return own;const b=(S.s
 function ctxOptions(m){const cur=curCtx(m),a=fromConfig(m.settings),list=PRESETS.filter(k=>!m.context||k<=m.context);if(!list.includes(cur))list.push(cur);list.sort((x,y)=>x-y);const rec=m.engine==='prismml'&&m.memory?best(m,a):0;
   return list.map(k=>{const f=fit(m,k,a);return `<option value="${k}"${k===cur?' selected':''}>${kfmt(k)} ${MARK[f.level]} ${f.short}${k===rec?' · рекомендуем':''}</option>`;}).join('')+'<option value="custom">Своё значение…</option>';}
 const star=m=>`<button class="btn ghost sm starb${m.favorite?' on':''}" type="button" data-star="${esc(m.key)}" aria-pressed="${!!m.favorite}" title="${m.favorite?'Убрать из избранного':'В избранное'}" aria-label="${m.favorite?'Убрать из избранного':'В избранное'}"><svg class="i"><use href="#i-star"/></svg></button>`;
-function localRow(m){const f=fit(m,curCtx(m),fromConfig(m.settings));const busy=startingKey===m.key;
+function localRow(m){const f=fit(m,curCtx(m),fromConfig(m.settings));const busy=startingKey===m.key||LOAD.key===m.key;
   return `<div class="model${m.running?' live':''}" data-model="${esc(m.key)}" tabindex="0">
     <div><div class="name"><b>${esc(m.name)}</b>${m.running?'<span class="pill ok"><span class="dot"></span>Работает</span>':''}<span class="pill">${engineLabel(m.engine)}</span></div>
       <div class="sub"><span>${[m.params,m.quant,m.bytes?bytesGb(m.bytes):''].filter(Boolean).map(esc).join(' · ')}</span>${m.memory?`<span class="fit ${f.level}">${f.short}</span>`:''}</div></div>
     <div class="acts">${busy?'<span class="small muted">Запускается…</span>':m.running?'<button class="btn sm" type="button" data-stop-model>Остановить</button>':'<button class="btn sm primary" type="button" data-start-model>Запустить</button>'}<button class="btn ghost sm" type="button" data-open-model>Настроить</button>${star(m)}</div>
-    <div class="caps">${allChips(m)}<label class="ctxsel" title="Длина контекста: сколько текста модель держит в разговоре"><svg class="i"><use href="#i-ctx"/></svg>Контекст<select data-ctx-model="${esc(m.key)}" aria-label="Контекст ${esc(m.name)}">${ctxOptions(m)}</select></label></div></div>`;}
+    ${busy?'<div class="load" data-load></div>':''}<div class="caps">${allChips(m)}<label class="ctxsel" title="Длина контекста: сколько текста модель держит в разговоре"><svg class="i"><use href="#i-ctx"/></svg>Контекст<select data-ctx-model="${esc(m.key)}" aria-label="Контекст ${esc(m.name)}">${ctxOptions(m)}</select></label></div></div>`;}
 function cloudRow(m){return `<div class="model cloud" data-cloud="${esc(m.key)}">
     <div><div class="name"><b>${esc(m.name)}</b><span class="pill sky"><svg class="i"><use href="#i-cloud"/></svg>OpenRouter</span></div>
       <div class="sub"><span>${esc(m.provider||'')}</span><span title="Цена за миллион токенов: запрос / ответ">${price(m.prompt_usd)} / ${price(m.completion_usd)} за 1M токенов</span></div></div>
@@ -103,7 +103,7 @@ function renderModels(){const box=byId('model-list');if(!S.library){setHTML(box,
   const focus=document.activeElement?.id==='cloud-q'?document.activeElement.selectionStart:null;setHTML(box,html);
   if(focus!==null){const i=byId('cloud-q');i?.focus();i?.setSelectionRange(focus,focus);}}
 
-async function startModel(m){startingKey=m.key;renderModels();try{const op=await operation({action:'model-start',model:m.key});if(op.state==='done')M.applyKey='';await refreshLibrary();}finally{startingKey='';renderModels();}}
+async function startModel(m){startingKey=m.key;loadBegin(m);renderModels();try{const op=await operation({action:'model-start',model:m.key});if(op.state==='done')M.applyKey='';await refreshLibrary();}finally{startingKey='';loadEnd();renderModels();}}
 async function stopModel(m){await operation({action:'stop',backend:m.engine});await refreshLibrary();}
 async function saveSettings(m,settings,advanced){await api('/api/library',{action:'settings',model:m.key,settings,advanced:!!advanced});await refreshLibrary();
   if(modelByKey(m.key)?.running){M.applyKey=m.key;renderModels();}else notice(`Настройки ${m.name} сохранены: применятся при запуске.`);}
@@ -219,7 +219,13 @@ byId('drawer').addEventListener('click',e=>{const b=e.target.closest('[data-k]')
   if(e.target.closest('#d-projector')){downloadProjector(dm()).catch(fail);return;}
   if(e.target.closest('#d-delete')){const m=dm();const box=byId('d-del-confirm');ask(box,m.running?`Остановить ${m.name} и удалить с диска? Восстановить можно только скачав заново.`:`Удалить ${m.name} с диска? Восстановить можно только скачав заново.`).then(async yes=>{if(!yes)return;
     if(m.running)await operation({action:'stop',backend:m.engine},{quiet:true});await operation({action:'model-delete',backend:m.engine,model:m.id});hideAll();await refreshLibrary();}).catch(fail);}});
-byId('adv-on').addEventListener('change',e=>{M.advOn=e.target.checked;byId('adv').hidden=!M.advOn;renderCtx();});
+// Safari on iPhone may skip 'change' on a styled switch, so every way of toggling it syncs the panel.
+// The groups open below the fold on a phone, so the drawer scrolls to them.
+function syncAdv(){const on=byId('adv-on').checked;if(on===M.advOn&&byId('adv').hidden===!on)return;M.advOn=on;byId('adv').hidden=!on;renderCtx();
+  if(on)byId('d-adv-row').scrollIntoView({behavior:'smooth',block:'start'});}
+['change','input','click'].forEach(t=>byId('adv-on').addEventListener(t,()=>setTimeout(syncAdv)));
+// The whole row toggles, not only the small switch.
+byId('d-adv-row').addEventListener('click',e=>{if(!e.target.closest('.switch')){const c=byId('adv-on');c.checked=!c.checked;}setTimeout(syncAdv);});
 byId('adv-groups').addEventListener('input',e=>{const el=e.target.closest('input[data-adv]');if(!el)return;const x=ADV.find(a=>a.k===el.dataset.adv);const v=el.value.trim();if(!v||v===x.d)delete M.adv[x.k];else M.adv[x.k]=v;applyCheck();});
 byId('adv-groups').addEventListener('change',e=>{const el=e.target.closest('[data-adv]');if(!el)return;const x=ADV.find(a=>a.k===el.dataset.adv);const v=el.value.trim()||x.d;if(v===x.d)delete M.adv[x.k];else M.adv[x.k]=v;updateMeta();if(x.kv)renderCtx();});
 byId('adv-groups').addEventListener('click',e=>{
