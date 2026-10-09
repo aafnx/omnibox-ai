@@ -439,7 +439,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .sub-nav{display:grid;gap:2px;position:sticky;top:0}
 .sub-nav a{padding:7px 10px;border-radius:var(--r-s);color:var(--muted);text-decoration:none;font-weight:500}
 .sub-nav a:hover{background:var(--surface2);color:var(--text)}
-.sections{display:grid;gap:16px}
+.sections{display:grid;gap:16px;grid-template-columns:minmax(0,1fr)}
 .copy{display:flex;gap:6px} #base{font-family:var(--mono);font-size:12.5px}
 .okline{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--ok)}
 .confirm{display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:10px 12px;border-radius:var(--r-s);background:var(--err-soft);font-size:13px}
@@ -521,8 +521,12 @@ details.more{border-top:1px solid var(--line);padding-top:6px}
 [data-model],[data-cloud],[data-thread],[data-pick-model],[data-go]{cursor:pointer}
 .switch input{z-index:1}
 .adv-head{cursor:pointer;scroll-margin-top:12px}
-.line:has(>#theme){flex-wrap:wrap;gap:8px}
+.themeline{flex-wrap:wrap;gap:8px}
 
+/* Single-column grids shrink to the screen: an implicit column grows to its widest content
+   (charts, tables, rows of buttons) and pushed panels past the right edge on 320–375 px phones. */
+.panel>.body,.stack,.stack8,.stack12,.stack14,.spend,.adv-stack{grid-template-columns:minmax(0,1fr)}
+.line>select{flex:0 1 auto;min-width:0;max-width:55%}.line>div:first-child{min-width:0}
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -779,7 +783,7 @@ details.more{border-top:1px solid var(--line);padding-top:6px}
             <div class="body"><div class="line"><div><b>Доступна версия 0.21.0</b><div class="small muted">Новый интерфейс, чат и веб-поиск. Токен GitHub сохранён до 08.10.2027.</div></div><button class="btn primary" type="button">Обновить</button></div></div></div>
           <div class="panel" id="s-panel"><header><h2>Панель</h2></header>
             <div class="body">
-              <div class="line"><span>Тема</span><div class="seg" role="group" aria-label="Тема" id="theme"><button type="button" aria-pressed="true" data-theme-set="" title="Как в системе" aria-label="Как в системе"><svg class="i"><use href="#i-monitor"/></svg><span>Авто</span></button><button type="button" aria-pressed="false" data-theme-set="light" title="Светлая" aria-label="Светлая"><svg class="i"><use href="#i-sun"/></svg><span>Светлая</span></button><button type="button" aria-pressed="false" data-theme-set="dark" title="Тёмная" aria-label="Тёмная"><svg class="i"><use href="#i-moon"/></svg><span>Тёмная</span></button></div></div>
+              <div class="line themeline"><span>Тема</span><div class="seg" role="group" aria-label="Тема" id="theme"><button type="button" aria-pressed="true" data-theme-set="" title="Как в системе" aria-label="Как в системе"><svg class="i"><use href="#i-monitor"/></svg><span>Авто</span></button><button type="button" aria-pressed="false" data-theme-set="light" title="Светлая" aria-label="Светлая"><svg class="i"><use href="#i-sun"/></svg><span>Светлая</span></button><button type="button" aria-pressed="false" data-theme-set="dark" title="Тёмная" aria-label="Тёмная"><svg class="i"><use href="#i-moon"/></svg><span>Тёмная</span></button></div></div>
               <div class="line"><span>Пароль панели</span><button class="btn sm" type="button">Сменить</button></div>
             </div></div>
         </div>
