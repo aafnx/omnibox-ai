@@ -11,6 +11,10 @@ assert.equal(new Set(ids).size,ids.length,'ids are unique');
 assert.ok(!/\sstyle="/.test(html),'no style attributes in index.html');
 sources.forEach((s,i)=>{assert.ok(!/\sstyle="/.test(s),`no style attributes in ${files[i]}`);assert.ok(!/<[a-z][^>]*\son[a-z]+=/.test(s),`no inline handlers in ${files[i]}`);});
 assert.ok(!/<script>/.test(html),'no inline script');
+// The login logo has a light and a dark file; a rule that sets display on both would show them together.
+const css=fs.readFileSync('web/style.css','utf8');
+assert.ok(!/\.brand-logo img\{[^}]*display/.test(css),'logo images get display only from the theme rules');
+assert.ok(!html.includes('Ваш ИИ на вашем ПК'),'no slogan on the login screen');
 // Every element the scripts look up by id exists.
 const dynamic=new Set(sources.flatMap(s=>[...s.matchAll(/id="([\w-]+)"/g)].map(m=>m[1])));
 const used=new Set(sources.flatMap(s=>[...s.matchAll(/byId\('([\w-]+)'\)/g)].map(m=>m[1])));
