@@ -88,7 +88,9 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.equal(run(`fit(${m},131072,{cache_key:'q4_0',cache_value:'q4_0'}).level`),'gpu','a compressed cache fits more');
   assert.equal(run(`fit(${m},262144,{}).level`),'over');
   assert.equal(run(`best(${m},{})`),65536);
-  assert.equal(run("fit({memory:{weights_bytes:40*GIB,kv_key_per_token:1,kv_value_per_token:1,layers:40,experts:128}},8192,{}).level"),'moe');
+  assert.equal(run("fit({memory:{weights_bytes:24*GIB,kv_key_per_token:1,kv_value_per_token:1,layers:40,experts:128}},8192,{}).level"),'moe');
+  assert.equal(run("fit({memory:{weights_bytes:40*GIB,kv_key_per_token:1,kv_value_per_token:1,layers:40,experts:128}},8192,{}).level"),'ram','all experts do not fit in free RAM');
+  assert.equal(run("fit({memory:{weights_bytes:80*GIB,kv_key_per_token:1,kv_value_per_token:1,layers:40,experts:128}},8192,{}).level"),'none','MoE weights still need physical memory');
   assert.equal(run("fit({memory:{weights_bytes:80*GIB,kv_key_per_token:1,kv_value_per_token:1,layers:40}},8192,{}).level"),'none');
   assert.equal(run("fit({},8192,{}).level"),'unknown');
 
@@ -111,6 +113,31 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   const warn=nodes['attach-warn'].innerHTML;assert.ok(warn.includes('Y не понимает изображения — «a.png» не прикреплён.')&&warn.includes('«d.bin»: такой тип файла не поддерживается')&&warn.includes('«e.txt»: больше 25 МБ.'));
   // A switch to a model that cannot read an attached file drops it with the same warning.
   run("C.chosen='cloud:x/z';recheckAttached()");assert.deepEqual(J("C.attached.map(a=>a.name)"),['c.md']);assert.ok(nodes['attach-warn'].innerHTML.includes('Z не понимает видео — «b.mp4» убран из сообщения.'));
+  run("C.attached=[];addFiles([1,2,3,4].map(i=>({name:i+'.md',size:25*1024*1024})))");
+  assert.equal(run('C.attached.length'),3);assert.ok(nodes['attach-warn'].innerHTML.includes('75 МБ суммарно'));run('C.attached=[]');
+
+  // Completing A's stream after navigating to B or a new chat must not touch that view.
+  const oldFetch=context.fetch;
+  for(const destination of ["{id:'chatB',title:'B',messages:[]}","null","{id:'chatA',title:'A',messages:[{id:'userA',role:'user',text:'Вопрос A'}]}"]){
+    let release,entered;
+    const waiting=new Promise(resolve=>{entered=resolve;});
+    const gate=new Promise(resolve=>{release=resolve;});
+    let reads=0;
+    context.fetch=async()=>({ok:true,status:200,body:{getReader:()=>({read:async()=>{if(reads++)return {done:true};entered();await gate;
+      return {done:false,value:new TextEncoder().encode('event: user\ndata: {"id":"userA","role":"user","text":"Вопрос A"}\n\nevent: done\ndata: {"message":{"id":"answerA","role":"assistant","text":"Ответ A"},"chat":{"id":"chatA","title":"A"}}\n\n')};}})}});
+    run("C.chat={id:'chatA',title:'A',messages:[]};C.busy=null;C.starting=false;C.chosen='cloud:x/z';C.threads=[{id:'chatA',title:'A'}]");
+    const sending=run("send({text:'Вопрос A'})");await waiting;run('C.chat='+destination);release();await sending;
+    if(destination==='null')assert.equal(run('C.chat'),null,'new chat stays empty');
+    else if(destination.includes('chatB'))assert.deepEqual(J('C.chat'),{id:'chatB',title:'B',messages:[]},'another chat stays intact');
+    else assert.equal(run('C.chat.messages.length'),2,'reopening the sending chat does not duplicate its user message');
+    assert.equal(run('C.busy'),null);
+  }
+  context.fetch=oldFetch;run('C.chat=null;C.threads=[]');
+  // Power commands acknowledge admission without waiting for the PC to go offline.
+  context.fetch=async(path,opts)=>{assert.equal(path,'/api/actions');assert.equal(JSON.parse(opts.body).action,'poweroff');return {ok:true,json:async()=>({id:'power'})};};
+  assert.equal((await run("pcAction('poweroff')")).id,'power');assert.equal(run('waiting.size'),0);
+  context.fetch=async()=>({ok:false,status:400,json:async()=>({error:'Дождитесь завершения операции.'})});
+  await assert.rejects(run("pcAction('poweroff')"),/Дождитесь завершения/);context.fetch=oldFetch;
 
   // Chats: pinned first, a countdown for the others, none for pinned chats.
   const now=Date.now(),iso=h=>new Date(now+h*3600000).toISOString();
@@ -183,3 +210,4 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.ok(requests.includes('/api/session'));assert.equal(nodes.login.hidden,false);assert.equal(nodes.app.hidden,true);
   console.log('web_test: ok');
 })().catch(e=>{console.error(e);process.exit(1);});
+

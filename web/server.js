@@ -3,7 +3,10 @@
 const SV={activity:null,gateway:null,timer:0,pc:'',engines:null,releases:{}};
 const PC={unload:{text:'Выгрузить локальные модели? Движки PrismML и Ollama остановятся, видеопамять и оперативная память ПК освободятся. Облачные модели OpenRouter продолжат работать, ПК останется включённым.',body:{action:'stopall'},yes:'Выгрузить'},
   sleep:{text:'Перевести ПК в сон? Локальные модели выгрузятся, панель и API станут недоступны. Разбудить можно через Home Assistant.',body:{action:'sleep'},yes:'Усыпить'},
-  poweroff:{text:'Выключить ПК? Текущий ответ прервётся, панель и API станут недоступны. Включить можно через Wake-on-LAN.',body:{action:'poweroff'},yes:'Выключить'}};
+  poweroff:{text:'Выключить ПК? Сначала дождитесь завершения ответа и активных операций. Панель и API станут недоступны. Включить можно через Wake-on-LAN.',body:{action:'poweroff'},yes:'Выключить'}};
+async function pcAction(kind){const x=PC[kind];if(kind==='unload'){const op=await operation(x.body);if(op.state==='done')await refreshLibrary();renderHero();return op;}
+  // The PC will drop the connection before a delayed power operation can report completion.
+  const op=await api('/api/actions',x.body);notice(kind==='sleep'?'Команда сна принята. ПК перейдёт в сон через несколько секунд.':'Команда выключения принята. ПК выключится через несколько секунд.');return op;}
 const working=()=>(S.status?.backends||[]).some(b=>b.service==='Running'||b.service==='StartPending');
 const uptime=s=>s>=3600?`${Math.floor(s/3600)} ч ${Math.floor(s%3600/60)} мин`:`${Math.max(1,Math.floor(s/60))} мин`;
 function renderHero(){const m=runningModel();const b=(S.status?.backends||[]).find(x=>x.service==='Running'||x.service==='StartPending');const a=SV.activity;
@@ -49,7 +52,7 @@ function formatContent(c){const parts=[`${c.model} · ${c.route} · ${new Date(c
 async function showContent(id){const c=await api('/api/request-content?id='+encodeURIComponent(id));byId('content-text').textContent=formatContent(c);byId('content-box').hidden=false;}
 
 byId('server').addEventListener('click',e=>{
-  const p=e.target.closest('[data-pc]');if(p){const x=PC[p.dataset.pc];ask(byId('pc-confirm'),x.text,x.yes).then(async yes=>{if(!yes)return;const op=await operation(x.body);if(op.state==='done'&&p.dataset.pc==='unload')await refreshLibrary();renderHero();}).catch(fail);return;}
+  const p=e.target.closest('[data-pc]');if(p){const x=PC[p.dataset.pc];ask(byId('pc-confirm'),x.text,x.yes).then(async yes=>{if(yes)await pcAction(p.dataset.pc);}).catch(fail);return;}
   if(e.target.closest('#hero-unload')){const b=(S.status?.backends||[]).find(x=>x.service==='Running');if(b)operation({action:'stop',backend:b.name}).then(()=>refreshLibrary()).then(renderHero).catch(fail);return;}
   if(e.target.closest('#hero-test')){notice('Проверяем скорость: короткий запрос через очередь API…');operation({action:'model-test'}).then(()=>refreshActivity()).catch(fail);return;}
   const hs=e.target.closest('[data-hero-settings]');if(hs){go('models');openModel(hs.dataset.heroSettings);return;}
@@ -66,3 +69,4 @@ on('status',()=>{if(S.page==='server'){renderHero();renderEngines();renderOps(by
 on('library',()=>{if(S.page==='server')renderHero();});
 PAGES.server={show(){renderHero();renderEngines();renderOps(byId('server-ops'));
   Promise.all([refreshStatus(true).catch(()=>{}),refreshActivity().catch(()=>{}),api('/api/gateway').then(g=>{SV.gateway=g;}).catch(()=>{})]).then(()=>{renderHero();renderRecent();renderEngines();telemetryLoop();});refreshEngineInfo();}};
+

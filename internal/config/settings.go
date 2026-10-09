@@ -253,14 +253,20 @@ func Apply(engine string, current map[string]string, changes map[string]string, 
 		}
 	}
 	if v, ok := changes["idle_minutes"]; ok {
-		if err := checkRange("idle_minutes", v, 1, 1440); err != nil {
+		if v == "" {
+			delete(next, "idle_minutes")
+			if engine == Ollama {
+				next["keep_alive"] = "-1"
+			}
+		} else if err := checkRange("idle_minutes", v, 1, 1440); err != nil {
 			return nil, errors.New("Простой должен быть от 1 до 1440 минут.")
-		}
-		n, _ := strconv.Atoi(v)
-		if engine == PrismML {
-			next["idle_minutes"] = strconv.Itoa(n)
 		} else {
-			next["keep_alive"] = strconv.Itoa(n) + "m"
+			n, _ := strconv.Atoi(v)
+			if engine == PrismML {
+				next["idle_minutes"] = strconv.Itoa(n)
+			} else {
+				next["keep_alive"] = strconv.Itoa(n) + "m"
+			}
 		}
 	}
 	if engine == Ollama {

@@ -38,6 +38,7 @@ func TestStartModelUsesItsOwnSettingsAndClearsTheOthers(t *testing.T) {
 	r := newRig(t)
 	r.store.Update(func(c *config.Config) error {
 		c.Engines[config.PrismML].Settings["temperature"] = "1.5"
+		c.Engines[config.PrismML].Settings["idle_minutes"] = "30"
 		return nil
 	})
 	key := "prismml:next-Q2_0.gguf"
@@ -53,6 +54,9 @@ func TestStartModelUsesItsOwnSettingsAndClearsTheOthers(t *testing.T) {
 	}
 	if _, ok := s["temperature"]; ok {
 		t.Fatal("a setting of the previous model stayed")
+	}
+	if _, ok := s["idle_minutes"]; ok {
+		t.Fatal("the previous model's idle timer stayed instead of never unloading")
 	}
 	if s["cache_key"] != "q8_0" || s["flash_attention"] != "on" {
 		t.Fatalf("base preset missing: %v", s)

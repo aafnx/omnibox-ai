@@ -145,7 +145,7 @@ func TestToolCallsSearchTheWeb(t *testing.T) {
 		sse(`{"choices":[{"delta":{"content":"Через Home Assistant [1]."}}]}`),
 	}
 	code, ev := g.send(Request{ChatID: g.chat.ID, Model: local.Key, Text: "Как разбудить ПК?", Web: true})
-	if code != 200 || len(ev["search"]) != 1 || len(g.bodies) != 2 {
+	if code != 200 || len(ev["search"]) != 2 || len(g.bodies) != 2 {
 		t.Fatalf("%d %v", code, ev)
 	}
 	if g.bodies[0]["tool_choice"] != "auto" {
@@ -158,7 +158,7 @@ func TestToolCallsSearchTheWeb(t *testing.T) {
 	}
 	c, _ := g.r.Chats.Get(g.chat.ID)
 	m := c.Messages[1].Meta
-	if len(m.Sources) != 1 || m.Searches[0] != "wol synology" || c.Messages[1].Text != "Через Home Assistant [1]." {
+	if len(m.Sources) != 1 || len(m.Searches) != 2 || m.Searches[0] != "Как разбудить ПК?" || m.Searches[1] != "Как разбудить ПК? wol synology" || c.Messages[1].Text != "Через Home Assistant [1]." {
 		t.Fatalf("%+v", m)
 	}
 }

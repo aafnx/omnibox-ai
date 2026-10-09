@@ -48,3 +48,24 @@ func TestSearchErrorsAreExplained(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestWeatherResultsKeepTheRequestedCity(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"results":[
+			{"title":"Погода в Кохеме", "url":"https://wrong.example", "content":"Температура сегодня +15"},
+			{"title":"Температура — Википедия", "url":"https://wiki.example", "content":"Физическая величина"},
+			{"title":"Прогноз погоды в Казани", "url":"https://right.example", "content":"Казань: сегодня +8"}]}`))
+	}))
+	defer srv.Close()
+	got, err := (Client{URL: srv.URL}).Search(context.Background(), "Какая сегодня погода в Казани", "ru", 5)
+	if err != nil || len(got) != 1 || got[0].URL != "https://right.example" {
+		t.Fatalf("wrong-city sources survived: %+v %v", got, err)
+	}
+}
+
+func TestRelevancePreservesUnmatchedForeignLanguageResults(t *testing.T) {
+	input := []Result{{Title: "Weather in Kazan", URL: "https://example.com", Snippet: "8 degrees"}}
+	if got := Relevant(input, "Погода в Казани"); len(got) != 1 {
+		t.Fatalf("a foreign-language result was discarded: %+v", got)
+	}
+}

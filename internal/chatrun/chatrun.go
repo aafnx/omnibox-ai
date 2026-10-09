@@ -29,11 +29,12 @@ import (
 
 // Limits of one message.
 const (
-	MaxBody     = 120 << 20 // base64 of a few 25 MB files
-	MaxFiles    = 10
-	MaxText     = 100_000
-	maxRounds   = 3 // model turns with web searches before the final answer
-	maxSearches = 4
+	MaxBody       = 120 << 20 // base64 of a few 25 MB files
+	MaxFiles      = 10
+	MaxFilesBytes = 75 << 20 // 100 MiB encoded, leaving room for the request envelope
+	MaxText       = 100_000
+	maxRounds     = 3 // model turns with web searches before the final answer
+	maxSearches   = 4
 	// answerReserve is the context kept for the answer when old messages are dropped.
 	answerReserve = 4096
 )
@@ -226,6 +227,7 @@ func (r *Runner) prepare(ctx context.Context, in Request) (*turn, error) {
 	// Files are checked before anything is stored or sent: a file the model cannot read is
 	// refused, so no tokens are spent on it.
 	var attachments []chats.Attachment
+	totalFiles := 0
 	for _, f := range in.Files {
 		kind := attach.KindOf(f.Name)
 		if kind == "" {
@@ -240,6 +242,10 @@ func (r *Runner) prepare(ctx context.Context, in Request) (*turn, error) {
 		data, err := base64.StdEncoding.DecodeString(f.Data)
 		if err != nil || len(data) > attach.MaxFile {
 			return nil, refuse(400, "«%s» не прочитан или больше 25 МБ.", f.Name)
+		}
+		totalFiles += len(data)
+		if totalFiles > MaxFilesBytes {
+			return nil, refuse(400, "Вложения в одном сообщении: не больше 75 МБ суммарно.")
 		}
 		a := chats.Attachment{Name: clip(f.Name, 200), Kind: kind, Size: int64(len(data))}
 		switch kind {

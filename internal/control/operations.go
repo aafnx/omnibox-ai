@@ -94,19 +94,23 @@ func (o *Operations) Start(r Request) (string, error) {
 		o.list = map[string]*Operation{}
 	}
 	cat := category(r.Action)
+	powerDelay := SleepDelay
 	for _, op := range o.list {
+		if slices.Contains([]string{"sleep", "shutdown", "poweroff"}, op.Action) && op.State == "running" {
+			return "", ErrBusy
+		}
 		if op.category == cat && op.State == "running" {
 			return "", ErrBusy
 		}
 		// Sleep or shutdown would cut a download, an engine install or an update in the middle.
-		if (r.Action == "sleep" || r.Action == "shutdown") && op.State == "running" {
+		if (r.Action == "sleep" || r.Action == "shutdown" || r.Action == "poweroff") && op.State == "running" {
 			return "", fmt.Errorf("Сначала дождитесь завершения операции «%s».", op.Action)
 		}
 	}
 	// engine-update is not guarded: its download may take minutes, and it takes the gate itself
 	// right before a running engine restarts.
 	// Sleep is guarded too: a running generation refuses it instead of being cut off.
-	guarded := o.Gate != nil && slices.Contains([]string{"start", "stop", "restart", "stopall", "apply", "restore", "load", "unload", "engine-remove", "preset-apply", "sleep", "shutdown"}, r.Action)
+	guarded := o.Gate != nil && slices.Contains([]string{"start", "model-start", "stop", "restart", "stopall", "apply", "restore", "load", "unload", "engine-remove", "preset-apply", "sleep", "shutdown", "poweroff"}, r.Action)
 	if guarded && !o.Gate.BeginControl(slices.Contains([]string{"stop", "stopall", "unload", "engine-remove", "shutdown"}, r.Action)) {
 		return "", ErrGenerating
 	}
@@ -131,6 +135,15 @@ func (o *Operations) Start(r Request) (string, error) {
 				defer o.Gate.EndControl()
 			}
 			message, err = o.Run(ctx, r)
+			// Keep both generations and new operations out until the delayed power action runs.
+			if err == nil && slices.Contains([]string{"sleep", "shutdown", "poweroff"}, r.Action) {
+				timer := time.NewTimer(powerDelay)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+				}
+			}
 		}()
 		o.mu.Lock()
 		defer o.mu.Unlock()

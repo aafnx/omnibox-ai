@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	omnibox "github.com/aafnx/omnibox-ai"
 	"github.com/aafnx/omnibox-ai/internal/cli"
@@ -81,12 +82,19 @@ func TestServeEndToEnd(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	up := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
 		done <- serveContext(ctx, []string{"--data", data}, io.Discard, platform.NewFakeServices(), func() { close(up) })
 	}()
-	<-up
+	select {
+	case <-up:
+	case err := <-done:
+		t.Fatalf("service failed before announcing readiness: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("service did not announce readiness")
+	}
 	base := "http://127.0.0.1:" + strconv.Itoa(port)
 	get := func(path string, header map[string]string) (int, string) {
 		req, _ := http.NewRequest("GET", base+path, nil)

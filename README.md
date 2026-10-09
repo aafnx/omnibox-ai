@@ -1,6 +1,6 @@
 # OmniBox AI
 
-Панель и OpenAI-совместимый API для локальных ИИ-движков на домашнем ПК. Версия **0.21.3**.
+Панель и OpenAI-совместимый API для локальных ИИ-движков на домашнем ПК. Версия **0.21.4**.
 
 > Первая версия на Go: один файл `omnibox` для Windows и Linux. Последняя PowerShell-версия — ветка `powershell-0.17.1`.
 
@@ -65,3 +65,4 @@ gofmt -l . ; go vet ./... ; GOOS=windows go vet ./... ; go test ./...
 CGO_ENABLED=0 GOOS=windows go build -o omnibox.exe ./cmd/omnibox
 node tests/web_test.cjs
 ```
+

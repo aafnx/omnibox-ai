@@ -61,8 +61,8 @@ function fit(m,ctx,a=M.adv){const s=sys(),usable=s.vram_bytes-(s.desktop_vram_by
   if(m.context&&ctx>m.context)return {level:'over',short:'больше обученного',text:`Модель обучена на ${kfmt(m.context)} токенов: больший контекст не поможет, ответы станут хуже.`};
   const kv=kvBytes(m,ctx,a),w=m.memory.weights_bytes,buf=0.5*GIB,need=w+kv+buf,vr=gb(s.vram_bytes/GIB);
   if(need<=usable)return {level:'gpu',vram:need,kv,w,short:'в видеопамяти',text:`Поместится в видеопамять: ${gb(need/GIB)} из ${vr} ГБ. Полная скорость.`};
-  if(m.memory.experts>1){const v=w*0.15+kv+buf;return v<=usable?{level:'moe',vram:v,kv,w:w*0.15,short:'эксперты в RAM',text:`Эксперты MoE в оперативной памяти, остальное на видеокарте: ${gb(v/GIB)} из ${vr} ГБ. Скорость почти не страдает.`}
-    :{level:'ram',vram:v,kv,w:w*0.15,short:'медленнее',text:`Даже без экспертов нужно ${gb(v/GIB)} ГБ видеопамяти из ${vr}. Часть кеша уйдёт в RAM, ответы замедлятся.`};}
+  if(m.memory.experts>1&&need<=usable+ramFree){const v=w*0.15+kv+buf;return v<=usable&&w*0.85<=ramFree?{level:'moe',vram:v,kv,w:w*0.15,short:'эксперты в RAM',text:`Эксперты MoE в оперативной памяти, остальное на видеокарте: ${gb(v/GIB)} из ${vr} ГБ. Скорость зависит от процессора и размещения экспертов.`}
+    :{level:'ram',vram:v,kv,w:w*0.15,short:'медленнее',text:`Памяти хватит при распределении модели между CPU и GPU. Для всех экспертов или кеша не хватает RAM либо видеопамяти; скорость будет ниже.`};}
   if(need<=usable+ramFree)return {level:'ram',vram:need,kv,w,short:'медленнее',text:`Не поместится в видеопамять: нужно ${gb(need/GIB)} ГБ из ${vr}. Часть уйдёт в оперативную память, ответы будут в 3–5 раз медленнее.`};
   return {level:'none',vram:need,kv,w,short:'не хватит памяти',text:`Не хватит памяти: нужно ${gb(need/GIB)} ГБ, а видеопамяти и свободной RAM вместе около ${gb((usable+ramFree)/GIB)} ГБ. Модель не запустится.`};}
 const best=(m,a)=>PRESETS.filter(k=>(!m.context||k<=m.context)&&['gpu','moe'].includes(fit(m,k,a).level)).pop()||8192;
@@ -259,3 +259,4 @@ document.addEventListener('click',e=>{if(S.page!=='models'&&!e.target.closest('#
 async function refreshDisk(){try{const u=await api('/api/storage');M.disk=u;const place=(u.models||[]).find(x=>x.name==='prismml')||(u.models||[])[0];const d=place&&(u.drives||[]).find(x=>x.name===place.drive);
   byId('models-disk').textContent=d?`Свободно на диске ${d.name} ${bytesGb(d.free)}`:'';}catch(e){}}
 PAGES.models={show(){renderModels();refreshLibrary().catch(fail);refreshDisk();watchAddOps();}};
+
