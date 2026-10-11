@@ -141,8 +141,9 @@ func TestToolCallsSearchTheWeb(t *testing.T) {
 	g := newRig(t)
 	g.replies = []string{
 		sse(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"web_search","arguments":"{\"query\":"}}]}}]}`,
-			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"wol synology\"}"}}]}}]}`),
-		sse(`{"choices":[{"delta":{"content":"Через Home Assistant [1]."}}]}`),
+			`{"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"wol synology\"}"}}]}}]}`,
+			`{"choices":[],"usage":{"prompt_tokens":300,"completion_tokens":10}}`),
+		sse(`{"choices":[{"delta":{"content":"Через Home Assistant [1]."}}]}`, `{"choices":[],"usage":{"prompt_tokens":900,"completion_tokens":40}}`),
 	}
 	code, ev := g.send(Request{ChatID: g.chat.ID, Model: local.Key, Text: "Как разбудить ПК?", Web: true})
 	if code != 200 || len(ev["search"]) != 2 || len(g.bodies) != 2 {
@@ -160,6 +161,10 @@ func TestToolCallsSearchTheWeb(t *testing.T) {
 	m := c.Messages[1].Meta
 	if len(m.Sources) != 1 || len(m.Searches) != 2 || m.Searches[0] != "Как разбудить ПК?" || m.Searches[1] != "Как разбудить ПК? wol synology" || c.Messages[1].Text != "Через Home Assistant [1]." {
 		t.Fatalf("%+v", m)
+	}
+	// The context is the last round's prompt and answer, not the sum over the rounds.
+	if m.InputTokens != 1200 || m.ContextTokens != 940 {
+		t.Fatalf("input %d, context %d", m.InputTokens, m.ContextTokens)
 	}
 }
 

@@ -145,9 +145,11 @@ type Attachment struct {
 
 // Meta is how an answer was produced.
 type Meta struct {
-	Seconds         float64  `json:"seconds"`
-	InputTokens     int      `json:"input_tokens"`
-	OutputTokens    int      `json:"output_tokens"`
+	Seconds      float64 `json:"seconds"`
+	InputTokens  int     `json:"input_tokens"`
+	OutputTokens int     `json:"output_tokens"`
+	// ContextTokens is how much of the model's context the chat filled after this answer.
+	ContextTokens   int      `json:"context_tokens,omitempty"`
 	TokensPerSecond float64  `json:"tokens_per_second"`
 	CostUSD         float64  `json:"cost_usd"`
 	Sources         []Source `json:"sources,omitempty"`

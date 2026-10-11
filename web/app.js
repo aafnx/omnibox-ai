@@ -43,7 +43,9 @@ const fsize=n=>n<1048576?Math.max(1,Math.round(n/1024))+' КБ':(n/1048576).toFi
 const money=x=>x<0.01?'$'+x.toFixed(4).replace('.',','):'$'+x.toFixed(2).replace('.',',');
 const usd2=x=>'$'+(x||0).toFixed(2).replace('.',',');
 const price=x=>x<0?'—':'$'+(Math.round(x*100)/100).toString().replace('.',',');
-const kfmt=t=>t>=1048576?Math.round(t/1048576)+'M':t>=1024?Math.round(t/1024)+'K':String(t);
+// Local contexts are powers of two (65536 is 64K); cloud limits are round decimals (1000000 is 1M).
+const kbase=t=>t%1024===0?1024:1000;
+const kfmt=t=>{const k=kbase(t);return t>=k*k?Math.round(t/(k*k))+'M':t>=k?Math.round(t/k)+'K':String(t);};
 const kTok=n=>n>=1000?Math.round(n/1000)+' тыс.':String(n);
 const dateShort=d=>new Date(d).toLocaleDateString('ru-RU',{day:'numeric',month:'short'}).replace('.','');
 const timeShort=d=>new Date(d).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'});
@@ -144,6 +146,13 @@ function renderOps(el,actions){const ops=(S.status?.operations||[]).filter(o=>o.
   setHTML(el,ops.map(o=>`<div class="op"><span class="st">↻</span><b>${esc(LABELS[o.action]||o.action)}${o.backend?' · '+engineLabel(o.backend):''}</b>${['download','pull'].includes(o.action)?`<button class="btn ghost sm" type="button" data-cancel-op="${esc(o.id)}">Отменить</button>`:'<span></span>'}<div class="meter${o.bytes_total?'':' run'}"><i${o.bytes_total?` data-w="${Math.floor(100*(o.bytes_done||0)/o.bytes_total)}%"`:''}></i></div><span class="msg">${esc(transferText(o))}</span></div>`).join(''));}
 document.addEventListener('click',e=>{const c=e.target.closest('[data-cancel-op]');if(c)api('/api/actions',{action:'cancel',id:c.dataset.cancelOp}).then(()=>notice('Скачивание отменяется.')).catch(fail);});
 
+// ── confirmation in a modal window, for deletions that cannot be undone ──
+// Cancel has the focus, so Enter right after the click does not delete; Escape and the backdrop cancel.
+function confirmDialog({title,text,yes='Удалить'}){const box=byId('confirm'),scrim=byId('confirm-scrim'),y=byId('confirm-yes'),n=byId('confirm-no');
+  byId('confirm-title').textContent=title;byId('confirm-text').textContent=text;y.textContent=yes;box.hidden=false;scrim.hidden=false;n.focus();
+  return new Promise(resolve=>{const done=v=>{box.hidden=true;scrim.hidden=true;y.removeEventListener('click',ok);n.removeEventListener('click',no);scrim.removeEventListener('click',no);document.removeEventListener('keydown',key,true);resolve(v);};
+    const ok=()=>done(true),no=()=>done(false),key=e=>{if(e.key==='Escape'){e.stopPropagation();done(false);}};
+    y.addEventListener('click',ok);n.addEventListener('click',no);scrim.addEventListener('click',no);document.addEventListener('keydown',key,true);});}
 // ── confirmation inline, never a browser dialog ──
 function ask(box,text,yes){const t=box.querySelector('span');t.textContent=text;box.hidden=false;
   return new Promise(resolve=>{const y=box.querySelector('.btn.danger'),n=box.querySelector('.btn.ghost');

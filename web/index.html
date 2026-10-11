@@ -58,6 +58,12 @@
   </form>
 </section>
 
+<div class="scrim confirm-scrim" id="confirm-scrim" hidden></div>
+<div class="dialog modal-confirm" id="confirm" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-text" hidden>
+  <h2 id="confirm-title"></h2><p id="confirm-text"></p>
+  <div class="cbtns"><button class="btn ghost" type="button" id="confirm-no">Отмена</button><button class="btn danger" type="button" id="confirm-yes">Удалить</button></div>
+</div>
+
 <div class="app" id="app" hidden>
   <nav class="nav" aria-label="Разделы">
     <div class="brand"><svg viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="200" fill="none" stroke="url(#g)" stroke-width="34"/><circle cx="256" cy="256" r="146" fill="none" stroke="url(#g)" stroke-width="6" opacity=".55"/></svg>OMNIBOX AI</div>
@@ -112,6 +118,7 @@
               
               <div class="websearch thinkwrap"><button type="button" class="tog" id="think-btn" aria-haspopup="true"><svg class="i i15"><use href="#i-brain"/></svg><span class="lbl">Размышления</span></button><div class="pop" id="think-pop" hidden></div></div>
               <div class="websearch webwrap"><button type="button" class="tog" id="web" aria-pressed="false" aria-expanded="false" aria-haspopup="true" aria-label="Веб-поиск" title="Веб-поиск"><svg class="i i15"><use href="#i-globe"/></svg><span class="lbl">Веб-поиск</span></button><div class="pop" id="web-pop" hidden><div class="line"><b>Искать в интернете</b><label class="switch"><input type="checkbox" id="web-on" aria-label="Поиск в интернете"><span></span></label></div><div class="line"><span class="muted">Движок</span><span>SearXNG</span></div><div class="line"><span class="muted">Адрес</span><span class="mono" id="web-host">не задан</span></div><span class="hint" id="web-hint">Модель сама решает, когда искать. Источники появятся под ответом.</span></div></div>
+              <div class="websearch ctxwrap" id="ctx-wrap" hidden><button type="button" class="tog ctxring" id="ctx-btn" aria-haspopup="true" aria-expanded="false" aria-label="Контекст"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" class="trk"/><circle cx="10" cy="10" r="7" class="val" id="ctx-ring" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 10 10)"/></svg></button><div class="pop ctxpop" id="ctx-pop" hidden></div></div>
               <button type="button" class="tog attach-r" id="attach-btn" title="Прикрепить файл: изображение, видео, аудио, текст, Word, Excel. Можно перетащить в окно чата." aria-label="Прикрепить файл"><svg class="i i15"><use href="#i-clip"/></svg></button><input type="file" id="attach-input" multiple hidden><button type="submit" class="send" id="send" aria-label="Отправить"><svg class="i"><use href="#i-up"/></svg></button>
             </div>
           </form>
