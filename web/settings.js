@@ -17,7 +17,7 @@ function renderChatSettings(){const s=S.chatSettings;if(!s)return;byId('searx').
   if(!['3','5','8'].includes(String(s.search_results)))byId('search-n').insertAdjacentHTML('beforeend',`<option value="${s.search_results}" selected>${s.search_results}</option>`);
   byId('search-lang').value=s.search_language||'';byId('search-default').checked=!!s.search_default;
   byId('keep-chats').value=String(s.retention_hours);if(byId('keep-chats').value!==String(s.retention_hours))byId('keep-chats').insertAdjacentHTML('beforeend',`<option value="${s.retention_hours}" selected>${Math.round(s.retention_hours/24)} дн.</option>`);
-  byId('keep-chats-hint').textContent=`Сейчас ${s.chats} ${plural(s.chats,'чат','чата','чатов')}, ${fsize(s.chats_bytes||0)}. Закреплённые не удаляются по сроку; новый срок действует для новых чатов.`;
+  byId('keep-chats-hint').textContent=`Сейчас ${s.chats} ${plural(s.chats,'чат','чата','чатов')}, ${fsize(s.chats_bytes||0)}. Избранные не удаляются по сроку; новый срок действует для новых чатов.`;
   byId('search-state').textContent=s.search_url?'Задан':'Не задан';byId('search-state').className='pill';}
 async function saveChatSettings(body){S.chatSettings=await api('/api/chat-settings',{action:'save',...body});renderChatSettings();if(typeof renderWeb==='function')renderWeb();}
 
@@ -70,7 +70,7 @@ function renderStorage(){const u=ST.storage;if(!u)return;const v=u.log_retention
   byId('keep-logs-hint').textContent=`Сейчас ${fsize(u.logs_bytes||0)}${u.content_bytes?`, из них текст запросов ${fsize(u.content_bytes)}`:''}.`;byId('request-text').checked=u.request_log==='content';
   setHTML(byId('drives'),(u.drives||[]).map(d=>`<div class="drive${d.low?' low':''}"><div class="line"><b>${esc(d.name)}${d.label?' · '+esc(d.label):''}</b><span class="small muted">свободно ${bytesGb(d.free)} из ${bytesGb(d.total)}</span></div><div class="meter"><i data-w="${d.total?Math.round(d.used/d.total*100):0}%"></i></div><span class="small faint">${esc((d.roles||[]).join(', ')||'Данных OmniBox нет')}${d.low?' · мало свободного места':''}</span></div>`).join(''));}
 async function refreshStorage(){ST.storage=await api('/api/storage');renderStorage();}
-const WIPE={chats:{text:()=>`Удалить все чаты (${S.chatSettings?.chats||0}), включая закреплённые? Они сразу стираются с диска, восстановить нельзя.`,run:()=>api('/api/chats',{action:'delete-all',keep_pinned:false}).then(r=>`Удалено чатов: ${r.deleted}.`)},
+const WIPE={chats:{text:()=>`Удалить все чаты (${S.chatSettings?.chats||0}), включая избранные? Они сразу стираются с диска, восстановить нельзя.`,run:()=>api('/api/chats',{action:'delete-all',keep_pinned:false}).then(r=>`Удалено чатов: ${r.deleted}.`)},
   logs:{text:()=>`Удалить все журналы (${fsize(ST.storage?.logs_bytes||0)})? Файлы, которые сейчас пишет работающий движок, останутся до следующей ротации.`,run:()=>api('/api/storage',{action:'purge'}).then(u=>{ST.storage=u;return `Удалено файлов журналов: ${u.cleanup?.removed||0}.`;})},
   all:{text:()=>'Удалить все чаты, журналы и текст запросов? Модели и настройки останутся.',run:()=>api('/api/chat-settings',{action:'delete-all-data'}).then(d=>{S.chatSettings=d;return `Удалено чатов: ${d.deleted_chats}, файлов журналов: ${d.logs?.removed||0}.`;})}};
 

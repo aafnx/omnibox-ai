@@ -31,14 +31,17 @@ type answer struct {
 	thinkStart     time.Time
 	thinkSeconds   float64
 	input, output  int
-	cost           float64
-	first, last    time.Time
-	sources        []chats.Source
-	searches       []string
-	searchResults  map[string]string
-	subject        string
-	err            string
-	llamaSpeed     float64
+	// context is what the last round held: its prompt and its answer. Rounds with web searches
+	// resend the history, so the sums above overstate how full the context is.
+	context       int
+	cost          float64
+	first, last   time.Time
+	sources       []chats.Source
+	searches      []string
+	searchResults map[string]string
+	subject       string
+	err           string
+	llamaSpeed    float64
 }
 
 func (r *Runner) run(ctx context.Context, t *turn, out *stream) {
@@ -238,6 +241,7 @@ func (r *Runner) generate(ctx context.Context, t *turn, body map[string]any, a *
 			if c.Usage != nil {
 				a.input += c.Usage.Prompt
 				a.output += c.Usage.Completion
+				a.context = c.Usage.Prompt + c.Usage.Completion
 				a.cost += c.Usage.Cost
 			}
 			if c.Timings != nil && c.Timings.Predicted > 0 {
@@ -499,7 +503,7 @@ func (r *Runner) finish(t *turn, a *answer, start time.Time, out *stream) {
 	}
 	msg := chats.Message{ID: chats.NewMessageID(), Role: "assistant", Text: strings.TrimSpace(a.text), Reasoning: strings.TrimSpace(a.thinking),
 		ReasoningSeconds: round(a.thinkSeconds), Model: t.chat.Model, Created: r.now().UTC(), Error: a.err}
-	meta := &chats.Meta{Seconds: round(r.now().Sub(start).Seconds()), InputTokens: a.input, OutputTokens: a.output, CostUSD: a.cost,
+	meta := &chats.Meta{Seconds: round(r.now().Sub(start).Seconds()), InputTokens: a.input, OutputTokens: a.output, ContextTokens: a.context, CostUSD: a.cost,
 		Sources: a.sources, Searches: a.searches}
 	if a.llamaSpeed > 0 {
 		meta.TokensPerSecond = round(a.llamaSpeed)

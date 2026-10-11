@@ -40,7 +40,7 @@ const nodes=Object.fromEntries(ids.map(id=>[id,new Node(id)]));
 const store=new Map(),requests=[];
 const document={documentElement:new Node('html'),body:new Node('body'),hidden:false,activeElement:null,
   getElementById:id=>{assert.ok(nodes[id]||dynamic.has(id),`Missing UI element ${id}`);return nodes[id]??=new Node(id);},
-  querySelector:()=>new Node(),querySelectorAll:()=>[],createElement:t=>new Node('',t),addEventListener:()=>{},execCommand:()=>true};
+  querySelector:()=>new Node(),querySelectorAll:()=>[],createElement:t=>new Node('',t),addEventListener:()=>{},removeEventListener:()=>{},execCommand:()=>true};
 const winListeners={};
 const context=vm.createContext({document,window:{addEventListener:(t,fn)=>(winListeners[t]??=[]).push(fn),isSecureContext:false},location:{hash:'',protocol:'http:',host:'omnibox:8800'},history:{replaceState:()=>{}},
   localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,String(v))},navigator:{hardwareConcurrency:16},innerWidth:1280,
@@ -204,6 +204,27 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   document.activeElement=null;run('fitViewport()');assert.equal(rootEl.classList.contains('kb'),false,'a shrunk viewport without a focused field is not the keyboard');
   assert.equal(rootEl.style['--vvh'],undefined);
   Object.assign(context.window.visualViewport,{height:800,offsetTop:0});
+
+  // Context sizes: local contexts are powers of two, cloud limits round decimals.
+  assert.equal(run("kfmt(65536)"),'64K');assert.equal(run("kfmt(1000000)"),'1M');assert.equal(run("kfmt(400000)"),'400K');
+  // Context meter: the window of the chosen model, filled as far as the last answer counted.
+  run("C.chosen='cloud:o/m';C.chat={id:'x',messages:[{role:'user',text:'привет'},{role:'assistant',text:'ок',meta:{context_tokens:100000}}]}");
+  assert.deepEqual(J("ctxInfo()").pct,25);assert.equal(J("ctxInfo()").est,false);
+  run('renderCtxMeter()');const cp=nodes['ctx-pop'].innerHTML;
+  assert.equal(nodes['ctx-wrap'].hidden,false);assert.ok(cp.includes('100K / 400K (25%)')&&cp.includes('<dt>Осталось</dt><dd>300K</dd>')&&cp.includes('Предел модели в OpenRouter'),cp);
+  // A chat from before the count is estimated from its text and says so.
+  run("C.chat={id:'y',messages:[{role:'user',text:'x'.repeat(7000)}]}");assert.equal(J("ctxInfo()").est,true);assert.equal(J("ctxInfo()").used,2000);
+  run('renderCtxMeter()');assert.ok(nodes['ctx-pop'].innerHTML.includes('≈ 2K')&&nodes['ctx-pop'].innerHTML.includes('это оценка'));
+  // No model, no meter.
+  run("C.chosen='none';renderCtxMeter()");assert.equal(nodes['ctx-wrap'].hidden,true);run("C.chosen='cloud:o/m';C.chat=null");
+
+  // Favourite chats have a star; deleting a chat asks in a window first.
+  run(`C.threads=[{id:'f',title:'Избранный',created:'${iso(-5)}',updated:'${iso(-1)}',pinned:true,expires:null}];renderThreads()`);
+  const fl=nodes['thread-list'].innerHTML;assert.ok(fl.includes('Избранные')&&fl.includes('#i-star')&&fl.includes('Убрать из избранного')&&!fl.includes('#i-pin'));
+  const asked=run("confirmDialog({title:'Удалить чат?',text:'«Избранный» сразу сотрётся с диска.'})");
+  assert.equal(nodes.confirm.hidden,false);assert.equal(nodes['confirm-title'].textContent,'Удалить чат?');
+  nodes['confirm-no'].listeners.click.at(-1)();assert.equal(await asked,false);assert.equal(nodes.confirm.hidden,true);
+  const asked2=run("confirmDialog({title:'Удалить чат?',text:'x'})");nodes['confirm-yes'].listeners.click.at(-1)();assert.equal(await asked2,true);
 
   // Logged out: the API answers 401 and the login form is shown.
   winListeners.DOMContentLoaded.forEach(fn=>fn());await new Promise(r=>setTimeout(r,10));

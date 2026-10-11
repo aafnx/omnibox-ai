@@ -641,3 +641,24 @@ details.mini>summary:hover{color:var(--text)}
   .kb #chat-foot{display:none}
   .kb .empty{padding-top:16px}
 }
+/* Favourite chats: a star like favourite models. */
+.tacts button.star.on{color:#ff9654} .tacts button.star.on svg{fill:#ff9654}
+/* Confirmation window: above everything, including the chat list opened on a phone. */
+.confirm-scrim{z-index:60}
+.dialog.modal-confirm{z-index:61;display:grid;background:var(--surface);top:50%;transform:translate(-50%,-50%);width:min(400px,calc(100% - 32px));padding:22px 22px 18px;gap:10px}
+.dialog.modal-confirm h2{margin:0;font-size:17px}
+.dialog.modal-confirm p{margin:0;color:var(--muted);font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.dialog.modal-confirm .cbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+/* Context meter: a small ring next to the paperclip, the numbers in a popover. */
+.composer .ctxwrap{margin-left:auto;position:relative}
+.composer .ctxwrap:not([hidden])~.attach-r{margin-left:0}
+.composer .ctxring{min-width:0;width:34px;height:34px;padding:0;border-radius:50%;justify-content:center}
+.ctxring svg{width:20px;height:20px;display:block}
+.ctxring circle{fill:none;stroke-width:2.6}
+.ctxring .trk{stroke:var(--track)}
+.ctxring .val{stroke:var(--iris);stroke-linecap:round;transition:stroke-dasharray .3s}
+.ctxring.warn .val{stroke:var(--warn)} .ctxring.err .val{stroke:var(--err)}
+.ctxpop{left:auto;right:0;width:290px}
+.ctxpop .meter.warn i{background:var(--warn)} .ctxpop .meter.err i{background:var(--err)}
+.ctxkv{display:grid;grid-template-columns:1fr auto;gap:4px 12px;margin:0}
+.ctxkv dt{color:var(--muted)} .ctxkv dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;color:var(--text)}

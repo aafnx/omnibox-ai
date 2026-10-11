@@ -11,12 +11,12 @@ const hoursLeft=t=>t.expires?(Date.parse(t.expires)-Date.now())/3600000:Infinity
 const remain=t=>{const h=hoursLeft(t);return h>=24?`${Math.floor(h/24)} дн.`:h>=1?`${Math.floor(h)} ч`:'<1 ч';};
 const leftText=t=>{const h=hoursLeft(t);return h>=24?`удалится через ${Math.floor(h/24)} ${plural(Math.floor(h/24),'день','дня','дней')}`:h>=1?`удалится через ${Math.floor(h)} ${plural(Math.floor(h),'час','часа','часов')}`:'удалится меньше чем через час';};
 function threadRow(t){const cur=C.chat?.id===t.id;return `<li class="t"><a href="#chat" data-thread="${t.id}" class="${cur?'on':''}"><span>${esc(t.title)}</span><small>${dateShort(t.created)}${t.pinned||!t.expires?'':` · <span class="remain${hoursLeft(t)<24?' soon':''}" title="${leftText(t)}"><svg class="i"><use href="#i-clock"/></svg>${esc(remain(t))}</span>`}</small></a>`+
-  `<div class="tacts"><button type="button" class="${t.pinned?'on':''}" data-pin="${t.id}" title="${t.pinned?'Открепить':'Закрепить'}" aria-label="${t.pinned?'Открепить':'Закрепить'} «${esc(t.title)}»"><svg class="i"><use href="#i-pin"/></svg></button><button type="button" class="tdel" data-del-thread="${t.id}" title="Удалить" aria-label="Удалить «${esc(t.title)}»"><svg class="i"><use href="#i-trash"/></svg></button></div></li>`;}
+  `<div class="tacts"><button type="button" class="star${t.pinned?' on':''}" data-pin="${t.id}" aria-pressed="${!!t.pinned}" title="${t.pinned?'Убрать из избранного':'В избранное'}" aria-label="${t.pinned?'Убрать из избранного':'В избранное'} «${esc(t.title)}»"><svg class="i"><use href="#i-star"/></svg></button><button type="button" class="tdel" data-del-thread="${t.id}" title="Удалить" aria-label="Удалить «${esc(t.title)}»"><svg class="i"><use href="#i-trash"/></svg></button></div></li>`;}
 function renderThreads(){const list=byId('thread-list');
   if(C.hits){setHTML(list,C.hits.length?C.hits.map(h=>`<li class="t"><a href="#chat" data-thread="${h.id}"><span>${esc(h.title)}</span><small>${esc(h.snippet||dateShort(h.updated))}</small></a></li>`).join(''):'<li class="group">Ничего не найдено</li>');return;}
   const pin=C.threads.filter(t=>t.pinned),rest=C.threads.filter(t=>!t.pinned);
   const tg=(title,items)=>{if(!items.length)return '';const key='t:'+title;const shut=collapsed.has(key);return `<li class="group"><button type="button" class="grp-btn tgrp" data-grp="${key}" aria-expanded="${!shut}"><span>${title}</span><span class="grp-n">${items.length}</span>${chev(key)}</button></li>`+(shut?'':items.map(threadRow).join(''));};
-  setHTML(list,tg('Закреплённые',pin)+tg('Чаты',rest)||'<li class="group">Чатов пока нет</li>');renderKeep();}
+  setHTML(list,tg('Избранные',pin)+tg('Чаты',rest)||'<li class="group">Чатов пока нет</li>');renderKeep();}
 function renderKeep(){const k=byId('keep');const t=C.chat&&C.threads.find(x=>x.id===C.chat.id);k.hidden=!t||t.pinned||!t.expires;if(k.hidden)return;
   k.classList.toggle('soon',hoursLeft(t)<24);k.innerHTML=`<svg class="i"><use href="#i-clock"/></svg>${esc(remain(t))}`;k.title=`Создан ${dateShort(t.created)}, ${leftText(t)}. Срок меняется в «Настройки → Данные и хранение».`;}
 async function loadThreads(){const d=await api('/api/chats');C.threads=d.chats||[];renderThreads();}
@@ -68,7 +68,28 @@ function renderPicker(){const m=curModel();const btn=byId('picker-btn');
   const cloudOff=!S.cloud?.connected?'<div class="note">OpenRouter не подключён: <a href="#settings" data-go="settings" data-jump-after="s-cloud" class="ink">добавить ключ</a>.</div>':'';
   setHTML(byId('picker-list'),(grp('Избранные',all.filter(x=>x.favorite))+grp('Локальные модели',all.filter(x=>!x.favorite&&x.source==='local'))+grp('OpenRouter',all.filter(x=>!x.favorite&&x.source==='cloud'))||'<div class="note">Ничего не найдено</div>')+cloudOff);
   byId('picker-note').textContent=m?.source==='cloud'?'Облачная модель: запрос уходит в OpenRouter, локальная модель продолжает работать.':'Другая локальная модель запустится вместо текущей, это займёт 10–60 секунд.';}
-function renderFoot(){const m=curModel();const f=byId('chat-foot');
+// ── context: how much of the model's window the chat fills ──
+// The window is the context the local model runs with (or will start with), or the cloud model's limit.
+// The fill is what the last answer's request held, as the engine counted it; chats from before 0.22
+// have no such count and get an estimate from the text.
+const tk=(n,k=1024)=>{const f=(v,u)=>v.toFixed(1).replace(/\.0$/,'').replace('.',',')+u;return n>=k*k?f(n/(k*k),'M'):n>=k?f(n/k,'K'):String(n);};
+function ctxWindow(m){if(!m)return 0;if(m.source==='cloud')return m.context||0;
+  const b=(S.status?.backends||[]).find(x=>x.name===m.engine);if(m.running&&b?.active_context)return b.active_context;return curCtx(m)||m.context||0;}
+function ctxUsed(){const msgs=C.chat?.messages||[];
+  for(let i=msgs.length-1;i>=0;i--){const n=msgs[i].meta?.context_tokens;if(n)return {n,est:false};}
+  const chars=msgs.reduce((n,x)=>n+(x.text||'').length+(x.attachments||[]).reduce((k,a)=>k+(a.text||'').length,0),0);
+  return {n:Math.round(chars/3.5),est:msgs.length>0};}
+function ctxInfo(){const m=curModel(),total=ctxWindow(m);if(!total)return null;const u=ctxUsed(),used=Math.min(u.n,total);
+  return {m,total,used,left:total-used,pct:Math.min(100,Math.round(100*used/total)),est:u.est};}
+function renderCtxMeter(){const i=ctxInfo(),w=byId('ctx-wrap');w.hidden=!i;if(!i)return;const k=kbase(i.total),t=n=>tk(n,k);
+  const lv=i.pct>=90?'err':i.pct>=70?'warn':'';const b=byId('ctx-btn');b.className='tog ctxring'+(lv?' '+lv:'');
+  byId('ctx-ring').setAttribute('stroke-dasharray',`${Math.max(i.pct,i.used?2:0)} 100`);
+  b.title=`Контекст: занято ${i.pct}%`;b.setAttribute('aria-label',`Контекст: занято ${i.pct}%, осталось ${t(i.left)} токенов`);
+  setHTML(byId('ctx-pop'),`<div class="line"><b>Контекст</b><span class="muted">${i.est?'≈ ':''}${t(i.used)} / ${t(i.total)} (${i.pct}%)</span></div>
+    <div class="meter${lv?' '+lv:''}"><i data-w="${i.pct}%"></i></div>
+    <dl class="ctxkv"><dt>Длина контекста</dt><dd>${t(i.total)}</dd><dt>Занято</dt><dd>${i.est?'≈ ':''}${t(i.used)}</dd><dt>Осталось</dt><dd>${i.est?'≈ ':''}${t(i.left)}</dd></dl>
+    <span class="hint">${i.m.source==='cloud'?'Предел модели в OpenRouter.':i.m.running?'С этой длиной модель запущена; изменить — «Модели → Настроить».':'С этой длиной модель запустится; изменить — «Модели → Настроить».'} Занято — история чата, инструкции ассистента и файлы${i.est?'; это оценка по тексту — точное число появится после следующего ответа':' по последнему ответу модели'}.${i.pct>=70?' Ближе к 100% начните новый чат: длинную историю модель может не принять или забыть её начало.':''}</span>`);}
+function renderFoot(){const m=curModel();const f=byId('chat-foot');renderCtxMeter();
   if(m?.source!=='cloud'){f.textContent='ИИ может ошибаться — проверяйте важное.';return;}
   const hist=(C.chat?.messages||[]).reduce((n,x)=>n+(x.text||'').length,0)/3+(byId('prompt').value.length/3)+300;const est=(hist*m.prompt_usd+500*m.completion_usd)/1e6;
   f.innerHTML=`<span class="cloudnote" title="Оценка: история чата ≈${fmtN(Math.round(hist))} токенов на входе и ≈500 в ответе. Точная стоимость придёт от OpenRouter после ответа."><svg class="i"><use href="#i-cloud"/></svg>OpenRouter · ≈${money(Math.max(est,0))} за ответ</span><span class="sep"> · </span><span class="disc">ИИ может ошибаться — проверяйте важное.</span>`;}
@@ -197,7 +218,7 @@ async function messageAction(act,el){const msg=el.closest('.msg');const id=msg.d
 // ── deleting chats ──
 function askDelAll(step){const pins=C.threads.filter(t=>t.pinned).length,rest=C.threads.length-pins;byId('del-all').hidden=false;
   if(step===1){byId('del-all-text').textContent=`Удалить чаты (${C.threads.length}) с диска? Восстановить будет нельзя.`;byId('del-all-btns').innerHTML='<button class="btn danger sm" type="button" data-del-all-step>Удалить</button><button class="btn ghost sm" type="button" data-del-all-no>Отмена</button>';}
-  else{byId('del-all-text').textContent=`Среди них закреплённые: ${pins}. Удалить и их?`;byId('del-all-btns').innerHTML=`<button class="btn danger sm" type="button" data-del-all-go="all">Удалить все</button><button class="btn sm" type="button" data-del-all-go="keep">Только незакреплённые (${rest})</button><button class="btn ghost sm" type="button" data-del-all-no>Отмена</button>`;}}
+  else{byId('del-all-text').textContent=`Среди них избранные: ${pins}. Удалить и их?`;byId('del-all-btns').innerHTML=`<button class="btn danger sm" type="button" data-del-all-go="all">Удалить все</button><button class="btn sm" type="button" data-del-all-go="keep">Только незакреплённые (${rest})</button><button class="btn ghost sm" type="button" data-del-all-no>Отмена</button>`;}}
 async function delAll(all){const r=await api('/api/chats',{action:'delete-all',keep_pinned:!all});byId('del-all').hidden=true;notice(`Удалено чатов: ${r.deleted}.`);
   await loadThreads();if(C.chat&&!C.threads.some(t=>t.id===C.chat.id))newChat();}
 
@@ -221,10 +242,12 @@ conv.addEventListener('dragleave',()=>{if(--dragDepth<=0){dragDepth=0;byId('drop
 conv.addEventListener('drop',e=>{e.preventDefault();dragDepth=0;byId('drop').hidden=true;addFiles([...e.dataTransfer.files]);});
 document.addEventListener('click',e=>{
   if(!e.target.closest('.thinkwrap'))byId('think-pop').hidden=true;
+  if(!e.target.closest('.ctxwrap')){byId('ctx-pop').hidden=true;byId('ctx-btn').setAttribute('aria-expanded','false');}
   if(!e.target.closest('.webwrap')){byId('web-pop').hidden=true;byId('web').setAttribute('aria-expanded','false');}
   if(!e.target.closest('.asst-picker'))byId('asst-menu').hidden=true;
   if(!e.target.closest('.conv-head .picker'))byId('picker-menu').hidden=true;
   if(e.target.closest('#think-btn')){byId('think-pop').hidden=!byId('think-pop').hidden;return;}
+  if(e.target.closest('#ctx-btn')){const p=byId('ctx-pop');p.hidden=!p.hidden;byId('ctx-btn').setAttribute('aria-expanded',String(!p.hidden));if(!p.hidden)renderCtxMeter();return;}
   if(e.target.closest('#web')){const p=byId('web-pop');p.hidden=!p.hidden;byId('web').setAttribute('aria-expanded',String(!p.hidden));return;}
   if(e.target.closest('#asst-btn')){const m=byId('asst-menu');m.hidden=!m.hidden;byId('asst-btn').setAttribute('aria-expanded',String(!m.hidden));return;}
   const ap=e.target.closest('[data-asst-pick]');if(ap){pickAssistant(ap.dataset.asstPick).catch(fail);return;}
@@ -236,15 +259,15 @@ document.addEventListener('click',e=>{
   if(e.target.closest('[data-close-threads]')){$('.threads').classList.remove('open');return;}
   const ta=e.target.closest('[data-thread]');if(ta){e.preventDefault();$('.threads').classList.remove('open');openChat(ta.dataset.thread).catch(fail);return;}
   const pn=e.target.closest('[data-pin]');if(pn){const t=C.threads.find(x=>x.id===pn.dataset.pin);api('/api/chats',{action:t?.pinned?'unpin':'pin',id:pn.dataset.pin}).then(s=>{const i=C.threads.findIndex(x=>x.id===s.id);C.threads[i]=s;C.threads.sort((a,b)=>(b.pinned-a.pinned)||Date.parse(b.updated)-Date.parse(a.updated));renderThreads();}).catch(fail);return;}
-  const td=e.target.closest('[data-del-thread]');if(td){const id=td.dataset.delThread;api('/api/chats',{action:'delete',id}).then(()=>{C.threads=C.threads.filter(t=>t.id!==id);if(C.chat?.id===id)newChat();else renderThreads();}).catch(fail);return;}
+  const td=e.target.closest('[data-del-thread]');if(td){const id=td.dataset.delThread,t=C.threads.find(x=>x.id===id);confirmDialog({title:'Удалить чат?',text:`«${t?.title||'Без названия'}» сразу сотрётся с диска${t?.pinned?' — он в избранном':''}. Восстановить его будет нельзя.`,yes:'Удалить'}).then(ok=>ok&&api('/api/chats',{action:'delete',id}).then(r=>{if(!r)return;C.threads=C.threads.filter(t=>t.id!==id);if(C.chat?.id===id)newChat();else renderThreads();})).catch(fail);return;}
   if(e.target.closest('[data-del-all]')){if(C.threads.length)askDelAll(1);return;}
   if(e.target.closest('[data-del-all-no]')){byId('del-all').hidden=true;return;}
   if(e.target.closest('[data-del-all-step]')){C.threads.some(t=>t.pinned)?askDelAll(2):delAll(true).catch(fail);return;}
   const da=e.target.closest('[data-del-all-go]');if(da){delAll(da.dataset.delAllGo==='all').catch(fail);return;}
 });
 on('library',()=>{if(S.page==='chat'){renderPicker();renderThink();renderWeb();renderFoot();}});
+on('status',()=>{if(S.page==='chat')renderCtxMeter();});
 PAGES.chat={show(again){if(!C.chosen||!modelByKey(C.chosen)){const r=runningModel()||models().find(m=>m.favorite)||models()[0];if(r)C.chosen=r.key;}
   if(again){refreshLibrary().catch(()=>{});}
   loadThreads().then(()=>{if(!C.chat)C.web=webDefault(chatAsst());renderAll();}).catch(fail);renderAll();}};
-document.addEventListener('keydown',e=>{if(e.key==='Escape')['think-pop','web-pop','asst-menu','picker-menu'].forEach(id=>byId(id).hidden=true);});
-
+document.addEventListener('keydown',e=>{if(e.key==='Escape')['think-pop','web-pop','asst-menu','picker-menu','ctx-pop'].forEach(id=>byId(id).hidden=true);});

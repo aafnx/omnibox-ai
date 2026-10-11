@@ -545,6 +545,28 @@ details.mini>summary:hover{color:var(--text)}
   .kb .empty{padding-top:16px}
 }
 
+/* Favourite chats: a star like favourite models. */
+.tacts button.star.on{color:#ff9654} .tacts button.star.on svg{fill:#ff9654}
+/* Confirmation window: above everything, including the chat list opened on a phone. */
+.confirm-scrim{z-index:60}
+.dialog.modal-confirm{z-index:61;display:grid;background:var(--surface);top:50%;transform:translate(-50%,-50%);width:min(400px,calc(100% - 32px));padding:22px 22px 18px;gap:10px}
+.dialog.modal-confirm h2{margin:0;font-size:17px}
+.dialog.modal-confirm p{margin:0;color:var(--muted);font-size:14px;line-height:1.5;overflow-wrap:anywhere}
+.dialog.modal-confirm .cbtns{display:flex;justify-content:flex-end;gap:8px;margin-top:8px}
+/* Context meter: a small ring next to the paperclip, the numbers in a popover. */
+.composer .ctxwrap{margin-left:auto;position:relative}
+.composer .ctxwrap:not([hidden])~.attach-r{margin-left:0}
+.composer .ctxring{min-width:0;width:34px;height:34px;padding:0;border-radius:50%;justify-content:center}
+.ctxring svg{width:20px;height:20px;display:block}
+.ctxring circle{fill:none;stroke-width:2.6}
+.ctxring .trk{stroke:var(--track)}
+.ctxring .val{stroke:var(--iris);stroke-linecap:round;transition:stroke-dasharray .3s}
+.ctxring.warn .val{stroke:var(--warn)} .ctxring.err .val{stroke:var(--err)}
+.ctxpop{left:auto;right:0;width:290px}
+.ctxpop .meter.warn i{background:var(--warn)} .ctxpop .meter.err i{background:var(--err)}
+.ctxkv{display:grid;grid-template-columns:1fr auto;gap:4px 12px;margin:0}
+.ctxkv dt{color:var(--muted)} .ctxkv dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;color:var(--text)}
+
 </style>
 
 <svg width="0" height="0" style="position:absolute" aria-hidden="true">
@@ -590,6 +612,11 @@ details.mini>summary:hover{color:var(--text)}
   </defs>
 </svg>
 
+<div class="scrim confirm-scrim" id="cdlg-scrim" hidden></div>
+<div class="dialog modal-confirm" id="cdlg" role="alertdialog" aria-modal="true" aria-labelledby="cdlg-title" aria-describedby="cdlg-text" hidden>
+  <h2 id="cdlg-title"></h2><p id="cdlg-text"></p>
+  <div class="cbtns"><button class="btn ghost" type="button" id="cdlg-no">Отмена</button><button class="btn danger" type="button" id="cdlg-yes">Удалить</button></div>
+</div>
 <div class="app">
   <nav class="nav" aria-label="Разделы">
     <div class="brand"><svg viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="200" fill="none" stroke="url(#g)" stroke-width="34"/><circle cx="256" cy="256" r="146" fill="none" stroke="url(#g)" stroke-width="6" opacity=".55"/></svg>OMNIBOX AI</div>
@@ -660,6 +687,7 @@ details.mini>summary:hover{color:var(--text)}
               
               <div class="websearch thinkwrap"><button type="button" class="tog" id="think-btn" aria-haspopup="true"><svg class="i" style="width:15px;height:15px"><use href="#i-brain"/></svg><span class="lbl">Размышления</span></button><div class="pop" id="think-pop" hidden></div></div>
               <div class="websearch"><button type="button" class="tog" id="web" aria-pressed="true" aria-expanded="false" aria-haspopup="true" aria-label="Веб-поиск" title="Веб-поиск"><svg class="i" style="width:15px;height:15px"><use href="#i-globe"/></svg><span class="lbl">Веб-поиск</span></button><div class="pop" id="web-pop" hidden><div class="line"><b>Искать в интернете</b><label class="switch"><input type="checkbox" id="web-on" checked aria-label="Поиск в интернете"><span></span></label></div><div class="line"><span class="muted">Движок</span><span>SearXNG</span></div><div class="line"><span class="muted">Адрес</span><span class="mono">search.fnx.red</span></div><span class="hint">Модель сама решает, когда искать. Источники появятся под ответом.</span></div></div>
+              <div class="websearch ctxwrap" id="ctx-wrap"><button type="button" class="tog ctxring" id="ctx-btn" aria-haspopup="true" aria-expanded="false" aria-label="Контекст: занято 19%" title="Контекст: занято 19%"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" class="trk"/><circle cx="10" cy="10" r="7" class="val" pathLength="100" stroke-dasharray="19 100" transform="rotate(-90 10 10)"/></svg></button><div class="pop ctxpop" id="ctx-pop" hidden><div class="line"><b>Контекст</b><span class="muted">12,4K / 64K (19%)</span></div><div class="meter"><i style="width:19%"></i></div><dl class="ctxkv"><dt>Длина контекста</dt><dd>64K</dd><dt>Занято</dt><dd>12,4K</dd><dt>Осталось</dt><dd>51,6K</dd></dl><span class="hint">С этой длиной модель запущена; изменить — «Модели → Настроить». Занято — история чата, инструкции ассистента и файлы по последнему ответу модели.</span></div></div>
               <button type="button" class="tog attach-r" id="attach-btn" title="Прикрепить файл: изображение, видео, аудио, текст, Word, Excel. Можно перетащить в окно чата." aria-label="Прикрепить файл"><svg class="i" style="width:15px;height:15px"><use href="#i-clip"/></svg></button><input type="file" id="attach-input" multiple hidden><button type="submit" class="send" aria-label="Отправить"><svg class="i"><use href="#i-up"/></svg></button>
             </div>
           </form>
@@ -1226,10 +1254,10 @@ const hoursLeft=t=>t.keep*24-(t.ageH??t.age*24);
 const remain=t=>{const h=hoursLeft(t);return h>=24?`${Math.floor(h/24)} дн.`:h>=1?`${Math.floor(h)} ч`:'<1 ч';};
 const left=t=>{const h=hoursLeft(t);return h>=24?`удалится через ${Math.floor(h/24)} ${plural(Math.floor(h/24),'день','дня','дней')}`:h>=1?`удалится через ${Math.floor(h)} ${plural(Math.floor(h),'час','часа','часов')}`:'удалится меньше чем через час';};
 function threadRow(t){return `<li class="t"><a href="#chat" data-thread="${t.id}" class="${t.id===current?'on':''}"><span>${t.title}</span><small>${t.created}${t.pinned?'':` · <span class="remain${hoursLeft(t)<24?' soon':''}" title="${left(t)}"><svg class="i"><use href="#i-clock"/></svg>${remain(t)}</span>`}</small></a>`+
-  `<div class="tacts"><button type="button" class="${t.pinned?'on':''}" data-pin="${t.id}" title="${t.pinned?'Открепить':'Закрепить'}" aria-label="${t.pinned?'Открепить':'Закрепить'} «${t.title}»"><svg class="i"><use href="#i-pin"/></svg></button><button type="button" class="tdel" data-del-thread="${t.id}" title="Удалить" aria-label="Удалить «${t.title}»"><svg class="i"><use href="#i-trash"/></svg></button></div></li>`;}
+  `<div class="tacts"><button type="button" class="star${t.pinned?' on':''}" data-pin="${t.id}" title="${t.pinned?'Убрать из избранного':'В избранное'}" aria-label="${t.pinned?'Убрать из избранного':'В избранное'} «${t.title}»"><svg class="i"><use href="#i-star"/></svg></button><button type="button" class="tdel" data-del-thread="${t.id}" title="Удалить" aria-label="Удалить «${t.title}»"><svg class="i"><use href="#i-trash"/></svg></button></div></li>`;}
 function renderThreads(){const pin=threads.filter(t=>t.pinned),rest=threads.filter(t=>!t.pinned);
   const tg=(title,list)=>{if(!list.length)return '';const key='t:'+title;const shut=collapsed.has(key);return `<li class="group"><button type="button" class="grp-btn tgrp" data-grp="${key}" aria-expanded="${!shut}"><span>${title}</span><span class="grp-n">${list.length}</span>${chev(key)}</button></li>`+(shut?'':list.map(threadRow).join(''));};
-  $('#thread-list').innerHTML=tg('Закреплённые',pin)+tg('Чаты',rest)||'<li class="group">Чатов нет</li>';
+  $('#thread-list').innerHTML=tg('Избранные',pin)+tg('Чаты',rest)||'<li class="group">Чатов нет</li>';
   const c=threads.find(t=>t.id===current);const k=$('#keep');k.hidden=!c;if(c){k.hidden=c.pinned;k.classList.toggle('soon',hoursLeft(c)<24);k.innerHTML=`<svg class="i"><use href="#i-clock"/></svg>${remain(c)}`;k.title=c.pinned?`Создан ${c.created}. Закреплённый чат не удаляется по сроку.`:`Создан ${c.created}, ${left(c)}. Срок меняется в «Настройки → Данные».`;}}
 renderThreads();
 $$('[data-caps]').forEach(el=>{const m={caps:el.dataset.caps.split(',')};el.innerHTML=allChips(m)+`<span class="ictx chip" tabindex="0" data-tip="Контекст: сколько текста модель держит в разговоре."><svg class="i"><use href="#i-ctx"/></svg>${el.dataset.ctx}</span>`;});
@@ -1259,7 +1287,7 @@ document.addEventListener('click',e=>{
   if(e.target.closest('[data-close-threads]')){$('.threads').classList.remove('open');return;}
   const ta=e.target.closest('[data-thread]');if(ta){e.preventDefault();current=+ta.dataset.thread;renderThreads();$('.threads').classList.remove('open');return;}
   const pn=e.target.closest('[data-pin]');if(pn){const t=threads.find(x=>x.id===+pn.dataset.pin);t.pinned=!t.pinned;if(!t.pinned)t.age=0;renderThreads();return;}
-  const td=e.target.closest('[data-del-thread]');if(td){const i=threads.findIndex(x=>x.id===+td.dataset.delThread);threads.splice(i,1);if(+td.dataset.delThread===current){current=threads[0]?.id;$('#messages>div').innerHTML='';}renderThreads();return;}
+  const td=e.target.closest('[data-del-thread]');if(td){const id=+td.dataset.delThread,t=threads.find(x=>x.id===id);confirmDialog({title:'Удалить чат?',text:`«${t.title}» сразу сотрётся с диска${t.pinned?' — он в избранном':''}. Восстановить его будет нельзя.`}).then(ok=>{if(!ok)return;const i=threads.findIndex(x=>x.id===id);threads.splice(i,1);if(id===current){current=threads[0]?.id;$('#messages>div').innerHTML='';}renderThreads();});return;}
   if(e.target.closest('[data-del-all]')){askDelAll(1);return;}
   if(e.target.closest('[data-del-all-no]')){$('#del-all').hidden=true;return;}
   if(e.target.closest('[data-del-all-step]')){const pins=threads.filter(t=>t.pinned).length;if(pins){askDelAll(2);}else{delAll(true);}return;}
@@ -1274,7 +1302,7 @@ document.addEventListener('click',e=>{
 });
 function askDelAll(step){const pins=threads.filter(t=>t.pinned).length,rest=threads.length-pins;$('#del-all').hidden=false;
   if(step===1){$('#del-all-text').textContent=`Удалить чаты (${threads.length}) с диска? Восстановить будет нельзя.`;$('#del-all-btns').innerHTML='<button class="btn danger sm" type="button" data-del-all-step>Удалить</button><button class="btn ghost sm" type="button" data-del-all-no>Отмена</button>';}
-  else{$('#del-all-text').textContent=`Среди них закреплённые: ${pins}. Удалить и их?`;$('#del-all-btns').innerHTML=`<button class="btn danger sm" type="button" data-del-all-go="all">Удалить все</button><button class="btn sm" type="button" data-del-all-go="keep">Только незакреплённые (${rest})</button><button class="btn ghost sm" type="button" data-del-all-no>Отмена</button>`;}}
+  else{$('#del-all-text').textContent=`Среди них избранные: ${pins}. Удалить и их?`;$('#del-all-btns').innerHTML=`<button class="btn danger sm" type="button" data-del-all-go="all">Удалить все</button><button class="btn sm" type="button" data-del-all-go="keep">Только незакреплённые (${rest})</button><button class="btn ghost sm" type="button" data-del-all-no>Отмена</button>`;}}
 function delAll(all){for(let i=threads.length-1;i>=0;i--)if(all||!threads[i].pinned)threads.splice(i,1);if(!threads.some(t=>t.id===current)){current=threads[0]?.id;$('#messages>div').innerHTML='';}$('#del-all').hidden=true;renderThreads();}
 function show(el){$('#scrim').hidden=false;el.hidden=false;}
 function hideAll(){$('#scrim').hidden=true;$('#drawer').hidden=true;$('#add').hidden=true;$('#asst-drawer').hidden=true;}
@@ -1406,4 +1434,12 @@ function fitViewport(){const vv=window.visualViewport;if(!vv)return;const root=d
   else{root.style.removeProperty('--vvh');root.style.removeProperty('--vvt');if(window.scrollY)window.scrollTo(0,0);}}
 if(window.visualViewport){visualViewport.addEventListener('resize',fitViewport);visualViewport.addEventListener('scroll',fitViewport);
   window.addEventListener('orientationchange',()=>{fullHeight=0;});document.addEventListener('focusout',()=>setTimeout(fitViewport,50));}
+
+function confirmDialog({title,text,yes='Удалить'}){const box=document.getElementById('cdlg'),scrim=document.getElementById('cdlg-scrim'),y=document.getElementById('cdlg-yes'),n=document.getElementById('cdlg-no');
+  document.getElementById('cdlg-title').textContent=title;document.getElementById('cdlg-text').textContent=text;y.textContent=yes;box.hidden=false;scrim.hidden=false;n.focus();
+  return new Promise(resolve=>{const done=v=>{box.hidden=true;scrim.hidden=true;y.removeEventListener('click',ok);n.removeEventListener('click',no);scrim.removeEventListener('click',no);document.removeEventListener('keydown',key,true);resolve(v);};
+    const ok=()=>done(true),no=()=>done(false),key=e=>{if(e.key==='Escape'){e.stopPropagation();done(false);}};
+    y.addEventListener('click',ok);n.addEventListener('click',no);scrim.addEventListener('click',no);document.addEventListener('keydown',key,true);});}
+document.getElementById('ctx-btn').addEventListener('click',e=>{e.stopPropagation();const p=document.getElementById('ctx-pop');p.hidden=!p.hidden;document.getElementById('ctx-btn').setAttribute('aria-expanded',String(!p.hidden));});
+document.addEventListener('click',e=>{if(!e.target.closest('.ctxwrap'))document.getElementById('ctx-pop').hidden=true;});
 </script>
