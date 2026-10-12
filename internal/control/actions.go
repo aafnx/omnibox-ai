@@ -113,7 +113,7 @@ func ParseRequest(body map[string]any) (Request, error) {
 	}
 	if r.Action == "model-start" {
 		name, _, ok := config.SplitKey(r.Model)
-		if !ok || name == "cloud" {
+		if !ok || config.Remote(name) {
 			return r, errors.New("Нужна локальная модель: prismml:<файл> или ollama:<имя>.")
 		}
 		r.Engine = name
@@ -195,7 +195,7 @@ func (c *Controller) Do(ctx context.Context, r Request) (string, error) {
 	case "start-model":
 		// The model loaded once after the computer boots; the service itself starts by autostart.
 		if r.Model != "" {
-			if name, _, ok := config.SplitKey(r.Model); !ok || name == "cloud" {
+			if name, _, ok := config.SplitKey(r.Model); !ok || config.Remote(name) {
 				return "", errors.New("Нужна локальная модель или пусто.")
 			}
 		}

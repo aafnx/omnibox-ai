@@ -85,20 +85,28 @@ function cloudRow(m){return `<div class="model cloud" data-cloud="${esc(m.key)}"
       <div class="sub"><span>${esc(m.provider||'')}</span><span title="Цена за миллион токенов: запрос / ответ">${price(m.prompt_usd)} / ${price(m.completion_usd)} за 1M токенов</span></div></div>
     <div class="acts"><button class="btn sm" type="button" data-chat-model="${esc(m.key)}">Открыть в чате</button>${star(m)}</div>
     <div class="caps">${allChips(m)}${ctxChip(m)}</div></div>`;}
+function gptRow(m){return `<div class="model cloud" data-cloud="${esc(m.key)}">
+    <div><div class="name"><b>${esc(m.name)}</b><span class="pill iris"><svg class="i"><use href="#i-cloud"/></svg>ChatGPT</span></div>
+      <div class="sub"><span>OpenAI · по подписке, без оплаты за токены</span><span>${(m.reasoning?.efforts||[]).length?'глубина размышлений: '+esc(m.reasoning.efforts.join(', ')):''}</span></div></div>
+    <div class="acts"><button class="btn sm" type="button" data-chat-model="${esc(m.key)}">Открыть в чате</button>${star(m)}</div>
+    <div class="caps">${allChips(m)}</div></div>`;}
 let startingKey='';
 function renderModels(){const box=byId('model-list');if(!S.library){setHTML(box,'<div class="banner">Загружаем список моделей…</div>');return;}
   const capOk=m=>!M.capF||has(m,M.capF);const q=M.cloudQ;
   const loc=models().filter(m=>m.source==='local'&&capOk(m)),cl=models().filter(m=>m.source==='cloud'&&capOk(m)&&(!q||(m.name+' '+m.id+' '+(m.provider||'')).toLowerCase().includes(q)));
-  const row=m=>m.source==='local'?localRow(m):cloudRow(m);const cnt=b=>(b.match(/class="model/g)||[]).length;
+  const gp=models().filter(m=>m.source==='chatgpt'&&capOk(m));
+  const row=m=>m.source==='local'?localRow(m):m.source==='chatgpt'?gptRow(m):cloudRow(m);const cnt=b=>(b.match(/class="model/g)||[]).length;
   const sec=(title,body,extra='')=>{const key='m:'+title;const shut=collapsed.has(key);return `<div class="msec"><div class="msec-head"><button type="button" class="grp-btn" data-grp="${key}" aria-expanded="${!shut}"><h2>${title}</h2><span class="grp-n">${cnt(body)}</span>${chev(key)}</button>${shut||!extra?'':`<div class="msec-extra">${extra}</div>`}</div>${shut?'':body||'<div class="banner">Нет моделей с таким фильтром.</div>'}</div>`;};
   const bal=S.account?`<span class="chatcost">Баланс ${usd2(S.account.balance)}</span><a class="btn sm" href="https://openrouter.ai/settings/credits" target="_blank" rel="noopener noreferrer">Пополнить ↗</a>`:'';
   const cloudExtra=S.cloud?.connected?`${bal}<input type="search" id="cloud-q" value="${esc(q)}" placeholder="Поиск среди ${cl.length&&!q?cl.length:models().filter(m=>m.source==='cloud').length} моделей OpenRouter" aria-label="Поиск моделей OpenRouter">`:'';
   const cloudBody=S.cloud?.connected?(S.library.cloud?.error?`<div class="banner">${esc(S.library.cloud.error)}</div>`:'')+cl.filter(m=>M.engineF!=='all'||!m.favorite).map(row).join(''):'<div class="banner"><span>Подключите OpenRouter, чтобы пользоваться облачными моделями.</span><a class="btn sm" href="#settings" data-go="settings" data-jump-after="s-cloud">Добавить ключ</a></div>';
-  let html='';
-  if(M.engineF==='fav')html=sec('Избранные',[...loc,...cl].filter(m=>m.favorite).map(row).join(''));
-  else{if(M.engineF==='all'){const favs=[...loc,...cl].filter(m=>m.favorite).map(row).join('');if(favs)html+=sec('Избранные',favs);}
-    if(M.engineF!=='cloud')html+=sec('Локальные модели',loc.filter(m=>M.engineF!=='all'||!m.favorite).map(row).join('')||'<div class="banner"><span>Локальных моделей пока нет.</span><button class="btn sm" type="button" data-open-add>Добавить модель</button></div>');
-    if(M.engineF!=='local')html+=sec('OpenRouter',cloudBody,cloudExtra);}
+  const gptBody=S.library.chatgpt?.connected?gp.filter(m=>M.engineF!=='all'||!m.favorite).map(row).join(''):'<div class="banner"><span>Войдите в ChatGPT, чтобы пользоваться моделями своей подписки.</span><a class="btn sm" href="#settings" data-go="settings" data-jump-after="s-gpt">Подключить</a></div>';
+  let html='';const f=M.engineF;
+  if(f==='fav')html=sec('Избранные',[...loc,...gp,...cl].filter(m=>m.favorite).map(row).join(''));
+  else{if(f==='all'){const favs=[...loc,...gp,...cl].filter(m=>m.favorite).map(row).join('');if(favs)html+=sec('Избранные',favs);}
+    if(f==='all'||f==='local')html+=sec('Локальные модели',loc.filter(m=>f!=='all'||!m.favorite).map(row).join('')||'<div class="banner"><span>Локальных моделей пока нет.</span><button class="btn sm" type="button" data-open-add>Добавить модель</button></div>');
+    if(f==='all'||f==='chatgpt')html+=sec('ChatGPT',gptBody);
+    if(f==='all'||f==='cloud')html+=sec('OpenRouter',cloudBody,cloudExtra);}
   if(M.applyKey){const m=modelByKey(M.applyKey);if(m?.running)html=`<div class="banner"><span>Настройки ${esc(m.name)} сохранены. Работающая модель применит их после перезапуска.</span><button class="btn sm primary" type="button" data-apply-now>Перезапустить сейчас</button></div>`+html;}
   const focus=document.activeElement?.id==='cloud-q'?document.activeElement.selectionStart:null;setHTML(box,html);
   if(focus!==null){const i=byId('cloud-q');i?.focus();i?.setSelectionRange(focus,focus);}}

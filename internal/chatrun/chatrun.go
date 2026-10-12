@@ -1,7 +1,7 @@
 // Package chatrun answers a message of the panel's chat: it builds the conversation for the
 // model (assistant instructions, history, attached files, web search), sends it to the running
-// local model through /v1 — with its queue — or to OpenRouter, streams the answer to the browser
-// and stores both messages in the chat.
+// local model through /v1 — with its queue —, to OpenRouter or to the ChatGPT subscription,
+// streams the answer to the browser and stores both messages in the chat.
 package chatrun
 
 import (
@@ -51,6 +51,10 @@ type Runner struct {
 	// Cloud returns the OpenRouter client with the saved key.
 	Cloud func() (*openrouter.Client, error)
 	Spend *openrouter.Spend
+	// ChatGPT answers with a model of the ChatGPT subscription; Limits are its limits after an
+	// answer, for the indicator next to the message box.
+	ChatGPT       Subscription
+	ChatGPTLimits func() any
 	// Search asks SearXNG; Read opens a page of the results or one the user named.
 	Search func(ctx context.Context, query string) ([]websearch.Result, error)
 	Read   func(ctx context.Context, url string) (websearch.Page, error)
@@ -62,6 +66,11 @@ type Runner struct {
 	// jobs are the answers being written, by chat (jobs.go).
 	jobsMu sync.Mutex
 	jobs   map[string]*job
+}
+
+// Subscription answers an OpenAI chat.completions request with a ChatGPT model.
+type Subscription interface {
+	Chat(ctx context.Context, body []byte) (*http.Response, error)
 }
 
 // File is an attached file as the browser sends it.

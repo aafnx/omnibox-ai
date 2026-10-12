@@ -287,6 +287,69 @@ func TestCloudAnswerCostsAndLearnsRefusedParameters(t *testing.T) {
 	}
 }
 
+type fakeGPT struct {
+	mu     sync.Mutex
+	bodies []map[string]any
+}
+
+func (f *fakeGPT) Chat(ctx context.Context, body []byte) (*http.Response, error) {
+	var m map[string]any
+	_ = json.Unmarshal(body, &m)
+	f.mu.Lock()
+	f.bodies = append(f.bodies, m)
+	f.mu.Unlock()
+	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(sse(
+		`{"choices":[{"delta":{"reasoning_content":"Думаю"}}]}`,
+		`{"choices":[{"delta":{"content":"Привет из ChatGPT"}}]}`,
+		`{"choices":[],"usage":{"prompt_tokens":20,"completion_tokens":4}}`)))}, nil
+}
+
+// A ChatGPT model answers through the subscription with the chosen depth, searches first (it
+// gets no tools) and the chat learns the limits after the answer.
+func TestChatGPTAnswerAndLimits(t *testing.T) {
+	g := newRig(t)
+	gpt := &fakeGPT{}
+	model := library.Model{Key: "chatgpt:gpt-5.5", Source: "chatgpt", Engine: "chatgpt", ID: "gpt-5.5", Name: "GPT-5.5",
+		Reasoning: reasoning.Profile{Mode: reasoning.ModeAlways, Efforts: []string{"low", "high"}, Default: "low"}}
+	prev := g.r.Model
+	g.r.Model = func(ctx context.Context, key string) (library.Model, int, error) {
+		if key == model.Key {
+			return model, 200000, nil
+		}
+		return prev(ctx, key)
+	}
+	g.r.ChatGPT = gpt
+	g.r.ChatGPTLimits = func() any { return map[string]any{"primary": map[string]any{"used_percent": 12}} }
+	code, ev := g.send(Request{ChatID: g.chat.ID, Model: model.Key, Text: "Привет", Effort: "high", Web: true})
+	if code != 200 || len(ev["done"]) != 1 || !strings.Contains(ev["done"][0], "Привет из ChatGPT") {
+		t.Fatalf("%d %v", code, ev)
+	}
+	if len(ev["limits"]) != 1 || !strings.Contains(ev["limits"][0], `"used_percent":12`) {
+		t.Fatalf("limits: %v", ev["limits"])
+	}
+	if len(gpt.bodies) != 1 {
+		t.Fatalf("requests: %d", len(gpt.bodies))
+	}
+	b := gpt.bodies[0]
+	if b["model"] != "gpt-5.5" || b["reasoning_effort"] != "high" || b["tools"] != nil {
+		t.Fatalf("body: %v", b)
+	}
+	if !strings.Contains(mustJSON(b["messages"]), "Результаты веб-поиска") {
+		t.Fatal("a model without tools gets the search results before it answers")
+	}
+	// Without the subscription the answer explains where to connect it.
+	g.r.ChatGPT = nil
+	_, ev = g.send(Request{ChatID: g.chat.ID, Model: model.Key, Text: "Ещё"})
+	if !strings.Contains(strings.Join(ev["done"], ""), "Настройки → ChatGPT") {
+		t.Fatalf("%v", ev)
+	}
+}
+
+func mustJSON(v any) string {
+	data, _ := json.Marshal(v)
+	return string(data)
+}
+
 func TestThinkSplitter(t *testing.T) {
 	s := &thinkSplitter{}
 	var text, think string

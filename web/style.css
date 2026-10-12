@@ -240,6 +240,14 @@ main{overflow-x:hidden}
 .remain.soon,.keep.soon{color:var(--warn)}
 .orlinks{display:flex;gap:6px;flex-wrap:wrap}
 .orlinks a{text-decoration:none}
+.gptcode{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;align-items:center;justify-items:start;padding:12px;border-radius:var(--r-s);background:var(--track)}
+.gptcode .hint{grid-column:1/-1}
+.gptcode a,a.cloudnote{text-decoration:none}
+.self-start{justify-self:start;align-self:start}
+#gpt-kv b{overflow-wrap:anywhere}
+@media (max-width:560px){#gpt-kv,#gpt-more{grid-template-columns:repeat(2,minmax(0,1fr))}#gpt-kv>div:first-child{grid-column:1/-1}}
+.codebig{font-size:22px;letter-spacing:.12em;font-weight:600}
+@media (max-width:560px){.gptcode{grid-template-columns:1fr}}
 .spend{display:grid;gap:8px}
 .chart{position:relative;height:150px;display:grid;grid-template-columns:repeat(14,1fr);gap:2px;align-items:end;border-bottom:1px solid var(--line-strong);padding-top:18px}
 .chart .bar{position:relative;height:100%;display:flex;align-items:flex-end;justify-content:center;cursor:default}

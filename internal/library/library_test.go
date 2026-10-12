@@ -1,8 +1,10 @@
 package library
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/aafnx/omnibox-ai/internal/chatgpt"
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/engine"
 	"github.com/aafnx/omnibox-ai/internal/openrouter"
@@ -60,5 +62,25 @@ func TestRunningOf(t *testing.T) {
 	}
 	if r := RunningOf(cfg, func(string) bool { return false }); r.Key != "" {
 		t.Fatal(r)
+	}
+}
+
+func TestChatGPTModels(t *testing.T) {
+	cfg := config.Default()
+	cfg.Favorites = []string{"chatgpt:gpt-5.5"}
+	list := ChatGPT(cfg, []chatgpt.Model{
+		{ID: "gpt-5.5", Name: "GPT-5.5", Efforts: []string{"high", "low", "xhigh"}, Default: "medium", Images: true},
+		{ID: "bad/id", Name: "Bad"},
+	})
+	if len(list) != 1 {
+		t.Fatalf("%+v", list)
+	}
+	m := list[0]
+	if m.Key != "chatgpt:gpt-5.5" || m.Source != "chatgpt" || !m.Favorite || !m.Caps.Vision || m.Caps.Tools || m.Alias != "chatgpt/gpt-5.5" {
+		t.Fatalf("%+v", m)
+	}
+	// Levels keep the scale's order; a default the model does not list falls to the lightest.
+	if strings.Join(m.Reasoning.Efforts, ",") != "low,high,xhigh" || m.Reasoning.Default != "low" || m.Reasoning.Mode != reasoning.ModeAlways {
+		t.Fatalf("%+v", m.Reasoning)
 	}
 }

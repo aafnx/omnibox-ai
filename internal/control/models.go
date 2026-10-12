@@ -18,7 +18,7 @@ import (
 // stops first: one model at a time.
 func (c *Controller) StartModel(ctx context.Context, key string) (string, error) {
 	name, model, ok := config.SplitKey(key)
-	if !ok || name == "cloud" {
+	if !ok || config.Remote(name) {
 		return "", errors.New("Нужна локальная модель: prismml:<файл> или ollama:<имя>.")
 	}
 	cfg := c.Store.Get()
@@ -121,7 +121,7 @@ func derivePlacement(changes, own map[string]string) {
 // SaveModelPrefs validates and stores a local model's settings; an empty map forgets them.
 func SaveModelPrefs(store *config.Store, key string, settings map[string]string, advanced bool) error {
 	name, _, ok := config.SplitKey(key)
-	if !ok || name == "cloud" {
+	if !ok || config.Remote(name) {
 		return errors.New("Нужна локальная модель.")
 	}
 	for k, v := range settings {

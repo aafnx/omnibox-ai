@@ -69,11 +69,12 @@ type Config struct {
 	API           API                `json:"api"`
 	Storage       Storage            `json:"storage"`
 	Engines       map[string]*Engine `json:"engines"`
-	// Chat, Cloud, Models and Favorites appear once the owner changes them in the panel.
-	Chat   *Chat                  `json:"chat,omitempty"`
-	Cloud  *Cloud                 `json:"cloud,omitempty"`
-	Models map[string]*ModelPrefs `json:"models,omitempty"`
-	// Favorites are model keys (prismml:<file>, ollama:<name>, cloud:<id>) shown first.
+	// Chat, Cloud, ChatGPT, Models and Favorites appear once the owner changes them in the panel.
+	Chat    *Chat                  `json:"chat,omitempty"`
+	Cloud   *Cloud                 `json:"cloud,omitempty"`
+	ChatGPT *ChatGPT               `json:"chatgpt,omitempty"`
+	Models  map[string]*ModelPrefs `json:"models,omitempty"`
+	// Favorites are model keys (prismml:<file>, ollama:<name>, cloud:<id>, chatgpt:<id>) shown first.
 	Favorites []string `json:"favorites,omitempty"`
 }
 
