@@ -55,7 +55,10 @@ func TestAnswerGoesOnWithoutTheBrowser(t *testing.T) {
 	// Another browser follows the answer from its start.
 	follow := httptest.NewRecorder()
 	followed := make(chan struct{})
-	go func() { g.r.Follow(follow, httptest.NewRequest(http.MethodGet, "/api/chat/stream?chat_id="+g.chat.ID, nil)); close(followed) }()
+	go func() {
+		g.r.Follow(follow, httptest.NewRequest(http.MethodGet, "/api/chat/stream?chat_id="+g.chat.ID, nil))
+		close(followed)
+	}()
 	io.WriteString(pw, "data: {\"choices\":[{\"delta\":{\"content\":\"ло и конец\"}}]}\n\ndata: [DONE]\n\n")
 	pw.Close()
 	g.waitIdle()
