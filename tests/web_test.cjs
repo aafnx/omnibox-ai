@@ -274,6 +274,31 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   const bot=run("botHTML({id:'m',text:'ok',reasoning:'думаю',reasoning_seconds:12,meta:{searches:['погода'],sources:[{title:'A',url:'https://a.example/'}]}})");
   assert.ok(bot.includes('<details class="step"><summary>')&&bot.includes('<details class="step think"><summary>'));
 
+  // Suggested questions: under the last answer only; the chat's own choice wins over the setting.
+  const fm={id:'m9',role:'assistant',text:'ok',meta:{follow_ups:['Что завтра?','<b>x</b>']}};
+  const fh=run(`botHTML(${JSON.stringify(fm)},true)`);assert.ok(fh.includes('Продолжить')&&fh.includes('data-follow="Что завтра?"')&&fh.includes('&lt;b&gt;x&lt;/b&gt;'),fh);
+  assert.ok(!run(`botHTML(${JSON.stringify(fm)},false)`).includes('Продолжить'),'only the last answer');
+  run("S.chatSettings.follow_ups=false");assert.equal(run("followOn({})"),false);assert.equal(run("followOn({follow_ups:true})"),true);
+  run("S.chatSettings.follow_ups=true");assert.equal(run("followOn({})"),true);assert.equal(run("followOn({follow_ups:false})"),false);
+  assert.ok(run("threadMenu({id:'t1'})").includes('aria-checked="true" data-follow-chat="t1"'));
+  // Asked for after an answer; the reply fills the message, its cost is added to the answer's.
+  run("C.chat={id:'fc',follow_ups:null,messages:[{id:'u1',role:'user',text:'?'},{id:'a1',role:'assistant',text:'Ответ',meta:{cost_usd:0.001}}]}");
+  assert.equal(run('followTarget().id'),'a1');
+  const fsent=[];context.fetch=async(path,opts)=>{fsent.push([path,JSON.parse(opts.body)]);return {ok:true,status:200,json:async()=>({follow_ups:['Ещё?'],cost_usd:0.0002})};};
+  await run("requestFollowUps('fc','a1')");
+  assert.deepEqual(fsent,[['/api/chat/followups',{chat_id:'fc',message_id:'a1'}]]);
+  assert.deepEqual(J("C.chat.messages[1].meta.follow_ups"),['Ещё?']);assert.equal(run("Math.round(C.chat.messages[1].meta.cost_usd*1e4)"),12);
+  assert.equal(run('followTarget()'),null,'an answer with suggestions is not asked again');
+  run("C.chat.follow_ups=false;renderChat()");assert.ok(!nodes['message-list'].innerHTML.includes('Продолжить'),'off in the chat hides stored suggestions');
+  run("C.chat.follow_ups=null;renderChat()");assert.ok(nodes['message-list'].innerHTML.includes('data-follow="Ещё?"'));
+  // A new message cancels a pending request: the model is not kept busy with suggestions.
+  let aborted=false;context.fetch=(path,opts)=>new Promise((_,reject)=>opts.signal.addEventListener('abort',()=>{aborted=true;reject(Object.assign(new Error('x'),{name:'AbortError'}));}));
+  run("C.chat.messages.push({id:'a2',role:'assistant',text:'Ещё ответ'})");const pend=run("requestFollowUps('fc','a2')");run('stopFollowUps()');await pend;assert.equal(aborted,true);assert.equal(run('C.follow'),null);
+  // The chat's switch: a choice equal to the setting follows the setting again.
+  const tsent=[];context.fetch=async(path,opts)=>{const b=JSON.parse(opts.body);tsent.push(b);return {ok:true,json:async()=>({id:'t1',title:'T',follow_ups:b.mode==='auto'?undefined:b.mode==='on'})};};
+  run("C.threads=[{id:'t1',title:'T'}];C.chat=null;S.chatSettings.follow_ups=true");await run("toggleChatFollow('t1')");assert.equal(tsent[0].mode,'off');
+  await run("toggleChatFollow('t1')");assert.equal(tsent[1].mode,'auto');context.fetch=oldFetch;run("S.chatSettings.follow_ups=false;C.chat=null");
+
   // Spending: fractions of a cent stay visible, nothing spent reads $0,00.
   assert.equal(run('money(0.00042)'),'$0,0004');assert.equal(run('money(0.00001)'),'<$0,0001');assert.equal(run('money(0)'),'$0,00');assert.equal(run('money(1.5)'),'$1,50');assert.equal(run('money(undefined)'),'$0,00');
   // The key's limit, its period, what is left, and when it expires.

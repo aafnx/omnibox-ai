@@ -33,6 +33,7 @@ var (
 		"delete":         {"id"},
 		"delete-all":     {"keep_pinned"},
 		"delete-message": {"id", "message_id"},
+		"follow-ups":     {"id", "mode"},
 	}
 	assistantActions = map[string][]string{
 		"save":    {"id", "emoji", "name", "description", "instructions", "model", "style", "web_search"},
@@ -95,10 +96,10 @@ func (h *Handler) postChats(w http.ResponseWriter, r *http.Request) {
 		h.fail(w, err)
 		return
 	}
-	var id, title, assistant, model, msg string
+	var id, title, assistant, model, msg, mode string
 	var keepPinned bool
 	if err := f.get("id", &id, "title", &title, "assistant_id", &assistant, "model", &model,
-		"message_id", &msg, "keep_pinned", &keepPinned); err != nil {
+		"message_id", &msg, "keep_pinned", &keepPinned, "mode", &mode); err != nil {
 		h.fail(w, err)
 		return
 	}
@@ -140,6 +141,19 @@ func (h *Handler) postChats(w http.ResponseWriter, r *http.Request) {
 			c, err = h.Chats.SetPinned(id, action == "pin")
 		case "delete-message":
 			c, err = h.Chats.DeleteMessage(id, msg)
+		case "follow-ups":
+			// on or off for this chat; auto follows the setting.
+			on, off := true, false
+			switch mode {
+			case "on":
+				c, err = h.Chats.SetFollowUps(id, &on)
+			case "off":
+				c, err = h.Chats.SetFollowUps(id, &off)
+			case "auto":
+				c, err = h.Chats.SetFollowUps(id, nil)
+			default:
+				err = errorf("Предложения в чате: on, off или auto.")
+			}
 		}
 		if err != nil {
 			h.fail(w, err)

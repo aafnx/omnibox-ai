@@ -76,6 +76,16 @@ func TestHandlerChats(t *testing.T) {
 	if code, got := serve(t, h, "POST", "/api/chats", `{"action":"rename","id":"`+id+`","title":"Второй"}`); code != 200 || got["title"] != "Второй" {
 		t.Fatalf("rename %d %v", code, got)
 	}
+	// Suggested questions: on or off for the chat, auto follows the setting.
+	if code, got := serve(t, h, "POST", "/api/chats", `{"action":"follow-ups","id":"`+id+`","mode":"off"}`); code != 200 || got["follow_ups"] != false {
+		t.Fatalf("follow-ups off %d %v", code, got)
+	}
+	if code, got := serve(t, h, "POST", "/api/chats", `{"action":"follow-ups","id":"`+id+`","mode":"auto"}`); code != 200 || got["follow_ups"] != nil {
+		t.Fatalf("follow-ups auto %d %v", code, got)
+	}
+	if code, _ := serve(t, h, "POST", "/api/chats", `{"action":"follow-ups","id":"`+id+`","mode":"maybe"}`); code != 400 {
+		t.Fatalf("follow-ups mode %d", code)
+	}
 	if code, got := serve(t, h, "POST", "/api/chats", `{"action":"pin","id":"`+id+`"}`); code != 200 || got["pinned"] != true || got["expires"] != nil {
 		t.Fatalf("pin %d %v", code, got)
 	}

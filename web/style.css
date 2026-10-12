@@ -700,7 +700,7 @@ details.srcs summary:hover{border-color:var(--iris-line);color:var(--text)}
 .tmore:hover,.tmore.open{background:var(--surface2);color:var(--text)}
 .threads li.t a.on+.tmore{opacity:1;color:var(--iris-text)}
 @media (hover:none){.tmore{opacity:1}}
-.tmenu{position:fixed;z-index:50;width:220px;padding:4px;display:grid;gap:1px;background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r);box-shadow:var(--shadow)}
+.tmenu{position:fixed;z-index:50;width:250px;padding:4px;display:grid;gap:1px;background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r);box-shadow:var(--shadow)}
 .tmenu button{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:0;border-radius:7px;background:none;text-align:left;font-size:13.5px;color:var(--text)}
 .tmenu button:hover,.tmenu button:focus-visible{background:var(--surface2)}
 .tmenu button svg.i{width:16px;height:16px;color:var(--muted)}
@@ -735,3 +735,14 @@ details.srcs summary:hover{border-color:var(--iris-line);color:var(--text)}
 .meter.warn i{background:var(--warn)}
 .warn-text{color:var(--warn)}
 .trename::selection{background:var(--iris-line)}
+/* Suggested questions under the last answer, as rows like Open WebUI's "Продолжить". */
+.follow{display:grid;margin-top:4px}
+.follow .fh{font-size:13px;color:var(--muted);font-weight:500;padding:2px 0 6px}
+.follow .fh.err{color:var(--faint);font-weight:400;font-size:12.5px}
+.follow button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;padding:9px 6px;color:var(--muted);font-size:13.5px;border-radius:0}
+.follow button:hover,.follow button:focus-visible{color:var(--text);background:var(--surface2)}
+.follow button svg.i{width:15px;height:15px;flex:none;transform:rotate(90deg);color:var(--faint)}
+.follow button:hover svg.i{color:var(--iris-text)}
+.follow button span{min-width:0;overflow-wrap:anywhere}
+.tmenu .tick{margin-left:auto;font-size:12px;color:var(--faint)}
+.tmenu button.on2 .tick{color:var(--iris-text)}

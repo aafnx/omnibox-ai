@@ -21,6 +21,12 @@ type Chat struct {
 	// SiteIcons shows the sources' own icons, which the browser loads from each site; off, the
 	// sources get letter badges and the panel loads nothing from outside.
 	SiteIcons bool `json:"site_icons,omitempty"`
+	// FollowUps suggests a few questions to ask next under the last answer; a chat may turn
+	// them on or off for itself.
+	FollowUps bool `json:"follow_ups,omitempty"`
+	// FollowUpModel writes the suggestions: empty is the chat's own model, otherwise an
+	// OpenRouter model (cloud:<id>) — never another local model, which would have to be started.
+	FollowUpModel string `json:"follow_up_model,omitempty"`
 }
 
 // DefaultChat keeps chats for 30 days and searches with five sources.
@@ -127,6 +133,11 @@ func (c *Chat) Validate() error {
 	}
 	if c.SearchLanguage != "" && c.SearchLanguage != "ru" && c.SearchLanguage != "en" {
 		return errors.New("Язык поиска: как в вопросе, ru или en.")
+	}
+	if c.FollowUpModel != "" {
+		if kind, _, ok := SplitKey(c.FollowUpModel); !ok || kind != "cloud" {
+			return errors.New("Модель для предложений: та же, что в чате, или модель OpenRouter.")
+		}
 	}
 	return nil
 }

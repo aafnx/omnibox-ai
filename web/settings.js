@@ -16,6 +16,10 @@ async function saveGateway(body){const d=await api('/api/gateway',body);ST.gatew
 function renderChatSettings(){const s=S.chatSettings;if(!s)return;byId('searx').value=s.search_url||'';byId('search-n').value=String(s.search_results);
   if(!['3','5','8'].includes(String(s.search_results)))byId('search-n').insertAdjacentHTML('beforeend',`<option value="${s.search_results}" selected>${s.search_results}</option>`);
   byId('search-lang').value=s.search_language||'';byId('search-default').checked=!!s.search_default;byId('site-icons').checked=!!s.site_icons;
+  // Suggestions: the chat's own model or a favourite OpenRouter one; another local model would have to be started.
+  byId('follow-on').checked=!!s.follow_ups;const fm=s.follow_up_model||'',favs=models().filter(m=>m.source==='cloud'&&m.favorite);
+  byId('follow-model').innerHTML='<option value="">Та же модель, что в чате</option>'+favs.map(m=>`<option value="${esc(m.key)}">${esc(m.name)} · OpenRouter</option>`).join('')+(fm&&!favs.some(m=>m.key===fm)?`<option value="${esc(fm)}">${esc(chatModelName(fm))} · OpenRouter</option>`:'');
+  byId('follow-model').value=fm;byId('follow-model-hint').textContent=fm?'Модель OpenRouter пишет вопросы для любого чата: видеокарта не занята, каждый раз — доли цента по цене модели.':'Та же модель, что отвечала: локальная — бесплатно, но несколько секунд занимает видеокарту; облачная — по цене её токенов. В списке — избранные модели OpenRouter.';
   byId('keep-chats').value=String(s.retention_hours);if(byId('keep-chats').value!==String(s.retention_hours))byId('keep-chats').insertAdjacentHTML('beforeend',`<option value="${s.retention_hours}" selected>${Math.round(s.retention_hours/24)} дн.</option>`);
   byId('keep-chats-hint').textContent=`Сейчас ${s.chats} ${plural(s.chats,'чат','чата','чатов')}, ${fsize(s.chats_bytes||0)}. Избранные не удаляются по сроку; новый срок действует для новых чатов.`;
   byId('search-state').textContent=s.search_url?'Задан':'Не задан';byId('search-state').className='pill';}
@@ -140,6 +144,8 @@ byId('ae-file').addEventListener('change',e=>{const f=e.target.files[0];if(!f)re
 byId('ae-save').addEventListener('click',()=>saveAsst());
 byId('ae-delete').addEventListener('click',async()=>{const b=byId('ae-delete');if(b.dataset.sure!=='1'){b.dataset.sure='1';b.textContent='Точно удалить? Нажмите ещё раз';return;}
   try{S.assistants=await api('/api/assistants',{action:'delete',id:ST.editing});hideAll();renderAssistants();}catch(e){fail(e);}});
+byId('follow-on').addEventListener('change',e=>saveChatSettings({follow_ups:e.target.checked}).then(()=>notice(e.target.checked?'Под ответами появятся вопросы для продолжения.':'Вопросы после ответов выключены.')).catch(err=>{e.target.checked=!e.target.checked;fail(err);}));
+byId('follow-model').addEventListener('change',e=>saveChatSettings({follow_up_model:e.target.value}).then(()=>notice('Модель для вопросов сохранена.')).catch(fail));
 byId('keep-chats').addEventListener('change',e=>saveChatSettings({retention_hours:Number(e.target.value)}).then(()=>notice('Срок хранения новых чатов сохранён.')).catch(fail));
 byId('keep-logs').addEventListener('change',e=>api('/api/storage',{action:'save',...KEEP_LOGS[e.target.value]}).then(u=>{ST.storage=u;renderStorage();notice('Срок хранения журналов сохранён.');}).catch(fail));
 byId('request-text').addEventListener('change',e=>api('/api/storage',{action:'save',request_log:e.target.checked?'content':'metadata'}).then(u=>{ST.storage=u;renderStorage();notice(e.target.checked?'Текст запросов клиентов теперь записывается.':'Запись текста выключена, записанный текст удалён.');}).catch(err=>{e.target.checked=!e.target.checked;fail(err);}));
