@@ -28,6 +28,8 @@ func releaseServer(t *testing.T, tag string) *httptest.Server {
 	var srv *httptest.Server
 	srv = httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case strings.HasSuffix(r.URL.Path, "/releases"):
+			io.WriteString(w, `[{"tag_name":"v0.20.0","body":"- Новое","published_at":"2026-10-01T10:00:00Z"},{"tag_name":"v0.19.0","body":"- Прежнее","published_at":"2026-09-01T10:00:00Z"},{"tag_name":"v0.18.0"}]`)
 		case strings.Contains(r.URL.Path, "/releases/"):
 			json.NewEncoder(w).Encode(map[string]any{"tag_name": tag, "assets": []map[string]string{
 				{"name": "omnibox-windows-amd64.zip", "url": srv.URL + "/zip"}, {"name": "SHA256SUMS", "url": srv.URL + "/sums"}}})
@@ -100,5 +102,24 @@ func TestAiUpdateCheckOnlyTells(t *testing.T) {
 	out.Reset()
 	if code := runUpdate([]string{"--check"}, testUpdater(t, releaseServer(t, "v0.19.0"), &installed), &out, &errOut); code != 0 || !strings.Contains(out.String(), "последняя версия 0.19.0") {
 		t.Fatalf("%d %s", code, out.String())
+	}
+}
+
+// "ai update --list" names every version and marks the installed one; an older version installs
+// as a rollback and says so.
+func TestAiUpdateListsVersionsAndRollsBack(t *testing.T) {
+	srv := releaseServer(t, "v0.18.0")
+	var installed string
+	var out, errs bytes.Buffer
+	if code := runUpdate([]string{"--list"}, testUpdater(t, srv, &installed), &out, &errs); code != 0 {
+		t.Fatalf("%d %s", code, errs.String())
+	}
+	got := out.String()
+	if !strings.Contains(got, "  0.20.0  2026-10-01  Новое") || !strings.Contains(got, "* 0.19.0") || !strings.Contains(got, "  0.18.0") || installed != "" {
+		t.Fatalf("%q", got)
+	}
+	out.Reset()
+	if code := runUpdate([]string{"0.18.0"}, testUpdater(t, srv, &installed), &out, &errs); code != 0 || installed != "new" || !strings.Contains(out.String(), "Откат с 0.19.0 на 0.18.0") {
+		t.Fatalf("%d %q %q", code, out.String(), installed)
 	}
 }

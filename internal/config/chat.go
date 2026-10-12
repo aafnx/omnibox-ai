@@ -18,13 +18,17 @@ type Chat struct {
 	SearchLanguage string `json:"search_language,omitempty"` // "", ru or en
 	// SearchDefault turns web search on in new chats.
 	SearchDefault bool `json:"search_default"`
+	// NoReadPages keeps the search to SearXNG's snippets: the pages found are not opened.
+	NoReadPages bool `json:"no_read_pages,omitempty"`
 	// SiteIcons shows the sources' own icons, which the browser loads from each site; off, the
 	// sources get letter badges and the panel loads nothing from outside.
 	SiteIcons bool `json:"site_icons,omitempty"`
 	// FollowUps suggests a few questions to ask next under the last answer; a chat may turn
 	// them on or off for itself.
 	FollowUps bool `json:"follow_ups,omitempty"`
-	// FollowUpModel writes the suggestions: empty is the chat's own model, otherwise an
+	// NoAutoTitle keeps a new chat's title from its first message: the model does not name it.
+	NoAutoTitle bool `json:"no_auto_title,omitempty"`
+	// FollowUpModel writes the suggestions and titles: empty is the chat's own model, otherwise an
 	// OpenRouter model (cloud:<id>) — never another local model, which would have to be started.
 	FollowUpModel string `json:"follow_up_model,omitempty"`
 }

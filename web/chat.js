@@ -3,8 +3,8 @@
 const C={threads:[],hits:null,chat:null,chosen:'',web:false,attached:[],busy:null,starting:false,pickerQ:'',renaming:null,follow:null};
 try{C.chosen=localStorage.getItem('omnibox-model')||'';}catch(e){}
 let efforts={};try{efforts=JSON.parse(localStorage.getItem('omnibox-effort')||'{}')||{};}catch(e){efforts={};}
-const ACT_USER='<div class="mact"><button type="button" data-act="copy" title="Копировать" aria-label="Копировать"><svg class="i"><use href="#i-copy"/></svg></button><button type="button" data-act="resend" title="Отправить ещё раз" aria-label="Отправить ещё раз"><svg class="i"><use href="#i-retry"/></svg></button><button type="button" class="del" data-act="delete" title="Удалить сообщение" aria-label="Удалить сообщение"><svg class="i"><use href="#i-trash"/></svg></button></div>';
-const ACT_BOT='<div class="mact"><button type="button" data-act="copy" title="Копировать" aria-label="Копировать"><svg class="i"><use href="#i-copy"/></svg></button><button type="button" data-act="retry" title="Ответить заново" aria-label="Ответить заново"><svg class="i"><use href="#i-retry"/></svg></button><button type="button" class="del" data-act="delete" title="Удалить сообщение" aria-label="Удалить сообщение"><svg class="i"><use href="#i-trash"/></svg></button></div>';
+const ACT_USER='<div class="mact"><button type="button" data-act="copy" title="Копировать" aria-label="Копировать"><svg class="i"><use href="#i-copy"/></svg></button><button type="button" data-act="edit" title="Изменить и отправить заново" aria-label="Изменить сообщение"><svg class="i"><use href="#i-edit"/></svg></button><button type="button" data-act="resend" title="Отправить ещё раз" aria-label="Отправить ещё раз"><svg class="i"><use href="#i-retry"/></svg></button><button type="button" class="del" data-act="delete" title="Удалить сообщение" aria-label="Удалить сообщение"><svg class="i"><use href="#i-trash"/></svg></button></div>';
+const ACT_BOT='<div class="mact"><button type="button" data-act="copy" title="Копировать" aria-label="Копировать"><svg class="i"><use href="#i-copy"/></svg></button><button type="button" class="speak" data-act="speak" title="Прочитать вслух" aria-label="Прочитать вслух" aria-pressed="false"><svg class="i"><use href="#i-audio"/></svg></button><button type="button" data-act="retry" title="Ответить заново" aria-label="Ответить заново"><svg class="i"><use href="#i-retry"/></svg></button><button type="button" class="del" data-act="delete" title="Удалить сообщение" aria-label="Удалить сообщение"><svg class="i"><use href="#i-trash"/></svg></button></div>';
 
 // ── threads ──
 const hoursLeft=t=>t.expires?(Date.parse(t.expires)-Date.now())/3600000:Infinity;
@@ -19,6 +19,9 @@ function threadRow(t){const cur=C.chat?.id===t.id;
 function threadMenu(t){const f=followOn(t);return `<button type="button" role="menuitem" data-rename="${t.id}"><svg class="i"><use href="#i-edit"/></svg>Переименовать</button>`+
   `<button type="button" role="menuitemcheckbox" aria-checked="${f}" data-follow-chat="${t.id}" class="${f?'on2':''}" title="Вопросы для продолжения под последним ответом. По умолчанию — как в «Настройки → Чат»."><svg class="i"><use href="#i-spark"/></svg>Предлагать вопросы<span class="tick">${f?'вкл':'выкл'}</span></button>`+
   `<button type="button" role="menuitem" data-pin="${t.id}" class="${t.pinned?'on':''}"><svg class="i"><use href="#i-star"/></svg>${t.pinned?'Убрать из избранного':'В избранное'}</button>`+
+  `<div class="msep"></div><button type="button" role="menuitem" data-export="md" data-chat="${t.id}"><svg class="i"><use href="#i-download"/></svg>Скачать Markdown</button>`+
+  `<button type="button" role="menuitem" data-export="json" data-chat="${t.id}"><svg class="i"><use href="#i-download"/></svg>Скачать JSON</button>`+
+  `<button type="button" role="menuitem" data-export="copy" data-chat="${t.id}"><svg class="i"><use href="#i-copy"/></svg>Копировать весь чат</button><div class="msep"></div>`+
   `<button type="button" role="menuitem" class="del" data-del-thread="${t.id}"><svg class="i"><use href="#i-trash"/></svg>Удалить</button>`;}
 // The menu is fixed to the window: the list scrolls and would cut it off.
 function openThreadMenu(btn){const t=C.threads.find(x=>x.id===btn.dataset.tmenu);const m=byId('thread-menu');if(!t)return;
@@ -51,7 +54,8 @@ function metaHTML(m){const x=m.meta||{};const parts=[esc(chatModelName(m.model))
   if(x.tokens_per_second)parts.push(`${String(x.tokens_per_second).replace('.',',')} ток/с`);
   return parts.map(p=>`<span>${p}</span>`).join('')+(x.cost_usd?`<span class="cost" title="Стоимость по данным OpenRouter">${money(x.cost_usd)}</span>`:'');}
 function traceHTML(m){const x=m.meta||{};let h='';
-  if(x.searches?.length)h+=`<details class="step"><summary><svg class="i i15"><use href="#i-globe"/></svg>Искал в интернете · ${x.searches.length} ${plural(x.searches.length,'запрос','запроса','запросов')}${x.sources?.length?` · ${x.sources.length} ${plural(x.sources.length,'источник','источника','источников')}`:''}</summary><div class="in">${x.searches.map(q=>`<span>«${esc(q)}»</span>`).join('')}</div></details>`;
+  const pages=x.pages||[];
+  if(x.searches?.length||pages.length)h+=`<details class="step"><summary><svg class="i i15"><use href="#i-globe"/></svg>${x.searches?.length?`Искал в интернете · ${x.searches.length} ${plural(x.searches.length,'запрос','запроса','запросов')}`:'Читал страницы'}${x.sources?.length?` · ${x.sources.length} ${plural(x.sources.length,'источник','источника','источников')}`:''}${pages.length?` · прочитано ${pages.length} ${plural(pages.length,'страница','страницы','страниц')}`:''}</summary><div class="in">${(x.searches||[]).map(q=>`<span>«${esc(q)}»</span>`).join('')}${pages.map(u=>`<span class="rd">Прочитано: <a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(u)||u)}</a></span>`).join('')}</div></details>`;
   return h?`<div class="trace">${h}</div>`:'';}
 function thinkHTML(m,open){if(!m.reasoning)return '';const s=m.reasoning_seconds?` · ${String(m.reasoning_seconds).replace('.',',')} с`:'';
   return `<details class="step think"${open?' open':''}><summary><svg class="i i15"><use href="#i-brain"/></svg>Размышления${s}</summary><div class="in">${esc(m.reasoning)}</div></details>`;}
@@ -66,7 +70,10 @@ function sourcesHTML(list){if(!list?.length)return '';const n=list.length,seen=n
 // A favicon that loaded covers the letter; one that failed is removed, the letter stays.
 document.addEventListener('load',e=>{const t=e.target;if(t?.tagName==='IMG'&&t.parentElement?.classList?.contains('fav'))t.parentElement.classList.add('img');},true);
 document.addEventListener('error',e=>{const t=e.target;if(t?.tagName==='IMG'&&t.parentElement?.classList?.contains('fav'))t.remove();},true);
-function botHTML(m,last){return `<div class="msg bot" data-id="${esc(m.id||'')}">${traceHTML(m)}${thinkHTML(m)}${m.text?`<div class="md">${md(m.text,m.meta?.sources)}</div>`:''}${sourcesHTML(m.meta?.sources)}${m.error?`<div class="err">${esc(m.error)}</div>`:''}<div class="botfoot">${ACT_BOT}<div class="meta">${metaHTML(m)}</div></div>${last?followHTML(m):''}</div>`;}
+// The versions of the conversation from the question before this answer: "‹ 2/3 ›".
+function versHTML(q){if(q?.role!=='user'||!q.branches?.length)return '';const n=q.branches.length+1,i=q.branch||0;
+  return `<span class="vers" role="group" aria-label="Версии ответа"><button type="button" data-branch="${esc(q.id)}" data-to="${i-1}"${i<=0?' disabled':''} aria-label="Предыдущая версия"><svg class="i"><use href="#i-down"/></svg></button><span>${i+1}/${n}</span><button type="button" data-branch="${esc(q.id)}" data-to="${i+1}"${i>=n-1?' disabled':''} aria-label="Следующая версия"><svg class="i"><use href="#i-down"/></svg></button></span>`;}
+function botHTML(m,last,q){return `<div class="msg bot" data-id="${esc(m.id||'')}">${traceHTML(m)}${thinkHTML(m)}${m.text?`<div class="md">${md(m.text,m.meta?.sources)}</div>`:''}${sourcesHTML(m.meta?.sources)}${m.error?`<div class="err">${esc(m.error)}</div>`:''}<div class="botfoot"><div class="bl">${versHTML(q)}${ACT_BOT}</div><div class="meta">${metaHTML(m)}</div></div>${last?followHTML(m):''}</div>`;}
 // ── suggested questions ("Продолжить") under the last answer ──
 // On for a chat by its own choice, else by the setting. They are asked for after the answer as a
 // separate request, which a new message or leaving the chat cancels: the model is never kept busy
@@ -74,7 +81,14 @@ function botHTML(m,last){return `<div class="msg bot" data-id="${esc(m.id||'')}"
 const followOn=c=>c?.follow_ups??!!S.chatSettings?.follow_ups;
 function followHTML(m){const q=m.meta?.follow_ups;if(!q?.length)return '';
   return `<div class="follow"><span class="fh">Продолжить</span>${q.map(x=>`<button type="button" data-follow="${esc(x)}"><svg class="i"><use href="#i-up"/></svg><span>${esc(x)}</span></button>`).join('')}</div>`;}
-function stopFollowUps(){if(C.follow){C.follow.ctrl.abort();C.follow=null;}$$('.follow.wait').forEach(el=>el.remove());}
+function stopFollowUps(){if(C.follow){C.follow.ctrl.abort();C.follow=null;}if(C.titling){C.titling.abort();C.titling=null;}$$('.follow.wait').forEach(el=>el.remove());}
+// The model names a new chat after its first answer, unless the owner named it or turned it off.
+function titleWanted(){const c=C.chat;return !!c&&S.chatSettings?.auto_title!==false&&!c.title_set&&!c.title_auto&&(c.messages||[]).filter(m=>m.role==='assistant'&&m.text&&!m.error).length===1;}
+async function requestTitle(chatId){const ctrl=new AbortController();C.titling=ctrl;
+  try{const r=await fetch('/api/chat/title',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:JSON.stringify({chat_id:chatId}),signal:ctrl.signal});
+    if(!r.ok)return;const s=await r.json();const i=C.threads.findIndex(t=>t.id===s.id);if(i>=0)C.threads[i]=s;
+    if(C.chat?.id===chatId){C.chat.title=s.title;C.chat.title_auto=true;}renderThreads();}
+  catch(e){}finally{if(C.titling===ctrl)C.titling=null;}}
 async function requestFollowUps(chatId,msgId){stopFollowUps();const ctrl=new AbortController();C.follow={ctrl,chat:chatId,msg:msgId};
   const el=()=>C.chat?.id===chatId?byId('message-list').querySelector(`.msg.bot[data-id="${msgId}"]`):null;
   el()?.insertAdjacentHTML('beforeend','<div class="follow wait"><span class="fh">Подбираю вопросы…</span></div>');
@@ -93,8 +107,8 @@ async function requestFollowUps(chatId,msgId){stopFollowUps();const ctrl=new Abo
 function followTarget(){const msgs=C.chat?.messages||[],m=msgs[msgs.length-1];return followOn(C.chat)&&m?.role==='assistant'&&m.id&&m.text&&!m.error&&!m.meta?.follow_ups?.length?m:null;}
 function renderChat(){const box=byId('message-list');const c=C.chat;
   if(!c||!c.messages?.length){setHTML(box,`<div class="empty"><b>${c?esc(c.title):'Новый чат'}</b><span>Спросите что-нибудь. Можно приложить файлы и включить поиск в интернете.</span></div>`);}
-  else setHTML(box,c.messages.map((m,i)=>m.role==='user'?userHTML(m):botHTML(m,i===c.messages.length-1&&followOn(c))).join(''));
-  showChatCost();renderKeep();scrollDown(true);}
+  else setHTML(box,c.messages.map((m,i)=>m.role==='user'?userHTML(m):botHTML(m,i===c.messages.length-1&&followOn(c),c.messages[i-1])).join(''));
+  enhance(box,true);showChatCost();renderKeep();scrollDown(true);}
 function scrollDown(force){const el=byId('messages');if(force||el.scrollHeight-el.scrollTop-el.clientHeight<160)el.scrollTop=el.scrollHeight;}
 function showChatCost(){const c=byId('chat-cost');const paid=(C.chat?.messages||[]).filter(m=>m.meta?.cost_usd>0);c.hidden=!paid.length;if(!paid.length)return;
   const sum=paid.reduce((s,m)=>s+m.meta.cost_usd,0);c.innerHTML=`${money(sum)}<span class="lbl"> за чат</span>`;
@@ -218,10 +232,10 @@ function recheckAttached(){const m=curModel();if(!m)return;const drop=C.attached
 const readB64=f=>new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result).replace(/^data:[^,]*,/,''));r.onerror=()=>reject(new Error(`«${f.name}» не прочитан.`));r.readAsDataURL(f);});
 
 // ── sending: the answer streams as server-sent events ──
-async function send(opts={}){if(C.busy)return;stopFollowUps();const m=curModel();
+async function send(opts={}){if(C.busy)return;stopFollowUps();if(rec)rec.stop();const m=curModel();
   if(!m){notice('Выберите модель в списке над чатом.',true);byId('picker-btn').click();return;}
   if(C.starting){notice('Модель ещё запускается — подождите несколько секунд.');return;}
-  const text=opts.retry?'':(opts.text??byId('prompt').value).trim();const files=opts.retry||opts.text!==undefined?[]:C.attached;
+  const text=opts.retry?'':(opts.text??byId('prompt').value).trim();const files=opts.retry||opts.text!==undefined?[]:C.attached;const again=opts.retry||opts.edit;
   if(!text&&!files.length&&!opts.retry)return;
   if(m.source==='local'&&!m.running){await startLocal(m);if(!modelByKey(m.key)?.running)return;}
   if(!C.chat){C.chat=await api('/api/chats',{action:'create',model:m.key,assistant_id:chatAsst()||''});C.chat.messages=[];C.threads.unshift(C.chat);renderThreads();}
@@ -229,34 +243,36 @@ async function send(opts={}){if(C.busy)return;stopFollowUps();const m=curModel()
   let data;try{data=await Promise.all(files.map(async a=>({name:a.name,data:await readB64(a.file)})));}catch(e){fail(e);return;}
   if(C.chat?.id!==chat.id)return;
   const box=byId('message-list');if(!C.chat.messages.length)box.innerHTML='';box.querySelectorAll('.follow').forEach(el=>el.remove());
-  if(!opts.retry){box.insertAdjacentHTML('beforeend',userHTML({text,attachments:files.map(a=>({name:a.name,kind:a.kind,size:a.size}))}));if(opts.text===undefined){byId('prompt').value='';C.attached=[];renderAttached();byId('attach-warn').hidden=true;}}
+  if(!again){box.insertAdjacentHTML('beforeend',userHTML({text,attachments:files.map(a=>({name:a.name,kind:a.kind,size:a.size}))}));if(opts.text===undefined){byId('prompt').value='';C.attached=[];renderAttached();byId('attach-warn').hidden=true;}}
   box.insertAdjacentHTML('beforeend','<div class="msg bot live"><div class="trace"></div><details class="step think" hidden><summary><svg class="i i15"><use href="#i-brain"/></svg><span>Размышляет…</span></summary><div class="in"></div></details><div class="md caret"></div><div class="sources-slot"></div><div class="status-line" hidden></div></div>');
   const live=box.lastElementChild;scrollDown(true);
   const ctrl=new AbortController();C.busy=ctrl;renderSend();
-  const body={chat_id:chat.id,model:m.key,text,files:data,web:!!(C.web&&S.chatSettings?.search_url),effort:C.effort||'',assistant_id:chatAsst()||''};if(opts.retry)body.retry=opts.retry;
+  const body={chat_id:chat.id,model:m.key,text,files:data,web:!!(C.web&&S.chatSettings?.search_url),effort:C.effort||'',assistant_id:chatAsst()||''};if(opts.retry)body.retry=opts.retry;if(opts.edit)body.edit=opts.edit;
   let answer='',thinking='',sources=[],done=null,userMessage=null;
   try{const r=await fetch('/api/chat/send',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:JSON.stringify(body),signal:ctrl.signal});
     if(!r.ok){let msg=`Ошибка ${r.status}`;try{msg=(await r.json()).error||msg;}catch(e){}if(r.status===401)showLogin();throw new Error(msg);}
     const reader=r.body.getReader(),dec=new TextDecoder();let buf='',pending=0;
-    const paintAnswer=()=>{pending=0;live.querySelector('.md').innerHTML=md(answer,sources);if(C.chat?.id===chat.id)scrollDown();};
+    const paintAnswer=()=>{pending=0;const el=live.querySelector('.md');el.innerHTML=md(answer,sources);enhance(el,false);if(C.chat?.id===chat.id)scrollDown();};
     for(;;){const {value,done:end}=await reader.read();if(end)break;buf+=dec.decode(value,{stream:true});let i;
       while((i=buf.indexOf('\n\n'))>=0){const block=buf.slice(0,i);buf=buf.slice(i+2);let ev='',dt='';block.split('\n').forEach(l=>{if(l.startsWith('event: '))ev=l.slice(7);else if(l.startsWith('data: '))dt+=l.slice(6);});
         let v;try{v=JSON.parse(dt);}catch(e){continue;}
-        if(ev==='user'){userMessage=v;const u=box.querySelector('.msg.user:not([data-id]),.msg.user[data-id=""]');if(u&&!opts.retry)u.dataset.id=v.id;}
+        if(ev==='user'){userMessage=v;const u=box.querySelector('.msg.user:not([data-id]),.msg.user[data-id=""]');if(u&&!again)u.dataset.id=v.id;}
         else if(ev==='delta'){answer+=v.t;if(!pending)pending=requestAnimationFrame(paintAnswer);}
         else if(ev==='reasoning'){thinking+=v.t;const d=live.querySelector('details.think');d.hidden=false;d.querySelector('.in').textContent=thinking;}
         else if(ev==='search'){live.querySelector('.trace').insertAdjacentHTML('beforeend',`<span class="status-line"><svg class="i i15"><use href="#i-globe"/></svg>Ищу: «${esc(v.query)}»</span>`);scrollDown();}
+        else if(ev==='read'){live.querySelector('.trace').insertAdjacentHTML('beforeend',`<span class="status-line"><svg class="i i15"><use href="#i-file"/></svg>Читаю: ${esc(hostOf(v.url)||v.url)}</span>`);scrollDown();}
         else if(ev==='sources'){sources=v||[];}
         else if(ev==='status'){const s=live.querySelector('.status-line:last-child');s.hidden=false;s.textContent=v.text;}
         else if(ev==='done'){done=v;}}}
   }catch(e){if(e.name!=='AbortError'){live.querySelector('.md').classList.remove('caret');live.insertAdjacentHTML('beforeend',`<div class="err">${esc(e.message)}</div>`);}}
   finally{C.busy=null;renderSend();}
   if(done?.message){const msg=done.message,target=C.chat?.id===chat.id?C.chat:chat;target.messages=target.messages||[];
-    if(opts.retry){const i=target.messages.findIndex(x=>x.id===opts.retry);if(i>=0)target.messages=target.messages.slice(0,i+1);}
+    // Answered again or edited: the question now carries the earlier versions, as stored.
+    if(again){const i=target.messages.findIndex(x=>x.id===again);const u=userMessage||target.messages[i];target.messages=(i>=0?target.messages.slice(0,i):target.messages).concat(u?[u]:[]);}
     else if((text||files.length)&&!target.messages.some(x=>userMessage?.id&&x.id===userMessage.id)){target.messages.push(userMessage||{role:'user',text,attachments:files.map(a=>({name:a.name,kind:a.kind,size:a.size}))});}
     if(!target.messages.some(x=>x.id===msg.id))target.messages.push(msg);
     if(done.chat){const i=C.threads.findIndex(t=>t.id===done.chat.id);if(i>=0)C.threads[i]=done.chat;else C.threads.unshift(done.chat);target.title=done.chat.title;}
-    renderThreads();if(C.chat?.id===chat.id){renderChat();showChatCost();renderFoot();const f=followTarget();if(f)requestFollowUps(chat.id,f.id);}if(msg.meta?.cost_usd)refreshAccount();
+    renderThreads();if(C.chat?.id===chat.id){renderChat();showChatCost();renderFoot();const f=followTarget();if(f)requestFollowUps(chat.id,f.id);if(titleWanted())requestTitle(chat.id);}if(msg.meta?.cost_usd)refreshAccount();
   }else if(C.chat?.id===chat.id){setTimeout(()=>{if(C.chat?.id===chat.id)openChat(chat.id).catch(()=>{});},400);}
   if(C.chat?.id===chat.id)scrollDown();}
 function renderSend(){const b=byId('send');b.classList.toggle('stop',!!C.busy);b.setAttribute('aria-label',C.busy?'Остановить ответ':'Отправить');b.title=C.busy?'Остановить ответ':'';
@@ -264,10 +280,12 @@ function renderSend(){const b=byId('send');b.classList.toggle('stop',!!C.busy);b
 
 // ── message actions ──
 async function messageAction(act,el){const msg=el.closest('.msg');const id=msg.dataset.id;const stored=(C.chat?.messages||[]).find(m=>m.id===id);
+  if(act==='speak'){speak(stored?.text??msg.querySelector('.md')?.textContent??'',el);return;}
   if(act==='copy'){await copyText(stored?.text??msg.innerText);el.title='Скопировано';return;}
   if(act==='delete'){if(!id||!C.chat)return msg.remove();const s=await api('/api/chats',{action:'delete-message',id:C.chat.id,message_id:id});C.chat.messages=C.chat.messages.filter(m=>m.id!==id);msg.remove();
     const i=C.threads.findIndex(t=>t.id===s.id);if(i>=0)C.threads[i]=s;showChatCost();return;}
   if(act==='resend'){send({text:stored?.text||msg.querySelector('.bubble')?.textContent||''});return;}
+  if(act==='edit'){if(C.busy||!id)return;startEdit(msg,stored?.text??msg.querySelector('.bubble')?.textContent??'');return;}
   if(act==='retry'){const all=C.chat?.messages||[];const i=all.findIndex(m=>m.id===id);const user=[...all.slice(0,i)].reverse().find(m=>m.role==='user');if(!user)return;
     C.chat.messages=all.slice(0,all.indexOf(user)+1);let n=msg;while(n){const next=n.nextElementSibling;n.remove();n=next;}send({retry:user.id});}}
 
@@ -276,6 +294,54 @@ async function toggleChatFollow(id){const t=C.threads.find(x=>x.id===id);if(!t)r
   const s=await api('/api/chats',{action:'follow-ups',id,mode:next===glob?'auto':next?'on':'off'});const i=C.threads.findIndex(x=>x.id===id);if(i>=0)C.threads[i]=s;
   notice(next?'В этом чате под ответами будут вопросы для продолжения.':'В этом чате вопросы после ответов выключены.');
   if(C.chat?.id===id){C.chat.follow_ups=s.follow_ups;if(!next){stopFollowUps();renderChat();}else{const f=followTarget();if(f)requestFollowUps(id,f.id);}}}
+
+// ── editing a question: the earlier version stays, switchable under the answer ──
+function startEdit(msg,text){if(msg.querySelector('.editbox'))return;msg.classList.add('editing');
+  msg.insertAdjacentHTML('beforeend',`<div class="editbox"><textarea class="edit-ta" rows="3" aria-label="Изменённое сообщение">${esc(text)}</textarea><div class="ebtns"><button type="button" class="btn ghost sm" data-edit-cancel>Отмена</button><button type="button" class="btn primary sm" data-edit-send>Отправить</button></div></div>`);
+  const ta=msg.querySelector('.edit-ta');ta?.focus?.();}
+function endEdit(msg){msg.querySelector('.editbox')?.remove();msg.classList.remove('editing');}
+function sendEdit(msg){const id=msg.dataset.id,text=(msg.querySelector('.edit-ta')?.value||'').trim();if(!text||!id||C.busy)return;
+  const all=C.chat?.messages||[],i=all.findIndex(m=>m.id===id);if(i<0)return;
+  endEdit(msg);msg.querySelector('.bubble').textContent=text;let n=msg.nextElementSibling;while(n){const next=n.nextElementSibling;n.remove();n=next;}
+  C.chat.messages=all.slice(0,i+1);return send({edit:id,text}).catch(fail);}
+async function switchBranch(btn){if(C.busy||!C.chat)return;stopFollowUps();
+  C.chat=await api('/api/chats',{action:'branch',id:C.chat.id,message_id:btn.dataset.branch,index:+btn.dataset.to});renderChat();showChatCost();}
+
+// ── voice: dictation and reading aloud, both by the browser ──
+// Recognition is the browser's own: Chrome and Edge send the sound to Google's or Microsoft's
+// service, Safari recognizes on the device when it can. Reading aloud uses the system's voices.
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
+function renderMic(){const b=byId('mic-btn');b.hidden=!SR;b.setAttribute('aria-pressed',String(!!rec));b.classList.toggle('rec',!!rec);
+  b.title=rec?'Слушаю… нажмите, чтобы закончить':'Голосовой ввод: распознаёт браузер (Chrome и Edge — через облачный сервис Google или Microsoft)';}
+function toggleMic(){if(rec){rec.stop();return;}if(!SR)return;const ta=byId('prompt'),base=ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value;
+  rec=new SR();rec.lang='ru-RU';rec.interimResults=true;rec.continuous=true;
+  rec.onresult=e=>{let t='';for(const r of e.results)t+=r[0].transcript;ta.value=base+t;};
+  rec.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed')notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);else if(e.error!=='no-speech'&&e.error!=='aborted')notice('Голосовой ввод прервался.',true);};
+  rec.onend=()=>{rec=null;renderMic();byId('prompt').focus();};
+  try{rec.start();}catch(e){rec=null;}renderMic();}
+// Text to read: Markdown marks, links and citation numbers out; code is named, not spelled.
+function speechText(t){return String(t).replace(/```[\s\S]*?(```|$)/g,' (фрагмент кода) ').replace(/`([^`]*)`/g,'$1').replace(/!?\[([^\]]*)\]\([^)]*\)/g,'$1').replace(/\[\d{1,2}\]/g,'')
+  .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm,'').replace(/[*_~|]/g,'').replace(/\$\$?/g,'').replace(/\n{2,}/g,'\n').trim();}
+let speaking=null;
+function speak(text,btn){const syn=window.speechSynthesis;if(!syn){notice('Этот браузер не умеет читать вслух.',true);return;}
+  const was=speaking;syn.cancel();if(was){was.setAttribute('aria-pressed','false');speaking=null;if(was===btn)return;}
+  const u=new SpeechSynthesisUtterance(speechText(text));u.lang='ru-RU';const v=syn.getVoices().find(x=>/^ru/i.test(x.lang));if(v)u.voice=v;
+  u.onend=u.onerror=()=>{if(speaking===btn){btn.setAttribute('aria-pressed','false');speaking=null;}};speaking=btn;btn.setAttribute('aria-pressed','true');syn.speak(u);}
+
+// ── export: the chat as Markdown or JSON, made in the browser ──
+const roleName=m=>m.role==='user'?'Вы':`Модель · ${chatModelName(m.model)}`;
+function chatMarkdown(c){const date=d=>d?new Date(d).toLocaleString('ru-RU',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+  let s=`# ${c.title}\n\n_Экспорт из OmniBox AI · ${date(new Date())}_\n`;
+  for(const m of c.messages||[]){s+=`\n## ${roleName(m)}\n\n${(m.text||'').trim()}\n`;
+    if(m.attachments?.length)s+=`\n_Файлы: ${m.attachments.map(a=>a.name).join(', ')}_\n`;
+    if(m.error)s+=`\n_Ошибка: ${m.error}_\n`;
+    const src=m.meta?.sources||[];if(src.length)s+='\nИсточники:\n'+src.map((x,i)=>`${i+1}. [${(x.title||x.url).replace(/[\[\]]/g,'')}](${x.url})`).join('\n')+'\n';}
+  return s;}
+function fileName(c,ext){return `${(c.title||'chat').replace(/[\\/:*?"<>|\u0000-\u001f]+/g,' ').replace(/\s+/g,' ').trim().slice(0,60)||'chat'} ${String(c.created||new Date().toISOString()).slice(0,10)}.${ext}`;}
+function download(name,type,text){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.append(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000);}
+async function exportChat(id,kind){const c=C.chat?.id===id?C.chat:await api('/api/chats?id='+encodeURIComponent(id));
+  if(kind==='copy'){await copyText(chatMarkdown(c));notice('Чат скопирован как Markdown.');return;}
+  if(kind==='json')download(fileName(c,'json'),'application/json',JSON.stringify(c,null,2));else download(fileName(c,'md'),'text/markdown;charset=utf-8',chatMarkdown(c));}
 
 // ── deleting chats ──
 function askDelAll(step){const pins=C.threads.filter(t=>t.pinned).length,rest=C.threads.length-pins;byId('del-all').hidden=false;
@@ -295,6 +361,10 @@ function promptKey(e){if(e.key!=='Enter'||e.isComposing)return;
   if(!e.shiftKey&&!e.altKey&&!touchOnly()){e.preventDefault();byId('composer').requestSubmit();}}
 byId('prompt').addEventListener('keydown',promptKey);
 byId('prompt').addEventListener('input',()=>{if(curModel()?.source==='cloud')renderFoot();});
+// In the edit box Enter sends and Escape cancels, as in the composer.
+byId('message-list').addEventListener('keydown',e=>{if(!e.target.classList?.contains('edit-ta'))return;const msg=e.target.closest('.msg');
+  if(e.key==='Escape'){e.preventDefault();endEdit(msg);return;}
+  if(e.key==='Enter'&&!e.isComposing){if(e.ctrlKey||e.metaKey){e.preventDefault();newLine(e.target);}else if(!e.shiftKey&&!touchOnly()){e.preventDefault();sendEdit(msg);}}});
 byId('thread-list').addEventListener('keydown',e=>{if(e.target.id!=='thread-rename')return;if(e.key==='Enter'){e.preventDefault();commitRename(true);}else if(e.key==='Escape'){e.preventDefault();e.stopPropagation();commitRename(false);}});
 byId('thread-list').addEventListener('focusout',e=>{if(e.target.id==='thread-rename')commitRename(true);});
 byId('thread-list').addEventListener('dblclick',e=>{const a=e.target.closest('[data-thread]');if(a&&!C.hits){e.preventDefault();startRename(a.dataset.thread);}});
@@ -322,6 +392,8 @@ document.addEventListener('click',e=>{
   if(!e.target.closest('#thread-menu')&&!e.target.closest('[data-tmenu]'))closeThreadMenu();
   const tm=e.target.closest('[data-tmenu]');if(tm){openThreadMenu(tm);return;}
   const rn=e.target.closest('[data-rename]');if(rn){startRename(rn.dataset.rename);return;}
+  const ex=e.target.closest('[data-export]');if(ex){closeThreadMenu();exportChat(ex.dataset.chat,ex.dataset.export).catch(fail);return;}
+  if(e.target.closest('#mic-btn')){toggleMic();return;}
   const fc=e.target.closest('[data-follow-chat]');if(fc){closeThreadMenu();toggleChatFollow(fc.dataset.followChat).catch(fail);return;}
   const fq=e.target.closest('[data-follow]');if(fq){if(!C.busy)send({text:fq.dataset.follow}).catch(fail);return;}
   if(e.target.closest('#think-btn')){byId('think-pop').hidden=!byId('think-pop').hidden;return;}
@@ -333,6 +405,9 @@ document.addEventListener('click',e=>{
   const pm=e.target.closest('[data-pick-model]');if(pm){byId('picker-menu').hidden=true;setChosen(pm.dataset.pickModel);return;}
   const gb2=e.target.closest('[data-grp]');if(gb2&&(gb2.dataset.grp[0]==='t'||gb2.dataset.grp[0]==='p')){toggleGroup(gb2.dataset.grp);gb2.dataset.grp[0]==='t'?renderThreads():renderPicker();return;}
   const act=e.target.closest('[data-act]');if(act){messageAction(act.dataset.act,act).catch(fail);return;}
+  const es=e.target.closest('[data-edit-send]');if(es){sendEdit(es.closest('.msg'));return;}
+  const ec=e.target.closest('[data-edit-cancel]');if(ec){endEdit(ec.closest('.msg'));return;}
+  const br=e.target.closest('[data-branch]');if(br){switchBranch(br).catch(fail);return;}
   if(e.target.closest('#threads-btn')){$('.threads').classList.add('open');return;}
   if(e.target.closest('[data-close-threads]')){$('.threads').classList.remove('open');return;}
   const ta=e.target.closest('[data-thread]');if(ta){e.preventDefault();$('.threads').classList.remove('open');openChat(ta.dataset.thread).catch(fail);return;}
@@ -345,6 +420,7 @@ document.addEventListener('click',e=>{
 });
 on('library',()=>{if(S.page==='chat'){renderPicker();renderThink();renderWeb();renderFoot();}});
 on('status',()=>{if(S.page==='chat')renderCtxMeter();});
+renderMic();
 PAGES.chat={show(again){if(!C.chosen||!modelByKey(C.chosen)){const r=runningModel()||models().find(m=>m.favorite)||models()[0];if(r)C.chosen=r.key;}
   if(again){refreshLibrary().catch(()=>{});}
   loadThreads().then(()=>{if(!C.chat)C.web=webDefault(chatAsst());renderAll();}).catch(fail);renderAll();}};

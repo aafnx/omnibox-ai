@@ -119,6 +119,14 @@ func TestStaticFilesAndSecurityHeaders(t *testing.T) {
 	if csp := call(icons, "GET", "/", "", nil).Header().Get("Content-Security-Policy"); !strings.Contains(csp, "img-src 'self' data: https:;") || !strings.Contains(csp, "script-src 'self';") {
 		t.Fatalf("site icons: %q", csp)
 	}
+	// The libraries of answers are served, compressed for browsers that take gzip.
+	lib := call(s, "GET", "/vendor/mermaid.min.js", "", func(r *http.Request) { r.Header.Set("Accept-Encoding", "gzip, br") })
+	if lib.Code != 200 || lib.Header().Get("Content-Encoding") != "gzip" || lib.Body.Len() > 1<<20 || !strings.Contains(lib.Header().Get("Vary"), "Accept-Encoding") {
+		t.Fatalf("mermaid: %d %q %d", lib.Code, lib.Header().Get("Content-Encoding"), lib.Body.Len())
+	}
+	if plain := call(s, "GET", "/vendor/katex.min.js", "", nil); plain.Code != 200 || plain.Header().Get("Content-Encoding") != "" || !strings.Contains(plain.Body.String(), "katex") {
+		t.Fatalf("katex without gzip: %d", plain.Code)
+	}
 	font := call(s, "GET", "/inter-400.woff", "", nil)
 	if font.Code != 200 || !strings.HasPrefix(font.Body.String(), "wOFF") {
 		t.Fatalf("font not decoded: %d %q", font.Code, font.Body.String()[:4])

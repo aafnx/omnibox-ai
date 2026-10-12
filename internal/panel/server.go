@@ -2,6 +2,7 @@ package panel
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
@@ -107,6 +108,24 @@ type asset struct {
 	// immutable assets (fonts, images) may be kept by the browser; the page, script and styles
 	// are always revalidated, so an update reaches the browser at once.
 	immutable bool
+	// compress: a large script goes gzipped to browsers that take it — a phone over WireGuard
+	// gets a quarter of the diagrams library. It is compressed on the first request only.
+	compress bool
+}
+
+// gzipped holds compressed embedded files by ETag; they never change while the program runs.
+var gzipped sync.Map
+
+func (a asset) gzip() []byte {
+	if v, ok := gzipped.Load(a.etag); ok {
+		return v.([]byte)
+	}
+	var buf bytes.Buffer
+	z, _ := gzip.NewWriterLevel(&buf, gzip.BestCompression)
+	_, _ = z.Write(a.body)
+	_ = z.Close()
+	v, _ := gzipped.LoadOrStore(a.etag, buf.Bytes())
+	return v.([]byte)
 }
 
 // Server is the panel HTTP handler.
@@ -150,6 +169,12 @@ func New(opt Options) (*Server, error) {
 		// Tab icons: browsers that skip SVG icons take the PNG; /favicon.ico is asked for anyway.
 		"/favicon-32.png": {"favicon-32.png", "image/png"},
 		"/favicon.ico":    {"favicon-32.png", "image/png"},
+		// Formulas, code highlighting and diagrams in chat answers: loaded only when an answer
+		// has them. Unchanged builds; versions and licenses are in vendor/LICENSES.txt.
+		"/vendor/katex.min.js":     {"vendor/katex.min.js", "text/javascript; charset=utf-8"},
+		"/vendor/highlight.min.js": {"vendor/highlight.min.js", "text/javascript; charset=utf-8"},
+		"/vendor/mermaid.min.js":   {"vendor/mermaid.min.js", "text/javascript; charset=utf-8"},
+		"/vendor/LICENSES.txt":     {"vendor/LICENSES.txt", "text/plain; charset=utf-8"},
 	}
 	s.assets = map[string]asset{}
 	for route, f := range files {
@@ -163,8 +188,10 @@ func New(opt Options) (*Server, error) {
 			}
 		}
 		sum := sha256.Sum256(body)
-		s.assets[route] = asset{body: body, contentType: f[1], etag: `"` + hex.EncodeToString(sum[:8]) + `"`,
+		a := asset{body: body, contentType: f[1], etag: `"` + hex.EncodeToString(sum[:8]) + `"`,
 			immutable: f[1] == "font/woff" || f[1] == "image/svg+xml" || f[1] == "image/png"}
+		a.compress = len(body) > 64<<10 && strings.HasPrefix(f[1], "text/")
+		s.assets[route] = a
 	}
 	s.loadSessions()
 	return s, nil
@@ -576,6 +603,15 @@ func (s *Server) static(w http.ResponseWriter, r *http.Request, a asset) {
 		return
 	}
 	s.headers(h, a.contentType, cache)
+	if a.compress {
+		h.Add("Vary", "Accept-Encoding")
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			h.Set("Content-Encoding", "gzip")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write(a.gzip())
+			return
+		}
+	}
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(a.body)
 }

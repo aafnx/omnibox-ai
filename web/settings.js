@@ -6,7 +6,7 @@ const ST={gateway:null,storage:null,update:null,editing:null,emoji:'',wipe:''};
 function renderGateway(){const g=ST.gateway;if(!g)return;const base=g.base_url||`${location.protocol}//${location.host}/v1`;
   byId('base').value=base;byId('api-state').textContent=g.enabled?'API включён':'API выключен';byId('api-state').className='pill'+(g.enabled?' ok':'');
   const run=runningModel();byId('base-hint').innerHTML=run?`Имя модели — <span class="mono">${esc(run.alias||run.id)}</span>.${S.cloud?.expose_api?' Избранные модели OpenRouter — по их id.':''}`:'Имя модели появится, когда модель запущена; его можно изменить в карточке модели.';
-  byId('require-key').checked=!!g.require_key;byId('nokey-warn').hidden=!!g.require_key;
+  byId('require-key').checked=!!g.require_key;byId('inject-date').checked=!!g.inject_date;byId('nokey-warn').hidden=!!g.require_key;
   setHTML(byId('keys'),(g.keys||[]).map(k=>`<tr><td>${esc(k.name)}</td><td>${k.created?dateShort(k.created):'—'}</td><td>${k.last_used?new Date(k.last_used).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td><td class="num">${fmtN(k.requests||0)}</td><td class="num"><button class="btn ghost sm danger-text" type="button" data-revoke="${esc(k.id)}" data-name="${esc(k.name)}">Отозвать</button></td></tr>`).join('')||'<tr><td colspan="5" class="muted">Ключей нет.</td></tr>');
   byId('queue-depth').value=g.queue_depth;byId('queue-timeout').value=g.queue_timeout_seconds;byId('public-url').value=g.base_url||'';byId('public-origin').value=g.public_origin||'';byId('trusted').value=(g.trusted_proxies||[]).join(', ');}
 async function saveGateway(body){const d=await api('/api/gateway',body);ST.gateway=d.gateway;renderGateway();
@@ -15,9 +15,9 @@ async function saveGateway(body){const d=await api('/api/gateway',body);ST.gatew
 // ── web search and chat data ──
 function renderChatSettings(){const s=S.chatSettings;if(!s)return;byId('searx').value=s.search_url||'';byId('search-n').value=String(s.search_results);
   if(!['3','5','8'].includes(String(s.search_results)))byId('search-n').insertAdjacentHTML('beforeend',`<option value="${s.search_results}" selected>${s.search_results}</option>`);
-  byId('search-lang').value=s.search_language||'';byId('search-default').checked=!!s.search_default;byId('site-icons').checked=!!s.site_icons;
+  byId('search-lang').value=s.search_language||'';byId('search-default').checked=!!s.search_default;byId('site-icons').checked=!!s.site_icons;byId('read-pages').checked=s.read_pages!==false;
   // Suggestions: the chat's own model or a favourite OpenRouter one; another local model would have to be started.
-  byId('follow-on').checked=!!s.follow_ups;const fm=s.follow_up_model||'',favs=models().filter(m=>m.source==='cloud'&&m.favorite);
+  byId('follow-on').checked=!!s.follow_ups;byId('auto-title').checked=s.auto_title!==false;const fm=s.follow_up_model||'',favs=models().filter(m=>m.source==='cloud'&&m.favorite);
   byId('follow-model').innerHTML='<option value="">Та же модель, что в чате</option>'+favs.map(m=>`<option value="${esc(m.key)}">${esc(m.name)} · OpenRouter</option>`).join('')+(fm&&!favs.some(m=>m.key===fm)?`<option value="${esc(fm)}">${esc(chatModelName(fm))} · OpenRouter</option>`:'');
   byId('follow-model').value=fm;byId('follow-model-hint').textContent=fm?'Модель OpenRouter пишет вопросы для любого чата: видеокарта не занята, каждый раз — доли цента по цене модели.':'Та же модель, что отвечала: локальная — бесплатно, но несколько секунд занимает видеокарту; облачная — по цене её токенов. В списке — избранные модели OpenRouter.';
   byId('keep-chats').value=String(s.retention_hours);if(byId('keep-chats').value!==String(s.retention_hours))byId('keep-chats').insertAdjacentHTML('beforeend',`<option value="${s.retention_hours}" selected>${Math.round(s.retention_hours/24)} дн.</option>`);
@@ -113,6 +113,19 @@ async function checkUpdate(){byId('update-title').textContent='Спрашива�
     byId('update-title').textContent=r.newer?`Доступна версия ${r.latest}`:`Установлена последняя версия ${r.current}`;byId('update-sub').textContent=r.newer?(r.notes||'').split('\n').find(l=>l.trim())||`Опубликована ${r.published?new Date(r.published).toLocaleDateString('ru-RU'):''}`:'';
     byId('update-install').hidden=!r.newer;byId('update-install').dataset.version=r.latest||'';byId('update-install').textContent=`Обновить до ${r.latest}`;}
   catch(e){byId('update-title').textContent='Проверка не удалась';byId('update-sub').textContent=e.message;}}
+// ── other versions: the list is asked from GitHub only when the owner opens it ──
+async function loadVersions(){setHTML(byId('versions'),'<span class="small muted">Спрашиваем GitHub…</span>');
+  try{ST.versions=await api('/api/update',{action:'list'});renderVersions();}catch(e){setHTML(byId('versions'),`<span class="small danger-text">${esc(e.message)}</span> <button class="btn sm" type="button" id="versions-retry" data-versions-retry>Повторить</button>`);throw e;}}
+function versionRow(r){const kind=r.current?'<span class="pill ok">Установлена</span>':r.newer?'<span class="pill iris">Новее</span>':'<span class="pill">Старше</span>';
+  return `<div class="vrow"><div class="vt"><b>${esc(r.version)}</b>${kind}${r.prerelease?'<span class="pill warn">Предварительная</span>':''}<span class="small faint">${r.published?dateShort(r.published)+' '+new Date(r.published).getFullYear():''}</span></div>`+
+    `<span class="small muted">${esc(r.summary||'')}</span>${r.current?'':`<button class="btn sm${r.newer?' primary':''}" type="button" data-install-version="${esc(r.version)}">${r.newer?'Обновить':'Откатить'}</button>`}</div>`;}
+function renderVersions(){const v=ST.versions;if(!v)return;setHTML(byId('versions'),(v.releases||[]).map(versionRow).join('')||'<span class="small muted">Выпусков нет.</span>');}
+// Installing another version asks first: it restarts the panel, and a rollback drops what is newer.
+async function installVersion(version){const cur=S.status?.version||ST.update?.current||'',older=cur&&newerThan(cur,version);
+  const ok=await confirmDialog({title:older?`Откатить на ${version}?`:`Установить ${version}?`,yes:older?'Откатить':'Установить',
+    text:older?`Сейчас установлена ${cur}. Настройки, пароль, ключи, чаты и модели останутся; возможности, которых нет в ${version}, пропадут. Панель перезапустится примерно через минуту. Если установка не пройдёт, вернётся ${cur}.`:`Панель перезапустится примерно через минуту. Если установка не пройдёт, вернётся ${cur||'текущая версия'}.`});
+  if(ok)await operation({action:'self-update',version});}
+const newerThan=(a,b)=>{const x=a.split('.').map(Number),y=b.split('.').map(Number);for(let i=0;i<3;i++)if((x[i]||0)!==(y[i]||0))return (x[i]||0)>(y[i]||0);return false;};
 function renderEngineManager(list){setHTML(byId('engine-manager'),(list||[]).map(e=>{const rel=SV.releases[e.name]||[];
   return `<div class="stack8"><div class="line"><b>${esc(e.label)}</b><span class="pill">${!e.installed?'Не установлен':e.version?'Версия '+esc(e.version):'Установлен вне OmniBox'}</span></div>
     <span class="small muted">${e.installed?(e.managed?`Скачанные версии: ${esc((e.versions||[]).join(', ')||'—')}.${e.pending?' Новая версия применится при следующем запуске.':''}`:'Движок установлен вне OmniBox; обновление перенесёт его в каталог OmniBox.'):'Будут скачаны файлы с GitHub и создана служба с ручным запуском.'}</span>
@@ -121,6 +134,7 @@ function renderEngineManager(list){setHTML(byId('engine-manager'),(list||[]).map
 async function engineAction(body){const op=await operation(body);SV.engines=(await api('/api/engines')).engines;renderEngineManager(SV.engines);return op;}
 
 // ── events ──
+byId('inject-date').addEventListener('change',e=>saveGateway({action:'save',inject_date:e.target.checked}).then(()=>notice(e.target.checked?'Модели в API получают текущую дату.':'Дата в запросы API больше не добавляется.')).catch(err=>{e.target.checked=!e.target.checked;fail(err);}));
 byId('require-key').addEventListener('change',e=>{const on=e.target.checked;if(on&&!(ST.gateway?.keys||[]).length){e.target.checked=false;notice('Сначала создайте ключ ниже.',true);return;}
   saveGateway({action:'save',require_key:on}).then(()=>notice(on?'Ключ API теперь обязателен.':'API доступен без ключа.')).catch(err=>{e.target.checked=!on;fail(err);});});
 byId('key-add').addEventListener('click',()=>{const name=byId('key-name').value.trim();if(!name){notice('Введите имя клиента.',true);return;}saveGateway({action:'add',name}).then(()=>{byId('key-name').value='';}).catch(fail);});
@@ -128,7 +142,7 @@ byId('api-save').addEventListener('click',()=>saveGateway({action:'save',base_ur
   public_origin:byId('public-origin').value.trim(),trusted_proxies:byId('trusted').value.split(',').map(s=>s.trim()).filter(Boolean)}).then(()=>notice('Настройки API сохранены.')).catch(fail));
 byId('searx-check').addEventListener('click',async()=>{const st=byId('search-state');st.textContent='Проверяем…';st.className='pill';
   try{const d=await api('/api/chat-settings',{action:'check-search',search_url:byId('searx').value.trim()});st.textContent=`Работает · ${d.search_ms} мс`;st.className='pill ok';}catch(e){st.textContent='Ошибка';st.className='pill warn';fail(e);}});
-byId('search-save').addEventListener('click',()=>saveChatSettings({search_url:byId('searx').value.trim(),search_results:Number(byId('search-n').value),search_language:byId('search-lang').value,search_default:byId('search-default').checked,site_icons:byId('site-icons').checked}).then(()=>notice('Настройки веб-поиска сохранены.')).catch(fail));
+byId('search-save').addEventListener('click',()=>saveChatSettings({search_url:byId('searx').value.trim(),search_results:Number(byId('search-n').value),search_language:byId('search-lang').value,search_default:byId('search-default').checked,site_icons:byId('site-icons').checked,read_pages:byId('read-pages').checked}).then(()=>notice('Настройки веб-поиска сохранены.')).catch(fail));
 byId('or-connect').addEventListener('click',async()=>{const key=byId('or-key').value.trim();byId('or-key').value='';if(!key){notice('Вставьте ключ OpenRouter.',true);return;}
   try{await cloudAction({action:'key-save',key});notice('OpenRouter подключён: список моделей загружен.');await Promise.all([refreshAccount(),refreshLibrary()]);renderCloud();}catch(e){fail(e);}});
 byId('or-disconnect').addEventListener('click',()=>cloudAction({action:'key-forget'}).then(()=>{S.account=null;renderNow();notice('Ключ OpenRouter удалён с ПК.');return refreshLibrary();}).catch(fail));
@@ -145,6 +159,7 @@ byId('ae-save').addEventListener('click',()=>saveAsst());
 byId('ae-delete').addEventListener('click',async()=>{const b=byId('ae-delete');if(b.dataset.sure!=='1'){b.dataset.sure='1';b.textContent='Точно удалить? Нажмите ещё раз';return;}
   try{S.assistants=await api('/api/assistants',{action:'delete',id:ST.editing});hideAll();renderAssistants();}catch(e){fail(e);}});
 byId('follow-on').addEventListener('change',e=>saveChatSettings({follow_ups:e.target.checked}).then(()=>notice(e.target.checked?'Под ответами появятся вопросы для продолжения.':'Вопросы после ответов выключены.')).catch(err=>{e.target.checked=!e.target.checked;fail(err);}));
+byId('auto-title').addEventListener('change',e=>saveChatSettings({auto_title:e.target.checked}).then(()=>notice(e.target.checked?'Новые чаты будет называть модель.':'Название чата — начало первого вопроса.')).catch(err=>{e.target.checked=!e.target.checked;fail(err);}));
 byId('follow-model').addEventListener('change',e=>saveChatSettings({follow_up_model:e.target.value}).then(()=>notice('Модель для вопросов сохранена.')).catch(fail));
 byId('keep-chats').addEventListener('change',e=>saveChatSettings({retention_hours:Number(e.target.value)}).then(()=>notice('Срок хранения новых чатов сохранён.')).catch(fail));
 byId('keep-logs').addEventListener('change',e=>api('/api/storage',{action:'save',...KEEP_LOGS[e.target.value]}).then(u=>{ST.storage=u;renderStorage();notice('Срок хранения журналов сохранён.');}).catch(fail));
@@ -154,7 +169,9 @@ byId('start-model').addEventListener('change',e=>api('/api/library',{action:'sta
 byId('update-check').addEventListener('click',()=>checkUpdate());
 byId('shutdown-omnibox').addEventListener('click',()=>ask(byId('shutdown-confirm'),'Выключить OmniBox? Панель закроется через несколько секунд и откроется снова только после ai on или перезагрузки ПК.').then(yes=>yes&&operation({action:'shutdown'})).catch(fail));
 byId('update-install').addEventListener('click',()=>operation({action:'self-update',version:byId('update-install').dataset.version}).catch(fail));
-byId('update-other').addEventListener('click',()=>{const v=byId('update-target').value.trim();if(!/^\d+\.\d+\.\d+$/.test(v)){notice('Версия — три числа через точку, например 0.20.5.',true);return;}operation({action:'self-update',version:v}).catch(fail);});
+byId('update-other').addEventListener('click',()=>{const v=byId('update-target').value.trim();if(!/^\d+\.\d+\.\d+$/.test(v)){notice('Версия — три числа через точку, например 0.20.5.',true);return;}installVersion(v).catch(fail);});
+byId('versions-load').addEventListener('click',()=>loadVersions().catch(fail));
+byId('versions').addEventListener('click',e=>{const b=e.target.closest('[data-install-version]');if(b){installVersion(b.dataset.installVersion).catch(fail);return;}if(e.target.closest('[data-versions-retry]'))loadVersions().catch(()=>{});});
 byId('token-save').addEventListener('click',async()=>{const token=byId('token').value.trim();byId('token').value='';if(!token){notice('Вставьте GitHub token.',true);return;}
   try{ST.update=await api('/api/update',{action:'save-token',token});renderUpdate();notice('Токен проверен на GitHub и сохранён.');}catch(e){fail(e);}});
 byId('token-forget').addEventListener('click',async()=>{try{ST.update=await api('/api/update',{action:'forget-token'});renderUpdate();notice('Токен удалён с ПК.');}catch(e){fail(e);}});

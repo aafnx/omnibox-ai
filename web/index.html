@@ -45,6 +45,7 @@
     <symbol id="i-dots" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"/></symbol>
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></symbol>
     <symbol id="i-fold" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16M15 10l-2 2 2 2"/></symbol>
     <symbol id="i-test" viewBox="0 0 24 24"><path d="M13 3 4 14h7l-1 7 9-11h-7z"/></symbol>
   </defs>
@@ -121,7 +122,7 @@
               <div class="websearch thinkwrap"><button type="button" class="tog" id="think-btn" aria-haspopup="true" aria-label="Размышления" title="Размышления"><svg class="i i15"><use href="#i-brain"/></svg></button><div class="pop" id="think-pop" hidden></div></div>
               <div class="websearch webwrap"><button type="button" class="tog" id="web" aria-pressed="false" aria-expanded="false" aria-haspopup="true" aria-label="Веб-поиск" title="Веб-поиск"><svg class="i i15"><use href="#i-globe"/></svg></button><div class="pop" id="web-pop" hidden><div class="line"><b>Искать в интернете</b><label class="switch"><input type="checkbox" id="web-on" aria-label="Поиск в интернете"><span></span></label></div><div class="line"><span class="muted">Движок</span><span>SearXNG</span></div><div class="line"><span class="muted">Адрес</span><span class="mono" id="web-host">не задан</span></div><span class="hint" id="web-hint">Модель сама решает, когда искать. Источники появятся под ответом.</span></div></div>
               <div class="websearch ctxwrap" id="ctx-wrap" hidden><button type="button" class="tog ctxring" id="ctx-btn" aria-haspopup="true" aria-expanded="false" aria-label="Контекст"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" class="trk"/><circle cx="10" cy="10" r="7" class="val" id="ctx-ring" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 10 10)"/></svg></button><div class="pop ctxpop" id="ctx-pop" hidden></div></div>
-              <button type="button" class="tog attach-r" id="attach-btn" title="Прикрепить файл: изображение, видео, аудио, текст, Word, Excel. Можно перетащить в окно чата." aria-label="Прикрепить файл"><svg class="i i15"><use href="#i-clip"/></svg></button><input type="file" id="attach-input" multiple hidden><button type="submit" class="send" id="send" aria-label="Отправить"><svg class="i"><use href="#i-up"/></svg></button>
+              <button type="button" class="tog mic" id="mic-btn" hidden aria-pressed="false" aria-label="Голосовой ввод" title="Голосовой ввод"><svg class="i i15"><use href="#i-mic"/></svg></button><button type="button" class="tog attach-r" id="attach-btn" title="Прикрепить файл: изображение, видео, аудио, текст, Word, Excel. Можно перетащить в окно чата." aria-label="Прикрепить файл"><svg class="i i15"><use href="#i-clip"/></svg></button><input type="file" id="attach-input" multiple hidden><button type="submit" class="send" id="send" aria-label="Отправить"><svg class="i"><use href="#i-up"/></svg></button>
             </div>
           </form>
           <div class="foot" id="chat-foot">ИИ может ошибаться — проверяйте важное.</div>
@@ -195,6 +196,7 @@
             <div class="body">
               <div class="field"><label for="base">Адрес для Jan, Open WebUI, Pi</label><div class="copy"><input id="base" type="text" readonly><button class="btn" type="button" data-copy="base">Копировать</button></div><span class="hint" id="base-hint"></span></div>
               <div class="line"><div><b>Требовать ключ API</b><div class="small muted">Без ключа к API может обратиться любой в вашей сети.</div></div><label class="switch"><input type="checkbox" id="require-key" aria-label="Требовать ключ API"><span></span></label></div>
+              <div class="line"><div><b>Сообщать модели дату и время</b><div class="small muted">В запросы Jan, Open WebUI и Pi добавляется строка с сегодняшней датой, днём недели и временем этого ПК — модель понимает «сегодня» и «завтра». В чате OmniBox дата есть всегда.</div></div><label class="switch"><input type="checkbox" id="inject-date" aria-label="Сообщать модели дату и время"><span></span></label></div>
               <div class="warnbox" id="nokey-warn" hidden>Ключ не требуется: любой в LAN и WireGuard может пользоваться моделями.</div>
               <div class="stack8"><b>Ключи API</b><div class="tablewrap"><table class="keys"><thead><tr><th>Клиент</th><th>Создан</th><th>Последний запрос</th><th class="num">Запросов</th><th></th></tr></thead><tbody id="keys"></tbody></table></div>
                 <div class="copy"><input type="text" id="key-name" maxlength="40" placeholder="Имя клиента, например Ноутбук" aria-label="Имя клиента"><button class="btn" type="button" id="key-add">Создать ключ</button></div>
@@ -211,7 +213,8 @@
           <div class="panel" id="s-chat"><header><h2>Чат</h2></header>
             <div class="body">
               <div class="line"><div><b>Предлагать вопросы после ответа</b><div class="small muted">Под последним ответом — 3–5 вопросов, которые можно задать дальше, как «Продолжить» в Open WebUI; нажатие отправляет вопрос. Это отдельный короткий запрос к модели после ответа. В каждом чате можно включить или выключить отдельно: меню «⋯» в списке чатов.</div></div><label class="switch"><input type="checkbox" id="follow-on" aria-label="Предлагать вопросы после ответа"><span></span></label></div>
-              <div class="line"><div><b>Кто пишет вопросы</b><div class="small muted" id="follow-model-hint">Та же модель, что отвечала: локальная — бесплатно, но несколько секунд занимает видеокарту; облачная — по цене её токенов.</div></div><select id="follow-model" class="sel-auto"></select></div>
+              <div class="line"><div><b>Название чата пишет модель</b><div class="small muted">После первого ответа модель даёт чату короткое название по сути разговора, как в Open WebUI. До этого и при выключенной опции название — начало первого вопроса. Чат, который вы переименовали, модель не трогает.</div></div><label class="switch"><input type="checkbox" id="auto-title" aria-label="Название чата пишет модель"><span></span></label></div>
+              <div class="line"><div><b>Кто пишет вопросы и названия</b><div class="small muted" id="follow-model-hint">Та же модель, что отвечала: локальная — бесплатно, но несколько секунд занимает видеокарту; облачная — по цене её токенов.</div></div><select id="follow-model" class="sel-auto"></select></div>
             </div></div>
           <div class="panel" id="s-search"><header><h2>Веб-поиск</h2><span class="pill" id="search-state">Не проверен</span></header>
             <div class="body">
@@ -221,6 +224,7 @@
                 <div class="field"><label for="search-lang">Язык поиска</label><select id="search-lang"><option value="">Как в вопросе</option><option value="ru">Русский</option><option value="en">English</option></select></div>
               </div>
               <div class="line"><div><b>Поиск включён в новых чатах</b><div class="small muted">Модель сама решает, когда искать. Без поддержки функций — поиск по каждому вопросу.</div></div><label class="switch"><input type="checkbox" id="search-default" aria-label="Поиск в новых чатах"><span></span></label></div>
+              <div class="line"><div><b>Читать найденные страницы</b><div class="small muted">Кроме коротких выдержек поиска, OmniBox открывает 1–2 лучшие страницы и передаёт модели их текст; модель с функциями может открыть и другие найденные страницы. Ответы точнее, но на несколько секунд дольше. Открываются только адреса из результатов поиска и из вашего вопроса, адреса локальной сети — никогда.</div></div><label class="switch"><input type="checkbox" id="read-pages" aria-label="Читать найденные страницы"><span></span></label></div>
               <div class="line"><div><b>Значки сайтов у источников</b><div class="small muted">Выключено — первая буква сайта, панель ничего не загружает со сторонних адресов. Включено — браузер загружает значок с каждого сайта-источника, и сайт видит ваш IP-адрес. Действует после обновления страницы.</div></div><label class="switch"><input type="checkbox" id="site-icons" aria-label="Значки сайтов у источников"><span></span></label></div>
               <div><button class="btn" type="button" id="search-save">Сохранить</button></div>
             </div></div>
@@ -285,7 +289,10 @@
                 <div class="stack8"><span class="hint">Репозиторий приватный: нужен fine-grained token с доступом Contents: Read к aafnx/omnibox-ai. Хранится на ПК в зашифрованном виде. <a class="ink" id="token-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Создать на GitHub ↗</a></span>
                   <div class="copy"><input type="password" id="token" autocomplete="off" placeholder="github_pat_…" aria-label="GitHub token"><button class="btn" type="button" id="token-save">Сохранить</button></div>
                   <div><button class="btn ghost sm danger-text" type="button" id="token-forget" hidden>Удалить токен</button></div></div></details>
-              <details class="more"><summary>Другая версия или откат</summary><div class="copy"><input type="text" id="update-target" placeholder="например, 0.20.5" aria-label="Версия"><button class="btn" type="button" id="update-other">Установить</button></div></details>
+              <details class="more" id="versions-box"><summary>Другая версия или откат</summary><div class="stack8">
+                <span class="hint">Любую опубликованную версию можно поставить поверх текущей: настройки, пароль, ключи, чаты и модели остаются, при сбое автоматически возвращается текущая. Откат на версии до 0.23.0 удастся, только если в настройках нет полей, которых они не знают.</span>
+                <div class="vlist" id="versions"><button class="btn sm" type="button" id="versions-load">Показать версии</button></div>
+                <div class="copy"><input type="text" id="update-target" placeholder="или номер версии, например 0.20.5" aria-label="Версия"><button class="btn" type="button" id="update-other">Установить</button></div></div></details>
               <details class="more"><summary>ИИ-движки: версии</summary><div class="stack12" id="engine-manager"></div></details>
             </div></div>
           <div class="panel" id="s-panel"><header><h2>Панель</h2></header>

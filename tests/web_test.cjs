@@ -65,7 +65,11 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   // A run of citations is one chip: the first site, "+N" and every title in the tip; unknown numbers stay text.
   const run2=run("md('Факт [1][2] и [9].',[{title:'Один',url:'https://www.one.example/a'},{title:'Два',url:'https://two.example/b'}])");
   assert.ok(run2.includes('<span class="c">one.example +1</span>')&&run2.includes('title="Один · Два"')&&run2.includes('[9]'),run2);
-  assert.ok(out.includes('<pre><button type="button" class="copycode">')&&out.includes('fmt.Println(&quot;&lt;b&gt;&quot;)'));
+  assert.ok(out.includes('<pre data-lang="go"><button type="button" class="copycode">')&&out.includes('<code class="language-go">fmt.Println(&quot;&lt;b&gt;&quot;)'),out);
+  // Formulas are kept from escaping and Markdown, then marked for KaTeX; prices and code are not math.
+  const mth=run("md('Площадь $S = \\\\pi r^2$ и $$\\\\frac{a<b}{c}$$, цена $5 и $10, `echo $HOME$`\\n\\n```sh\\necho $a$\\n```\\n\\n\\\\[x_1\\\\]')");
+  assert.ok(mth.includes('<span class="math" data-tex="S = \\pi r^2">')&&mth.includes('<span class="math display" data-tex="\\frac{a&lt;b}{c}">'),mth);
+  assert.ok(mth.includes('цена $5 и $10')&&mth.includes('<code>echo $HOME$</code>')&&mth.includes('echo $a$</code></pre>')&&mth.includes('data-tex="x_1"'),mth);
   assert.ok(out.includes('<ul><li>раз</li><li>два</li></ul>'));assert.ok(out.includes('<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>'));
 
   // Reasoning scale: "off" only where thinking can be switched off; tokens and cost as a small note.
@@ -299,6 +303,35 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run("C.threads=[{id:'t1',title:'T'}];C.chat=null;S.chatSettings.follow_ups=true");await run("toggleChatFollow('t1')");assert.equal(tsent[0].mode,'off');
   await run("toggleChatFollow('t1')");assert.equal(tsent[1].mode,'auto');context.fetch=oldFetch;run("S.chatSettings.follow_ups=false;C.chat=null");
 
+  // Versions: "‹ 2/3 ›" under an answer whose question has earlier versions; the ends are disabled.
+  const vq={id:'q1',role:'user',text:'?',branches:[[{id:'q1',role:'user',text:'old'}],[{id:'q1',role:'user',text:'old2'}]],branch:2};
+  const vh=run(`versHTML(${JSON.stringify(vq)})`);assert.ok(vh.includes('<span>3/3</span>')&&vh.includes('data-to="1"')&&/data-to="3" disabled/.test(vh),vh);
+  assert.equal(run("versHTML({id:'q',role:'user'})"),'');
+  run(`C.chat={id:'vc',messages:[${JSON.stringify(vq)},{id:'a1',role:'assistant',text:'ok'}]};renderChat()`);assert.ok(nodes['message-list'].innerHTML.includes('class="vers"'));
+  const bsent=[];context.fetch=async(p,o)=>{bsent.push(JSON.parse(o.body));return {ok:true,json:async()=>({id:'vc',messages:[{id:'q1',role:'user',text:'old2',branches:[[],[]],branch:1}]})};};
+  await run("switchBranch({dataset:{branch:'q1',to:'1'}})");assert.deepEqual(bsent[0],{action:'branch',id:'vc',message_id:'q1',index:1});assert.equal(run('C.chat.messages[0].text'),'old2');
+  // The title is asked once, after the first answer of a chat the owner did not name.
+  run("S.chatSettings.auto_title=true;C.chat={id:'tc',messages:[{role:'user',text:'q'},{role:'assistant',text:'a'}]}");assert.equal(run('titleWanted()'),true);
+  run("C.chat.title_set=true");assert.equal(run('titleWanted()'),false);run("C.chat.title_set=false;C.chat.messages.push({role:'assistant',text:'b'})");assert.equal(run('titleWanted()'),false);
+  context.fetch=async(p,o)=>{bsent.push([p,JSON.parse(o.body)]);return {ok:true,json:async()=>({id:'tc',title:'Погода в Казани'})};};
+  run("C.threads=[{id:'tc',title:'найди погоду'}]");await run("requestTitle('tc')");assert.equal(run('C.chat.title'),'Погода в Казани');assert.equal(run('C.threads[0].title'),'Погода в Казани');
+  // Editing a question sends it as an edit; the composer is not touched.
+  const esent=[];context.fetch=async(p,o)=>{esent.push(JSON.parse(o.body));return {ok:false,status:500,json:async()=>({error:'x'})};};
+  run("C.busy=null;C.starting=false;C.chosen='cloud:o/m';C.chat={id:'ec',messages:[{id:'u1',role:'user',text:'старый'},{id:'a1',role:'assistant',text:'ответ'}]}");nodes.prompt.value='черновик';
+  const em={dataset:{id:'u1'},nextElementSibling:null,classList:{add(){},remove(){}},querySelector:s=>s==='.edit-ta'?{value:' новый '}:s==='.bubble'?{}:null,closest:()=>null,insertAdjacentHTML(){}};
+  await run('sendEdit')(em);assert.equal(esent[0].edit,'u1');assert.equal(esent[0].text,'новый');assert.equal(nodes.prompt.value,'черновик');
+  context.fetch=oldFetch;run('C.chat=null;C.busy=null');
+
+  // Reading aloud skips Markdown, links and citation numbers; code is named, not spelled.
+  assert.equal(run("speechText('## Итог\\n**Ясно** [1], см. [сайт](https://x.example).\\n```js\\nx()\\n```')"),'Итог\nЯсно , см. сайт.\n (фрагмент кода)');
+  // Export: Markdown with the speakers, files and sources; a file name without forbidden characters.
+  const ec={title:'Погода: Казань/сегодня',created:'2026-10-12T09:00:00Z',messages:[{role:'user',text:'Погода?',attachments:[{name:'a.docx'}]},{role:'assistant',model:'cloud:o/m',text:'Ясно [1].',meta:{sources:[{title:'Я[н]декс',url:'https://ya.ru/p'}]}}]};
+  const emd=run(`chatMarkdown(${JSON.stringify(ec)})`);
+  assert.ok(emd.startsWith('# Погода: Казань/сегодня\n')&&emd.includes('## Вы\n\nПогода?\n')&&emd.includes('_Файлы: a.docx_')&&emd.includes('## Модель · Облачная')&&emd.includes('1. [Яндекс](https://ya.ru/p)'),emd);
+  assert.equal(run(`fileName(${JSON.stringify(ec)},'md')`),'Погода Казань сегодня 2026-10-12.md');
+  // Dictation: a browser without speech recognition shows no microphone.
+  run('renderMic()');assert.equal(nodes['mic-btn'].hidden,true);
+
   // Spending: fractions of a cent stay visible, nothing spent reads $0,00.
   assert.equal(run('money(0.00042)'),'$0,0004');assert.equal(run('money(0.00001)'),'<$0,0001');assert.equal(run('money(0)'),'$0,00');assert.equal(run('money(1.5)'),'$1,50');assert.equal(run('money(undefined)'),'$0,00');
   // The key's limit, its period, what is left, and when it expires.
@@ -316,6 +349,17 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run('setRail(true)');assert.equal(nodes.app.classList.contains('rail'),true);assert.equal(store.get('omnibox-rail'),'1');assert.equal(nodes['nav-fold'].title,'Развернуть меню');
   run('setRail(false)');assert.equal(nodes.app.classList.contains('rail'),false);assert.equal(store.get('omnibox-rail'),'');
   assert.ok(['Чат','Модели','Сервер','Настройки'].every(n=>html.includes(`title="${n}"><svg`)||html.includes(`title="${n}">`)),'rail icons have tips');
+
+  // Other versions: newer ones update, older ones roll back; the installed one has no button.
+  run("ST.versions={current:'0.23.0',releases:[{version:'0.24.0',newer:true,summary:'Новое',published:'2026-10-13T10:00:00Z'},{version:'0.23.0',current:true},{version:'0.22.0',summary:'<b>x</b>'}]};renderVersions()");
+  const vl=nodes.versions.innerHTML;assert.ok(vl.includes('data-install-version="0.24.0">Обновить')&&vl.includes('data-install-version="0.22.0">Откатить')&&!vl.includes('data-install-version="0.23.0"')&&vl.includes('&lt;b&gt;x'),vl);
+  assert.equal(run("newerThan('0.23.0','0.9.9')"),true);assert.equal(run("newerThan('0.9.9','0.23.0')"),false);
+  // A rollback asks first and names what stays; cancelling installs nothing.
+  run("S.status={version:'0.23.0'}");const ops=[];context.fetch=async(p,o)=>{ops.push(JSON.parse(o.body));return {ok:true,json:async()=>({id:'u'})};};
+  const roll=run("installVersion('0.22.0')");assert.equal(nodes['confirm-title'].textContent,'Откатить на 0.22.0?');assert.ok(nodes['confirm-text'].textContent.includes('чаты и модели останутся'));
+  nodes['confirm-no'].listeners.click.at(-1)();await roll;assert.equal(ops.length,0);
+  const roll2=run("installVersion('0.22.0')");nodes['confirm-yes'].listeners.click.at(-1)();await new Promise(r=>setImmediate(r));
+  assert.deepEqual(ops[0],{action:'self-update',version:'0.22.0'});run('waiting.clear()');context.fetch=oldFetch;
 
   // Logged out: the API answers 401 and the login form is shown.
   winListeners.DOMContentLoaded.forEach(fn=>fn());await new Promise(r=>setTimeout(r,10));
