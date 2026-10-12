@@ -68,6 +68,8 @@ type Runner struct {
 
 	// learned are parameters OpenRouter refused for a model; they are not sent again.
 	learned sync.Map
+	// textCalls are models whose tool calls came back as text: they are offered no tools.
+	textCalls sync.Map
 	// jobs are the answers being written, by chat (jobs.go).
 	jobsMu sync.Mutex
 	jobs   map[string]*job
