@@ -179,6 +179,12 @@ func (f *fake) serve(in io.Reader, out io.WriteCloser) {
 			case "fail":
 				note("error", with(map[string]any{"error": map[string]any{"message": "stream disconnected"}, "willRetry": true}))
 				note("turn/completed", map[string]any{"threadId": "T1", "turn": map[string]any{"id": "U1", "status": "failed", "error": map[string]any{"message": "You've hit your usage limit."}}})
+			case "search":
+				note("item/started", with(map[string]any{"item": map[string]any{"type": "webSearch", "id": "w", "query": ""}}))
+				note("item/completed", with(map[string]any{"item": map[string]any{"type": "webSearch", "id": "w", "query": "погода Казань"}}))
+				note("item/agentMessage/delta", with(map[string]any{"delta": "+8 [Gismeteo](https://gismeteo.example)"}))
+				note("thread/tokenUsage/updated", with(map[string]any{"tokenUsage": map[string]any{"last": map[string]any{"inputTokens": 3}, "modelContextWindow": 258400}}))
+				note("turn/completed", map[string]any{"threadId": "T1", "turn": map[string]any{"id": "U1", "status": "completed"}})
 			case "hang":
 			}
 		default:
@@ -575,4 +581,41 @@ func TestInstallChecksAndReplaces(t *testing.T) {
 	if _, err := os.Stat(s.Dir); !os.IsNotExist(err) {
 		t.Fatal("Remove must delete Codex and the sign-in")
 	}
+}
+
+// OpenAI's web search is the one tool a thread may get, and only when the owner allows it.
+func TestOpenAIWebSearchOnlyWhenAllowed(t *testing.T) {
+	f := newFake()
+	f.turn = "search"
+	s := installedService(t, f)
+	allowed := false
+	s.WebSearch = func() bool { return allowed }
+	body := []byte(`{"model":"chatgpt/gpt-5.5","stream":true,"web_search_options":{},"messages":[{"role":"user","content":"погода в Казани"}]}`)
+	resp, err := s.Chat(context.Background(), body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(data), "webSearch") || f.param("thread/start")["config"] != nil {
+		t.Fatalf("a search the owner did not allow must stop the answer:\n%s", data)
+	}
+	allowed = true
+	resp, err = s.Chat(context.Background(), body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, _ = io.ReadAll(resp.Body)
+	text := string(data)
+	if !strings.Contains(text, `"omnibox_search":{"query":"погода Казань"}`) || !strings.Contains(text, "Gismeteo") || !strings.Contains(text, "[DONE]") {
+		t.Fatalf("stream:\n%s", text)
+	}
+	start := f.param("thread/start")
+	if cfg, _ := start["config"].(map[string]any); cfg["web_search"] != "live" || !strings.Contains(start["baseInstructions"].(string), "Markdown links") {
+		t.Fatalf("thread/start = %v", start)
+	}
+	if env, _ := start["environments"].([]any); env == nil || len(env) != 0 {
+		t.Fatal("still no environment")
+	}
+	// The window Codex reported is kept for the chat's context indicator.
+	waitFor(t, func() bool { m := s.CachedModels(); return len(m) == 1 && m[0].Context == 258400 })
 }

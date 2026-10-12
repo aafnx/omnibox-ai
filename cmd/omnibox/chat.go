@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -26,6 +27,7 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/reasoning"
 	"github.com/aafnx/omnibox-ai/internal/storage"
 	"github.com/aafnx/omnibox-ai/internal/telemetry"
+	"github.com/aafnx/omnibox-ai/internal/today"
 	"github.com/aafnx/omnibox-ai/internal/websearch"
 )
 
@@ -43,8 +45,10 @@ type chatSide struct {
 	Chats      *chats.Store
 	Assistants *chats.Assistants
 	// GPT is the ChatGPT subscription through Codex's app-server.
-	GPT  *chatgpt.Service
-	Logf func(format string, args ...any)
+	GPT *chatgpt.Service
+	// SearchKeys are the keys of Perplexity, Tavily and Brave Search, encrypted.
+	SearchKeys websearch.Keys
+	Logf       func(format string, args ...any)
 }
 
 func newChatSide(data string, store *config.Store, services platform.Services, controller *control.Controller, estimates estimator) *chatSide {
@@ -54,7 +58,8 @@ func newChatSide(data string, store *config.Store, services platform.Services, c
 		Chats:      &chats.Store{Dir: filepath.Join(data, "chats")},
 		Assistants: &chats.Assistants{Path: filepath.Join(data, "assistants.json")}}
 	c.Catalog = &openrouter.Catalog{Path: filepath.Join(data, filepath.FromSlash(openrouter.CatalogFile)), Client: c.client}
-	c.GPT = &chatgpt.Service{Dir: filepath.Join(data, chatgpt.Dir), Version: omnibox.Version, Logf: c.logf}
+	c.SearchKeys = websearch.Keys{Path: filepath.Join(data, filepath.FromSlash(websearch.KeyFile))}
+	c.GPT = &chatgpt.Service{Dir: filepath.Join(data, chatgpt.Dir), Version: omnibox.Version, Logf: c.logf, WebSearch: c.openaiSearch}
 	return c
 }
 
@@ -70,9 +75,8 @@ func (c *chatSide) gptModels(ctx context.Context) ([]chatgpt.Model, error) {
 	return c.GPT.Models(ctx)
 }
 
-// gptContext is the history budget of a ChatGPT model: Codex does not list the window, and
-// compacts a thread that outgrows it.
-const gptContext = 200_000
+// openaiSearch tells whether ChatGPT models search with OpenAI's own web search.
+func (c *chatSide) openaiSearch() bool { return !c.Store.Get().ChatGPTSettings().OmniBoxSearch }
 
 // client is the OpenRouter client with the saved key, or nil without one.
 func (c *chatSide) client() *openrouter.Client {
@@ -136,7 +140,7 @@ func (c *chatSide) modelInfo(ctx context.Context, key string) (library.Model, in
 			return library.Model{}, 0, chatgpt.ErrSignedOut
 		}
 		if m, ok := library.Find(library.ChatGPT(cfg, list), key); ok {
-			return m, gptContext, nil
+			return m, m.Context, nil
 		}
 		return library.Model{}, 0, errors.New("Модели " + id + " нет в подписке ChatGPT.")
 	}
@@ -190,18 +194,64 @@ func (c *chatSide) runner(local func(ctx context.Context, session string, body [
 			}
 			return nil, errors.New("OpenRouter не подключён: добавьте ключ в «Настройки → OpenRouter».")
 		},
-		ChatGPT: c.GPT,
+		ChatGPT:       c.GPT,
+		ChatGPTSearch: c.openaiSearch,
 		ChatGPTLimits: func() any {
 			if l := c.GPT.Quick().Limits; l != nil {
 				return l
 			}
 			return nil
 		},
-		Read: websearch.Reader{}.Read,
-		Search: func(ctx context.Context, q string) ([]websearch.Result, error) {
-			s := c.Store.Get().ChatSettings()
-			return websearch.Client{URL: s.SearchURL}.Search(ctx, q, s.SearchLanguage, s.SearchResults)
-		}}
+		Read:             websearch.Reader{}.Read,
+		Search:           c.search,
+		SearchByQuestion: func() bool { return c.Store.Get().ChatSettings().SearchEngine == websearch.EngineSonar }}
+}
+
+// search asks the engine chosen in the settings.
+func (c *chatSide) search(ctx context.Context, q string) (websearch.Found, error) {
+	s := c.Store.Get().ChatSettings()
+	switch s.SearchEngine {
+	case websearch.EngineSonar:
+		cl := c.client()
+		if cl == nil {
+			return websearch.Found{}, errors.New("Поиск через Perplexity Sonar работает с ключом OpenRouter: добавьте его в «Настройки → OpenRouter».")
+		}
+		model := sonarModel(s)
+		found, err := cl.Sonar(ctx, model, q, today.Line(time.Now()))
+		if found.CostUSD > 0 {
+			if err := c.Spend.Add(model, found.CostUSD, openrouter.SourceChat); err != nil {
+				c.logf("openrouter: spend ledger: %v", err)
+			}
+		}
+		var oe *openrouter.Error
+		if errors.As(err, &oe) && (oe.Status == http.StatusNotFound || oe.Status == http.StatusBadRequest) {
+			return found, fmt.Errorf("Модель %s недоступна в OpenRouter: выберите другую в «Настройки → Веб-поиск».", model)
+		}
+		return found, err
+	case websearch.EnginePerplexity, websearch.EngineTavily, websearch.EngineBrave:
+		res, err := websearch.Engine{Name: s.SearchEngine, Key: c.SearchKeys.Get(s.SearchEngine)}.Search(ctx, q, s.SearchLanguage, s.SearchResults)
+		return websearch.Found{Results: res}, err
+	}
+	res, err := websearch.Client{URL: s.SearchURL}.Search(ctx, q, s.SearchLanguage, s.SearchResults)
+	return websearch.Found{Results: res}, err
+}
+
+func sonarModel(s config.Chat) string {
+	if s.SonarModel != "" {
+		return s.SonarModel
+	}
+	return openrouter.SonarModels[0]
+}
+
+// searchReady tells whether the chosen engine can search: an address or a key is there.
+func (c *chatSide) searchReady(s config.Chat) bool {
+	switch s.SearchEngine {
+	case websearch.EngineSonar:
+		return c.client() != nil
+	case websearch.EnginePerplexity, websearch.EngineTavily, websearch.EngineBrave:
+		return c.SearchKeys.Get(s.SearchEngine) != ""
+	}
+	return s.SearchURL != ""
 }
 
 // handlers are the panel's routes of this side.
@@ -422,8 +472,9 @@ func (c *chatSide) serveChatGPT(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var in struct {
-		Action    string `json:"action"`
-		ExposeAPI *bool  `json:"expose_api"`
+		Action       string `json:"action"`
+		ExposeAPI    *bool  `json:"expose_api"`
+		OpenAISearch *bool  `json:"openai_search"`
 	}
 	if err := body(r, &in); err != nil {
 		replyError(w, err)
@@ -451,6 +502,9 @@ func (c *chatSide) serveChatGPT(w http.ResponseWriter, r *http.Request) {
 			if in.ExposeAPI != nil {
 				s.ExposeAPI = *in.ExposeAPI
 			}
+			if in.OpenAISearch != nil {
+				s.OmniBoxSearch = !*in.OpenAISearch
+			}
 			cfg.ChatGPT = &s
 			return nil
 		})
@@ -469,7 +523,7 @@ func (c *chatSide) gptView(st chatgpt.Status) map[string]any {
 	if !c.GPT.SignedIn() || models == nil {
 		models = []chatgpt.Model{}
 	}
-	return map[string]any{"status": st, "signed_in": c.GPT.SignedIn(), "expose_api": c.Store.Get().ChatGPTSettings().ExposeAPI, "models": models}
+	return map[string]any{"status": st, "signed_in": c.GPT.SignedIn(), "expose_api": c.Store.Get().ChatGPTSettings().ExposeAPI, "openai_search": c.openaiSearch(), "models": models}
 }
 
 func (c *chatSide) cloudView() map[string]any {
@@ -515,6 +569,11 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 		ReadPages      *bool   `json:"read_pages"`
 		AutoTitle      *bool   `json:"auto_title"`
 		FollowUpModel  *string `json:"follow_up_model"`
+		SearchEngine   *string `json:"search_engine"`
+		SonarModel     *string `json:"sonar_model"`
+		PlanQueries    *bool   `json:"plan_queries"`
+		Engine         string  `json:"engine"`
+		Key            string  `json:"key"`
 	}
 	if err := body(r, &in); err != nil {
 		replyError(w, err)
@@ -555,6 +614,15 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 			if in.FollowUpModel != nil {
 				s.FollowUpModel = strings.TrimSpace(*in.FollowUpModel)
 			}
+			if in.SearchEngine != nil {
+				s.SearchEngine = *in.SearchEngine
+			}
+			if in.SonarModel != nil {
+				s.SonarModel = strings.TrimSpace(*in.SonarModel)
+			}
+			if in.PlanQueries != nil {
+				s.NoSearchPlan = !*in.PlanQueries
+			}
 			cfg.Chat = &s
 			return nil
 		})
@@ -562,7 +630,45 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 			replyError(w, err)
 			return
 		}
+	case "search-key":
+		// The key is tried with one search before it is kept: a key the engine refuses is not saved.
+		key := strings.TrimSpace(in.Key)
+		if err := websearch.CheckKey(in.Engine, key); err != nil || !slices.Contains(websearch.KeyEngines, in.Engine) {
+			if err == nil {
+				err = errors.New("Ключ нужен только для Perplexity, Tavily и Brave Search.")
+			}
+			replyError(w, err)
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 25*time.Second)
+		_, err := websearch.Engine{Name: in.Engine, Key: key}.Search(ctx, "OmniBox AI", "", 1)
+		cancel()
+		if err != nil {
+			replyError(w, err)
+			return
+		}
+		if err := c.SearchKeys.Save(in.Engine, key, time.Now()); err != nil {
+			replyError(w, err)
+			return
+		}
+	case "search-key-forget":
+		if err := c.SearchKeys.Save(in.Engine, "", time.Now()); err != nil {
+			replyError(w, err)
+			return
+		}
 	case "check-search":
+		if s := c.Store.Get().ChatSettings(); s.SearchEngine != "" && in.SearchURL == nil {
+			start := time.Now()
+			ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
+			_, err := c.search(ctx, "OmniBox AI")
+			cancel()
+			if err != nil {
+				replyError(w, err)
+				return
+			}
+			out["search_ms"] = time.Since(start).Milliseconds()
+			break
+		}
 		u := c.Store.Get().ChatSettings().SearchURL
 		if in.SearchURL != nil {
 			probe := config.Chat{SearchURL: strings.TrimSpace(*in.SearchURL), SearchResults: 1}
@@ -612,7 +718,9 @@ func (c *chatSide) settingsView() map[string]any {
 	}
 	return map[string]any{"retention_hours": s.RetentionHours, "search_url": s.SearchURL, "search_results": s.SearchResults,
 		"search_language": s.SearchLanguage, "search_default": s.SearchDefault, "site_icons": s.SiteIcons, "read_pages": !s.NoReadPages, "auto_title": !s.NoAutoTitle,
-		"follow_ups": s.FollowUps, "follow_up_model": s.FollowUpModel, "chats": len(list), "chats_bytes": size}
+		"follow_ups": s.FollowUps, "follow_up_model": s.FollowUpModel, "chats": len(list), "chats_bytes": size,
+		"search_engine": s.SearchEngine, "sonar_model": sonarModel(s), "sonar_models": openrouter.SonarModels, "plan_queries": !s.NoSearchPlan,
+		"search_keys": c.SearchKeys.Info(), "search_ready": c.searchReady(s), "openrouter": c.client() != nil, "chatgpt_search": c.openaiSearch()}
 }
 
 // cloudRoute shows the favourite OpenRouter models to /v1 clients when the owner allowed it.

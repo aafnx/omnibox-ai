@@ -87,6 +87,7 @@ func TestPagesAreNotReadWhenOff(t *testing.T) {
 	g.r.Config = func() *config.Config {
 		c := config.Default()
 		s := config.DefaultChat()
+		s.NoSearchPlan = true
 		s.NoReadPages = true
 		c.Chat = &s
 		return c

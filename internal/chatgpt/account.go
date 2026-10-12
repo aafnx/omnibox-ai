@@ -348,6 +348,8 @@ type Model struct {
 	Default     string   `json:"default_effort,omitempty"`
 	Images      bool     `json:"images"`
 	IsDefault   bool     `json:"is_default,omitempty"`
+	// Context is the model's window as Codex reported it in an answer; 0 until then.
+	Context int `json:"context,omitempty"`
 }
 
 // noEffort are reasoning levels the chat does not offer: "ultra" hands the task to sub-agents.
@@ -420,6 +422,12 @@ func (s *Service) Models(ctx context.Context) ([]Model, error) {
 	if out == nil {
 		out = []Model{}
 	}
+	// Windows learned from earlier answers stay: model/list does not tell them.
+	for _, old := range s.CachedModels() {
+		if i := slices.IndexFunc(out, func(m Model) bool { return m.ID == old.ID }); i >= 0 && out[i].Context == 0 {
+			out[i].Context = old.Context
+		}
+	}
 	s.state.Lock()
 	s.models = out
 	s.state.Unlock()
@@ -429,6 +437,23 @@ func (s *Service) Models(ctx context.Context) ([]Model, error) {
 		}
 	}
 	return out, nil
+}
+
+// learnWindow keeps the context window Codex reported for a model, for the chat's indicator.
+func (s *Service) learnWindow(model string, window int) {
+	s.state.Lock()
+	i := slices.IndexFunc(s.models, func(m Model) bool { return m.ID == model })
+	if i < 0 || s.models[i].Context == window {
+		s.state.Unlock()
+		return
+	}
+	s.models = slices.Clone(s.models)
+	s.models[i].Context = window
+	list := s.models
+	s.state.Unlock()
+	if data, err := json.Marshal(list); err == nil {
+		_ = platform.WriteAtomic(filepath.Join(s.Dir, modelsFile), data, 0o600)
+	}
 }
 
 // modelsFile keeps the last model list, so the panel lists the models without starting Codex.

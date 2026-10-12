@@ -25,6 +25,14 @@ type Result struct {
 	Snippet string `json:"snippet"`
 }
 
+// Found is what one search gave: the pages and, from an answering engine (Perplexity Sonar),
+// its short answer, which the chat's model checks against the sources.
+type Found struct {
+	Results []Result
+	Summary string
+	CostUSD float64
+}
+
 // Client is a SearXNG instance with the JSON format enabled.
 type Client struct {
 	URL  string

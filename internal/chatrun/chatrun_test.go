@@ -49,7 +49,12 @@ func newRig(t *testing.T) *rig {
 	g.r = &Runner{
 		Chats:      &chats.Store{Dir: filepath.Join(dir, "chats")},
 		Assistants: &chats.Assistants{Path: filepath.Join(dir, "assistants.json")},
-		Config:     config.Default,
+		// Queries are planned in their own tests; here the question's words are the query.
+		Config: func() *config.Config {
+			c := config.Default()
+			c.Chat = &config.Chat{RetentionHours: 720, SearchResults: 5, NoSearchPlan: true}
+			return c
+		},
 		Model: func(ctx context.Context, key string) (library.Model, int, error) {
 			if key == local.Key {
 				return local, 32768, nil
@@ -70,8 +75,8 @@ func newRig(t *testing.T) *rig {
 			g.mu.Unlock()
 			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(reply))}
 		},
-		Search: func(ctx context.Context, q string) ([]websearch.Result, error) {
-			return []websearch.Result{{Title: "Wake on LAN", URL: "https://www.home-assistant.io/wol", Snippet: "magic packet"}}, nil
+		Search: func(ctx context.Context, q string) (websearch.Found, error) {
+			return websearch.Found{Results: []websearch.Result{{Title: "Wake on LAN", URL: "https://www.home-assistant.io/wol", Snippet: "magic packet"}}}, nil
 		},
 		Spend: &openrouter.Spend{Path: filepath.Join(dir, "spend.json")},
 	}
@@ -159,7 +164,7 @@ func TestToolCallsSearchTheWeb(t *testing.T) {
 	}
 	c, _ := g.r.Chats.Get(g.chat.ID)
 	m := c.Messages[1].Meta
-	if len(m.Sources) != 1 || len(m.Searches) != 2 || m.Searches[0] != "Как разбудить ПК?" || m.Searches[1] != "Как разбудить ПК? wol synology" || c.Messages[1].Text != "Через Home Assistant [1]." {
+	if len(m.Sources) != 1 || len(m.Searches) != 2 || m.Searches[0] != "разбудить ПК" || m.Searches[1] != "wol synology ПК" || c.Messages[1].Text != "Через Home Assistant [1]." {
 		t.Fatalf("%+v", m)
 	}
 	// The context is the last round's prompt and answer, not the sum over the rounds.
@@ -290,6 +295,7 @@ func TestCloudAnswerCostsAndLearnsRefusedParameters(t *testing.T) {
 type fakeGPT struct {
 	mu     sync.Mutex
 	bodies []map[string]any
+	reply  string
 }
 
 func (f *fakeGPT) Chat(ctx context.Context, body []byte) (*http.Response, error) {
@@ -298,6 +304,9 @@ func (f *fakeGPT) Chat(ctx context.Context, body []byte) (*http.Response, error)
 	f.mu.Lock()
 	f.bodies = append(f.bodies, m)
 	f.mu.Unlock()
+	if f.reply != "" {
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(f.reply))}, nil
+	}
 	return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(sse(
 		`{"choices":[{"delta":{"reasoning_content":"Думаю"}}]}`,
 		`{"choices":[{"delta":{"content":"Привет из ChatGPT"}}]}`,

@@ -23,7 +23,7 @@ for(const id of used)assert.ok(ids.includes(id)||dynamic.has(id),`index.html has
 class ClassList{constructor(){this.set=new Set();}add(...c){c.forEach(x=>this.set.add(x));}remove(...c){c.forEach(x=>this.set.delete(x));}toggle(c,on){if(on===undefined)on=!this.set.has(c);on?this.set.add(c):this.set.delete(c);return on;}contains(c){return this.set.has(c);}}
 class Node{
   constructor(id='',tag='div'){this.id=id;this.tagName=tag.toUpperCase();this.children=[];this.listeners={};this.dataset={};this.value='';this.hidden=false;this.checked=false;this.disabled=false;
-    this._html='';this.textContent='';this.className='';this.attributes={};this.style={};this.classList=new ClassList();this.parent=null;}
+    this._html='';this.textContent='';this.className='';this.attributes={};this.style={setProperty(k,v){this[k]=v;}};this.classList=new ClassList();this.parent=null;}
   get innerHTML(){return this._html;}set innerHTML(v){this._html=String(v);this.children=[];}
   insertAdjacentHTML(_,v){this._html+=String(v);}
   get outerHTML(){return this._html;}set outerHTML(v){this._html=String(v);}
@@ -167,6 +167,8 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
 
   // The reasoning control of a model that always thinks has no "off"; one that cannot think says so.
   run("S.library.models.push({key:'cloud:anthropic/claude-fable-5.1',source:'cloud',name:'Fable',caps:{reasoning:true},completion_usd:50,reasoning:{mode:'always',efforts:['low','medium','high','xhigh','max'],default:'medium',show:'summary',no_sampling:true}});C.chosen='cloud:anthropic/claude-fable-5.1';renderThink()");
+  assert.equal(nodes['think-btn'].style['--lvl'],'0.25','the depth shows in the icon: medium is a quarter up the scale');
+  assert.equal(run("thinkLevel(['off','low','high'],'off')"),0);assert.equal(run("thinkLevel(['low','medium','high','xhigh','max'],'max')"),1);assert.equal(run("thinkLevel(['auto'],'auto')"),0.5);
   const pop=nodes['think-pop'].innerHTML;assert.ok(pop.includes('Обычно')&&!pop.includes('>Выкл<')&&pop.includes('нельзя выключить')&&pop.includes('Температуру и сэмплинг'));
   assert.equal(run('C.effort'),'medium');
   run("C.chosen='cloud:x/z';renderThink()");assert.ok(nodes['think-pop'].innerHTML.includes('не умеет размышлять'));assert.equal(run('C.effort'),'');
@@ -270,7 +272,7 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   context.matchMedia=()=>({matches:false,addEventListener:()=>{}});
   // The composer's reasoning and web search are icons; their state is in the tip.
   assert.ok(!html.includes('<span class="lbl">Размышления</span>')&&!html.includes('<span class="lbl">Веб-поиск</span>'));
-  run("S.chatSettings={search_url:'https://search.example'};C.web=false;renderWeb()");assert.equal(nodes.web.title,'Веб-поиск: выключен');
+  run("S.chatSettings={search_url:'https://search.example',search_ready:true};C.web=false;renderWeb()");assert.equal(nodes.web.title,'Веб-поиск: выключен');
   run("C.web=true;renderWeb()");assert.equal(nodes.web.title,'Веб-поиск: включён');
 
   // Sources: one chip with up to three sites' badges; the list under it. Letters unless site icons are on.
@@ -390,7 +392,16 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.equal(nodes['gpt-setup'].hidden,false);assert.equal(nodes['gpt-install'].disabled,true);assert.ok(nodes['gpt-install-msg'].textContent.includes('25%'),nodes['gpt-install-msg'].textContent);
   // In the chat: a group of its own, a "subscription" pill and the limits under the message box.
   run(`S.library.chatgpt={connected:true};S.library.models.push({key:'chatgpt:gpt-5.5',source:'chatgpt',engine:'chatgpt',id:'gpt-5.5',name:'GPT-5.5',caps:{vision:true,reasoning:true},reasoning:{mode:'always',efforts:['low','high'],default:'low'}});S.gptLimits=${gl}`);
-  assert.ok(run("pickerItem(modelByKey('chatgpt:gpt-5.5'))").includes('Подписка'));
+  const pi=run("pickerItem(modelByKey('chatgpt:gpt-5.5'))");assert.ok(pi.includes('Подписка')&&pi.includes('data-pick-star="chatgpt:gpt-5.5"')&&pi.includes('aria-pressed="false"'),pi);
+  // A ChatGPT model searches with OpenAI's search when it is on, even with no engine set up; another model needs the engine.
+  run("S.chatSettings={search_ready:false,chatgpt_search:true};C.chosen='chatgpt:gpt-5.5';renderWeb()");assert.equal(run('webMode()'),'openai');assert.equal(nodes['web-host'].textContent,'поиск OpenAI');
+  run("C.chosen='prismml:a.gguf';renderWeb()");assert.equal(run('webMode()'),'');assert.equal(nodes['web-on'].disabled,true);
+  run("S.chatSettings={search_ready:true,search_engine:'tavily',chatgpt_search:false};renderWeb()");assert.equal(nodes['web-host'].textContent,'Tavily');
+  // The search settings show what the chosen engine needs: a key (never the key itself), a model or an address.
+  run("S.chatSettings={search_engine:'tavily',search_ready:true,search_results:5,retention_hours:720,search_keys:{tavily:{hint:'…WXYZ',saved:'2026-10-12T10:00:00Z'}},plan_queries:true};renderChatSettings()");
+  assert.equal(nodes['search-key-wrap'].hidden,false);assert.equal(nodes['searx-wrap'].hidden,true);assert.ok(nodes['search-key-info'].textContent.includes('…WXYZ'));assert.equal(nodes['search-state'].textContent,'Tavily');assert.equal(nodes['plan-queries'].checked,true);
+  run("document.getElementById('search-engine').value='sonar';S.chatSettings.openrouter=true;S.chatSettings.sonar_models=['perplexity/sonar','perplexity/sonar-pro'];renderSearchEngine()");
+  assert.equal(nodes['sonar-wrap'].hidden,false);assert.equal(nodes['search-key-wrap'].hidden,true);assert.ok(nodes['sonar-model'].innerHTML.includes('perplexity/sonar-pro'));
   run("C.chosen='chatgpt:gpt-5.5';renderFoot()");assert.ok(nodes['chat-foot'].innerHTML.includes('ChatGPT · 5 часов: 42% · Неделя: 95%')&&nodes['chat-foot'].innerHTML.includes('warn-text'),nodes['chat-foot'].innerHTML);
   run("M.engineF='chatgpt';renderModels()");assert.ok(nodes['model-list'].innerHTML.includes('по подписке')&&!nodes['model-list'].innerHTML.includes('Локальные модели'));run("M.engineF='all';C.chosen=''");
 

@@ -15,12 +15,12 @@ func TestTextualBrowserCallIsRecoveredWithoutLeakingMarkup(t *testing.T) {
 		sse(`{"choices":[{"delta":{"content":"В Казани +8 °C [1]."}}]}`),
 	}
 	queries := []string{}
-	g.r.Search = func(_ context.Context, q string) ([]websearch.Result, error) {
+	g.r.Search = func(_ context.Context, q string) (websearch.Found, error) {
 		queries = append(queries, q)
-		return []websearch.Result{{Title: "Погода в Казани", URL: "https://weather.example/kazan", Snippet: "Сегодня +8 °C"}}, nil
+		return websearch.Found{Results: []websearch.Result{{Title: "Погода в Казани", URL: "https://weather.example/kazan", Snippet: "Сегодня +8 °C"}}}, nil
 	}
 	code, events := g.send(Request{ChatID: g.chat.ID, Model: local.Key, Text: "Какая сегодня погода в Казани", Web: true})
-	if code != 200 || len(g.bodies) != 2 || len(queries) != 1 || queries[0] != "Какая сегодня погода в Казани" {
+	if code != 200 || len(g.bodies) != 2 || len(queries) != 1 || queries[0] != "сегодня погода Казани" {
 		t.Fatalf("status %d, requests %d, queries %v", code, len(g.bodies), queries)
 	}
 	for _, event := range events["delta"] {
@@ -75,14 +75,14 @@ func TestToolQueryCannotReplaceTheRequestedCity(t *testing.T) {
 		sse(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"web_search","arguments":"{\"query\":\"погода Кохем\"}"}}]}}]}`),
 		sse(`{"choices":[{"delta":{"content":"Погода в Казани [1]."}}]}`),
 	}
-	g.r.Search = func(_ context.Context, q string) ([]websearch.Result, error) {
+	g.r.Search = func(_ context.Context, q string) (websearch.Found, error) {
 		if !strings.Contains(q, "Казани") {
 			t.Errorf("query lost the city: %q", q)
 		}
-		return []websearch.Result{
+		return websearch.Found{Results: []websearch.Result{
 			{Title: "Погода в Кохеме", URL: "https://wrong.example", Snippet: "Температура"},
 			{Title: "Погода в Казани", URL: "https://right.example", Snippet: "Казань"},
-		}, nil
+		}}, nil
 	}
 	g.send(Request{ChatID: g.chat.ID, Model: local.Key, Text: "Какая сегодня погода в Казани", Web: true})
 	c, _ := g.r.Chats.Get(g.chat.ID)

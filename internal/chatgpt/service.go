@@ -49,6 +49,8 @@ type Service struct {
 	Releases Releases
 	Idle     time.Duration
 	Now      func() time.Time
+	// WebSearch allows OpenAI's own web search when a request asks for it.
+	WebSearch func() bool
 
 	// mu guards the process; state guards what it said. The reading goroutine takes only state,
 	// so a start waiting for an answer under mu never blocks it.

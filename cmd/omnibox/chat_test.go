@@ -181,3 +181,40 @@ func TestChatGPTModelsReachV1OnlyWhenAllowed(t *testing.T) {
 		t.Fatal("the sign-in is removed with Codex")
 	}
 }
+
+// The search engine is chosen in the settings; one with a key is ready only with its key, and
+// the key never reaches the panel.
+func TestSearchEngineSettings(t *testing.T) {
+	c, _ := chatRig(t)
+	h := http.HandlerFunc(c.serveSettings)
+	w := post(h, "/api/chat-settings", `{"action":"save","search_engine":"tavily","plan_queries":false}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"search_ready":false`) || !strings.Contains(w.Body.String(), `"plan_queries":false`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if w := post(h, "/api/chat-settings", `{"action":"save","search_engine":"google"}`); w.Code != 400 {
+		t.Fatalf("unknown engine: %d", w.Code)
+	}
+	if w := post(h, "/api/chat-settings", `{"action":"search-key","engine":"tavily","key":"wrong-0123456789abcdef"}`); w.Code != 400 {
+		t.Fatalf("a Tavily key starts with tvly-: %d", w.Code)
+	}
+	if err := c.SearchKeys.Save("tavily", "tvly-0123456789abcdefWXYZ", time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/api/chat-settings", nil)
+	w = httptest.NewRecorder()
+	c.serveSettings(w, r)
+	if !strings.Contains(w.Body.String(), `"search_ready":true`) || !strings.Contains(w.Body.String(), "…WXYZ") || strings.Contains(w.Body.String(), "tvly-") {
+		t.Fatalf("%s", w.Body)
+	}
+	if w := post(h, "/api/chat-settings", `{"action":"search-key-forget","engine":"tavily"}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"search_ready":false`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	// Sonar needs the OpenRouter key; ChatGPT searches with OpenAI's search unless told otherwise.
+	post(h, "/api/chat-settings", `{"action":"save","search_engine":"sonar","sonar_model":"perplexity/sonar-pro"}`)
+	if s := c.Store.Get().ChatSettings(); s.SonarModel != "perplexity/sonar-pro" || c.searchReady(s) || !c.openaiSearch() {
+		t.Fatalf("%+v", s)
+	}
+	if _, err := c.search(context.Background(), "q"); err == nil || !strings.Contains(err.Error(), "ключом OpenRouter") {
+		t.Fatalf("%v", err)
+	}
+}
