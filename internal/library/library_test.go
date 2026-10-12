@@ -76,7 +76,7 @@ func TestChatGPTModels(t *testing.T) {
 		t.Fatalf("%+v", list)
 	}
 	m := list[0]
-	if m.Key != "chatgpt:gpt-5.5" || m.Source != "chatgpt" || !m.Favorite || !m.Caps.Vision || m.Caps.Tools || m.Alias != "chatgpt/gpt-5.5" {
+	if m.Key != "chatgpt:gpt-5.5" || m.Source != "chatgpt" || !m.Favorite || !m.Caps.Vision || m.Caps.Tools || !m.Caps.Search || m.Alias != "chatgpt/gpt-5.5" || m.Context != ChatGPTWindow {
 		t.Fatalf("%+v", m)
 	}
 	// Levels keep the scale's order; a default the model does not list falls to the lightest.

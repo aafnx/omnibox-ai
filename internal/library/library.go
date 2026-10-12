@@ -28,7 +28,9 @@ type Caps struct {
 	Reasoning     bool `json:"reasoning"`
 	Tools         bool `json:"tools"`
 	Draws         bool `json:"draws"`
-	MoE           bool `json:"moe,omitempty"`
+	// Search: the model searches the web itself (ChatGPT with OpenAI's search).
+	Search bool `json:"search,omitempty"`
+	MoE    bool `json:"moe,omitempty"`
 }
 
 // Model is one entry of the list.
@@ -191,7 +193,7 @@ func ChatGPT(cfg *config.Config, models []chatgpt.Model) []Model {
 			window = ChatGPTWindow
 		}
 		out = append(out, Model{Key: key, Source: "chatgpt", Engine: "chatgpt", ID: c.ID, Name: c.Name, Provider: "OpenAI", Context: window,
-			Favorite: slices.Contains(cfg.Favorites, key), Caps: Caps{Vision: c.Images, Reasoning: true}, Reasoning: p,
+			Favorite: slices.Contains(cfg.Favorites, key), Caps: Caps{Vision: c.Images, Reasoning: true, Search: !cfg.ChatGPTSettings().OmniBoxSearch}, Reasoning: p,
 			Alias: chatgpt.Prefix + c.ID, Page: "https://chatgpt.com/"})
 	}
 	return out

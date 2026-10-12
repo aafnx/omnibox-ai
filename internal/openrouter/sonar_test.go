@@ -36,3 +36,31 @@ func mustJSON(v any) string {
 	data, _ := json.Marshal(v)
 	return string(data)
 }
+
+func TestVoiceModelAndTranscribe(t *testing.T) {
+	list := []Model{{ID: "openai/gpt-audio", PromptUSD: 2.5, Caps: Caps{Audio: true}}, {ID: "google/gemini-2.5-flash", PromptUSD: 0.3, Caps: Caps{Audio: true}},
+		{ID: "google/gemini-2.5-flash-image", PromptUSD: 0.1, Caps: Caps{Audio: true}}, {ID: "anthropic/claude", PromptUSD: 3}}
+	if m, ok := VoiceModel(list, ""); !ok || m != "google/gemini-2.5-flash" {
+		t.Fatalf("%q", m)
+	}
+	if m, _ := VoiceModel(list, "openai/gpt-audio"); m != "openai/gpt-audio" {
+		t.Fatalf("chosen: %q", m)
+	}
+	if m, _ := VoiceModel(list, "anthropic/claude"); m != "google/gemini-2.5-flash" {
+		t.Fatalf("a model that does not hear is not chosen: %q", m)
+	}
+	if _, ok := VoiceModel(list[3:], ""); ok {
+		t.Fatal("no model hears audio")
+	}
+	var body map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":" Привет, как дела? "}}],"usage":{"cost":0.0002}}`))
+	}))
+	defer srv.Close()
+	c := &Client{Key: "sk-or-v1-0123456789abcdef0123", BaseURL: srv.URL}
+	text, cost, err := c.Transcribe(context.Background(), "google/gemini-2.5-flash", "UklGRg==")
+	if err != nil || text != "Привет, как дела?" || cost != 0.0002 || !strings.Contains(mustJSON(body), `"format":"wav"`) {
+		t.Fatalf("%q %v %v %v", text, cost, err, body)
+	}
+}

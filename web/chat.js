@@ -144,7 +144,7 @@ function renderPicker(){const m=curModel();const btn=byId('picker-btn');
   const grp=(title,list)=>{if(!list.length)return '';const key='p:'+title;const shut=!q&&collapsed.has(key);return `<button type="button" class="grp-btn h4" data-grp="${key}" aria-expanded="${!shut}"><span>${title}</span><span class="grp-n">${list.length}</span><svg class="i chev${shut?' shut':''}"><use href="#i-down"/></svg></button>${shut?'':list.map(pickerItem).join('')}`;};
   const cloudOff=!S.cloud?.connected?'<div class="note">OpenRouter не подключён: <a href="#settings" data-go="settings" data-jump-after="s-cloud" class="ink">добавить ключ</a>.</div>':'';
   const gptOff=!S.library?.chatgpt?.connected?'<div class="note">ChatGPT не подключён: <a href="#settings" data-go="settings" data-jump-after="s-gpt" class="ink">войти по подписке</a>.</div>':'';
-  setHTML(byId('picker-list'),(grp('Избранные',all.filter(x=>x.favorite))+grp('Локальные модели',all.filter(x=>!x.favorite&&x.source==='local'))+grp('ChatGPT',all.filter(x=>!x.favorite&&x.source==='chatgpt'))+grp('OpenRouter',all.filter(x=>!x.favorite&&x.source==='cloud'))||'<div class="note">Ничего не найдено</div>')+gptOff+cloudOff);
+  setHTML(byId('picker-list'),(grp('Избранные',all.filter(x=>x.favorite))+grp('Локальные модели',all.filter(x=>x.source==='local'))+grp('ChatGPT',all.filter(x=>x.source==='chatgpt'))+grp('OpenRouter',all.filter(x=>x.source==='cloud'))||'<div class="note">Ничего не найдено</div>')+gptOff+cloudOff);
   byId('picker-note').textContent=m?.source==='cloud'?'Облачная модель: запрос уходит в OpenRouter, локальная модель продолжает работать.':m?.source==='chatgpt'?'Модель подписки ChatGPT: запрос уходит в OpenAI и расходует лимиты подписки; локальная модель продолжает работать.':'Другая локальная модель запустится вместо текущей, это займёт 10–60 секунд.';}
 // ── context: how much of the model's window the chat fills ──
 // The window is the context the local model runs with (or will start with), or the cloud model's limit.
@@ -377,18 +377,49 @@ function sendEdit(msg){const id=msg.dataset.id,text=(msg.querySelector('.edit-ta
 async function switchBranch(btn){if(C.busy||!C.chat)return;stopFollowUps();
   C.chat=await api('/api/chats',{action:'branch',id:C.chat.id,message_id:btn.dataset.branch,index:+btn.dataset.to});renderChat();showChatCost();}
 
-// ── voice: dictation and reading aloud, both by the browser ──
-// Recognition is the browser's own: Chrome and Edge send the sound to Google's or Microsoft's
-// service, Safari recognizes on the device when it can. Reading aloud uses the system's voices.
-const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
-function renderMic(){const b=byId('mic-btn');b.hidden=!SR;b.setAttribute('aria-pressed',String(!!rec));b.classList.toggle('rec',!!rec);
-  b.title=rec?'Слушаю… нажмите, чтобы закончить':'Голосовой ввод: распознаёт браузер (Chrome и Edge — через облачный сервис Google или Microsoft)';}
-function toggleMic(){if(rec){rec.stop();return;}if(!SR)return;const ta=byId('prompt'),base=ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value;
-  rec=new SR();rec.lang='ru-RU';rec.interimResults=true;rec.continuous=true;
-  rec.onresult=e=>{let t='';for(const r of e.results)t+=r[0].transcript;ta.value=base+t;};
-  rec.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed')notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);else if(e.error!=='no-speech'&&e.error!=='aborted')notice('Голосовой ввод прервался.',true);};
+// ── voice: dictation and reading aloud ──
+// Recognition is the browser's own where it works: Chrome and Edge send the sound to Google's or
+// Microsoft's service, Safari recognizes on the device. Brave has the API but no service behind
+// it ("network" at once): there, or when chosen in the settings, the panel records the voice and
+// an OpenRouter model that hears audio writes it down. Reading aloud uses the system's voices.
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null,recording=null,transcribing=false;
+const canRecord=()=>!!(navigator.mediaDevices?.getUserMedia&&window.MediaRecorder);
+function voiceServer(){if(S.chatSettings?.voice_server||!SR)return true;try{return localStorage.getItem('omnibox-voice-server')==='1';}catch(e){return false;}}
+function renderMic(){const b=byId('mic-btn');b.hidden=!SR&&!canRecord();const on=!!rec||!!recording;b.setAttribute('aria-pressed',String(on));b.classList.toggle('rec',on);b.disabled=transcribing;
+  b.title=transcribing?'Распознаём запись…':on?'Слушаю… нажмите, чтобы закончить':voiceServer()?'Голосовой ввод: запись распознаёт модель OpenRouter':'Голосовой ввод: распознаёт браузер (Chrome и Edge — через облачный сервис Google или Microsoft)';}
+function insertDictation(text){const ta=byId('prompt');if(!text)return;ta.value=(ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value)+text;ta.dispatchEvent(new Event('input'));ta.focus();}
+function toggleMic(){if(rec){rec.stop();return;}if(recording){recording.stop();return;}if(transcribing)return;
+  if(voiceServer()){startRecording();return;}
+  const ta=byId('prompt'),base=ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value;
+  rec=new SR();rec.lang='ru-RU';rec.interimResults=true;rec.continuous=true;let heard=false;
+  rec.onresult=e=>{heard=true;let t='';for(const r of e.results)t+=r[0].transcript;ta.value=base+t;};
+  rec.onerror=e=>{if(e.error==='not-allowed')notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);
+    else if((e.error==='network'||e.error==='service-not-allowed')&&!heard&&canRecord()){
+      // The browser has no recognition service (Brave): record instead, from now on.
+      try{localStorage.setItem('omnibox-voice-server','1');}catch(x){}rec.onend=null;rec=null;
+      notice('Этот браузер не распознаёт речь сам — записываю голос, текст распознает модель OpenRouter. Говорите и нажмите микрофон ещё раз.');startRecording();}
+    else if(e.error!=='no-speech'&&e.error!=='aborted')notice('Голосовой ввод прервался.',true);};
   rec.onend=()=>{rec=null;renderMic();byId('prompt').focus();};
   try{rec.start();}catch(e){rec=null;}renderMic();}
+async function startRecording(){if(!canRecord()){notice('Этот браузер не умеет записывать звук.',true);return;}
+  if(!S.cloud?.connected){notice('Для голосового ввода в этом браузере нужен OpenRouter: «Настройки → OpenRouter». Или откройте панель в Chrome, Edge или Safari.',true);return;}
+  let stream;try{stream=await navigator.mediaDevices.getUserMedia({audio:true});}catch(e){notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);return;}
+  const mr=new MediaRecorder(stream),chunks=[];mr.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+  const limit=setTimeout(()=>{if(mr.state==='recording')mr.stop();},230000);
+  mr.onstop=async()=>{clearTimeout(limit);stream.getTracks().forEach(t=>t.stop());recording=null;transcribing=true;renderMic();
+    try{const wav=await toWav(new Blob(chunks,{type:mr.mimeType}));const d=await api('/api/chat/transcribe',{data:wav});
+      if(d.text)insertDictation(d.text);else notice('Речь не распознана.',true);}catch(e){fail(e);}finally{transcribing=false;renderMic();}};
+  recording=mr;mr.start();renderMic();}
+// toWav turns a recording into 16 kHz mono WAV in base64: every model that hears audio reads it.
+async function toWav(blob){const AC=window.AudioContext||window.webkitAudioContext,ctx=new AC();
+  try{const src=await ctx.decodeAudioData(await blob.arrayBuffer());const rate=16000,n=Math.max(1,Math.ceil(src.duration*rate));
+    const off=new OfflineAudioContext(1,n,rate),node=off.createBufferSource();node.buffer=src;node.connect(off.destination);node.start();
+    return wavBase64((await off.startRendering()).getChannelData(0),rate);}finally{ctx.close?.();}}
+function wavBase64(pcm,rate){const buf=new ArrayBuffer(44+pcm.length*2),v=new DataView(buf),str=(o,t)=>{for(let i=0;i<t.length;i++)v.setUint8(o+i,t.charCodeAt(i));};
+  str(0,'RIFF');v.setUint32(4,36+pcm.length*2,true);str(8,'WAVE');str(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);str(36,'data');v.setUint32(40,pcm.length*2,true);
+  for(let i=0;i<pcm.length;i++){const x=Math.max(-1,Math.min(1,pcm[i]));v.setInt16(44+i*2,x<0?x*0x8000:x*0x7fff,true);}
+  const bytes=new Uint8Array(buf);let bin='';for(let i=0;i<bytes.length;i+=0x8000)bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));return btoa(bin);}
 // Text to read: Markdown marks, links and citation numbers out; code is named, not spelled.
 function speechText(t){return String(t).replace(/```[\s\S]*?(```|$)/g,' (фрагмент кода) ').replace(/`([^`]*)`/g,'$1').replace(/!?\[([^\]]*)\]\([^)]*\)/g,'$1').replace(/\[\d{1,2}\]/g,'')
   .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm,'').replace(/[*_~|]/g,'').replace(/\$\$?/g,'').replace(/\n{2,}/g,'\n').trim();}

@@ -392,6 +392,11 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.equal(nodes['gpt-setup'].hidden,false);assert.equal(nodes['gpt-install'].disabled,true);assert.ok(nodes['gpt-install-msg'].textContent.includes('25%'),nodes['gpt-install-msg'].textContent);
   // In the chat: a group of its own, a "subscription" pill and the limits under the message box.
   run(`S.library.chatgpt={connected:true};S.library.models.push({key:'chatgpt:gpt-5.5',source:'chatgpt',engine:'chatgpt',id:'gpt-5.5',name:'GPT-5.5',caps:{vision:true,reasoning:true},reasoning:{mode:'always',efforts:['low','high'],default:'low'}});S.gptLimits=${gl}`);
+  // A favourite stays in its own group too, with a filled star; ChatGPT's own search shows as a capability.
+  run("S.library.models.find(m=>m.key==='chatgpt:gpt-5.5').favorite=true;S.library.models.find(m=>m.key==='chatgpt:gpt-5.5').caps.search=true;C.pickerQ='';document.getElementById('picker-menu').hidden=false;renderPicker()");
+  const favl=nodes['picker-list'].innerHTML;assert.equal((favl.match(/data-pick-model="chatgpt:gpt-5.5"/g)||[]).length,2,'in «Избранные» and in «ChatGPT»');assert.ok(favl.includes('class="pstar on"')&&favl.includes('Веб-поиск'),favl);
+  run("M.engineF='all';renderModels()");assert.equal((nodes['model-list'].innerHTML.match(/data-cloud="chatgpt:gpt-5.5"/g)||[]).length,2,'the models page keeps it in its group too');
+  run("S.library.models.find(m=>m.key==='chatgpt:gpt-5.5').favorite=false;document.getElementById('picker-menu').hidden=true");
   const pi=run("pickerItem(modelByKey('chatgpt:gpt-5.5'))");assert.ok(pi.includes('Подписка')&&pi.includes('data-pick-star="chatgpt:gpt-5.5"')&&pi.includes('aria-pressed="false"'),pi);
   // A ChatGPT model searches with OpenAI's search when it is on, even with no engine set up; another model needs the engine.
   run("S.chatSettings={search_ready:false,chatgpt_search:true};C.chosen='chatgpt:gpt-5.5';renderWeb()");assert.equal(run('webMode()'),'openai');assert.equal(nodes['web-host'].textContent,'поиск OpenAI');

@@ -260,18 +260,19 @@ func (c *chatSide) handlers(local func(ctx context.Context, session string, body
 		KeepHours: func() int { return c.Store.Get().ChatSettings().RetentionHours }}
 	run := c.runner(local)
 	return map[string]http.Handler{
-		"/api/chats":          history,
-		"/api/assistants":     history,
-		"/api/chat/send":      run,
-		"/api/chat/followups": http.HandlerFunc(run.FollowUps),
-		"/api/chat/title":     http.HandlerFunc(run.Title),
-		"/api/chat/active":    http.HandlerFunc(run.Active),
-		"/api/chat/stream":    http.HandlerFunc(run.Follow),
-		"/api/chat/stop":      http.HandlerFunc(run.Stop),
-		"/api/library":        http.HandlerFunc(c.serveLibrary),
-		"/api/cloud":          http.HandlerFunc(c.serveCloud),
-		"/api/chatgpt":        http.HandlerFunc(c.serveChatGPT),
-		"/api/chat-settings":  http.HandlerFunc(c.serveSettings),
+		"/api/chats":           history,
+		"/api/assistants":      history,
+		"/api/chat/send":       run,
+		"/api/chat/followups":  http.HandlerFunc(run.FollowUps),
+		"/api/chat/title":      http.HandlerFunc(run.Title),
+		"/api/chat/active":     http.HandlerFunc(run.Active),
+		"/api/chat/stream":     http.HandlerFunc(run.Follow),
+		"/api/chat/stop":       http.HandlerFunc(run.Stop),
+		"/api/library":         http.HandlerFunc(c.serveLibrary),
+		"/api/cloud":           http.HandlerFunc(c.serveCloud),
+		"/api/chatgpt":         http.HandlerFunc(c.serveChatGPT),
+		"/api/chat/transcribe": http.HandlerFunc(c.serveTranscribe),
+		"/api/chat-settings":   http.HandlerFunc(c.serveSettings),
 	}
 }
 
@@ -446,6 +447,60 @@ func (c *chatSide) serveCloud(w http.ResponseWriter, r *http.Request) {
 	reply(w, http.StatusOK, c.cloudView())
 }
 
+// maxVoice bounds a recording: about four minutes of 16 kHz mono WAV, in base64.
+const maxVoice = 11 << 20
+
+// serveTranscribe is POST /api/chat/transcribe: a voice recording from a browser that cannot
+// recognize speech itself, written down by an OpenRouter model that hears audio. The recording
+// is not stored.
+func (c *chatSide) serveTranscribe(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		reply(w, http.StatusMethodNotAllowed, map[string]string{"error": "Метод запрещён."})
+		return
+	}
+	if !strings.HasPrefix(strings.ToLower(r.Header.Get("Content-Type")), "application/json") || r.ContentLength > maxVoice {
+		replyError(w, errors.New("Запись длиннее четырёх минут: разбейте её на части."))
+		return
+	}
+	var in struct {
+		Data string `json:"data"` // base64 of a WAV file
+	}
+	dec := json.NewDecoder(io.LimitReader(r.Body, maxVoice))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&in); err != nil || len(in.Data) < 64 || !strings.HasPrefix(in.Data, "UklGR") {
+		replyError(w, errors.New("Некорректная запись голоса."))
+		return
+	}
+	cl := c.client()
+	if cl == nil {
+		replyError(w, errors.New("Этот браузер не распознаёт речь сам. Подключите OpenRouter («Настройки → OpenRouter») — голос распознает модель со слухом — или откройте панель в Chrome, Edge или Safari."))
+		return
+	}
+	list, _, err := c.Catalog.Get(r.Context(), false)
+	if err != nil && list == nil {
+		replyError(w, err)
+		return
+	}
+	model, ok := openrouter.VoiceModel(list, c.Store.Get().ChatSettings().VoiceModel)
+	if !ok {
+		replyError(w, errors.New("В OpenRouter не нашлось модели, которая понимает аудио."))
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), 90*time.Second)
+	defer cancel()
+	text, cost, err := cl.Transcribe(ctx, model, in.Data)
+	if cost > 0 {
+		if err := c.Spend.Add(model, cost, openrouter.SourceChat); err != nil {
+			c.logf("openrouter: spend ledger: %v", err)
+		}
+	}
+	if err != nil {
+		replyError(w, err)
+		return
+	}
+	reply(w, http.StatusOK, map[string]any{"text": text, "model": model, "cost_usd": cost})
+}
+
 // serveChatGPT is the ChatGPT section: installing Codex, the sign-in with a device code, the
 // account and its limits (asked from OpenAI only with ?account=1 or "limits") and the settings.
 func (c *chatSide) serveChatGPT(w http.ResponseWriter, r *http.Request) {
@@ -572,6 +627,8 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 		SearchEngine   *string `json:"search_engine"`
 		SonarModel     *string `json:"sonar_model"`
 		PlanQueries    *bool   `json:"plan_queries"`
+		VoiceServer    *bool   `json:"voice_server"`
+		VoiceModel     *string `json:"voice_model"`
 		Engine         string  `json:"engine"`
 		Key            string  `json:"key"`
 	}
@@ -622,6 +679,12 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			if in.PlanQueries != nil {
 				s.NoSearchPlan = !*in.PlanQueries
+			}
+			if in.VoiceServer != nil {
+				s.VoiceServer = *in.VoiceServer
+			}
+			if in.VoiceModel != nil {
+				s.VoiceModel = strings.TrimSpace(*in.VoiceModel)
 			}
 			cfg.Chat = &s
 			return nil
@@ -720,7 +783,8 @@ func (c *chatSide) settingsView() map[string]any {
 		"search_language": s.SearchLanguage, "search_default": s.SearchDefault, "site_icons": s.SiteIcons, "read_pages": !s.NoReadPages, "auto_title": !s.NoAutoTitle,
 		"follow_ups": s.FollowUps, "follow_up_model": s.FollowUpModel, "chats": len(list), "chats_bytes": size,
 		"search_engine": s.SearchEngine, "sonar_model": sonarModel(s), "sonar_models": openrouter.SonarModels, "plan_queries": !s.NoSearchPlan,
-		"search_keys": c.SearchKeys.Info(), "search_ready": c.searchReady(s), "openrouter": c.client() != nil, "chatgpt_search": c.openaiSearch()}
+		"search_keys": c.SearchKeys.Info(), "search_ready": c.searchReady(s), "openrouter": c.client() != nil, "chatgpt_search": c.openaiSearch(),
+		"voice_server": s.VoiceServer, "voice_model": s.VoiceModel}
 }
 
 // cloudRoute shows the favourite OpenRouter models to /v1 clients when the owner allowed it.

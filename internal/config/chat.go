@@ -33,6 +33,10 @@ type Chat struct {
 	FollowUps bool `json:"follow_ups,omitempty"`
 	// NoSearchPlan searches with the question's own words: the model does not write the queries.
 	NoSearchPlan bool `json:"no_search_plan,omitempty"`
+	// VoiceServer writes dictation down with an OpenRouter model even where the browser could;
+	// VoiceModel is that model (empty picks one that hears audio).
+	VoiceServer bool   `json:"voice_server,omitempty"`
+	VoiceModel  string `json:"voice_model,omitempty"`
 	// NoAutoTitle keeps a new chat's title from its first message: the model does not name it.
 	NoAutoTitle bool `json:"no_auto_title,omitempty"`
 	// FollowUpModel writes the suggestions, titles and search queries: empty is the chat's own model, otherwise an
@@ -182,6 +186,9 @@ func (c *Chat) Validate() error {
 	case "", "perplexity", "tavily", "brave", "sonar":
 	default:
 		return errors.New("Поисковая система: SearXNG, Perplexity, Tavily, Brave Search или Perplexity Sonar.")
+	}
+	if c.VoiceModel != "" && !ValidCloudModel(c.VoiceModel) {
+		return errors.New("Модель для голоса: модель OpenRouter, например google/gemini-2.5-flash.")
 	}
 	if c.SonarModel != "" && (!ValidCloudModel(c.SonarModel) || !strings.HasPrefix(c.SonarModel, "perplexity/")) {
 		return errors.New("Модель Sonar: модель Perplexity в OpenRouter, например perplexity/sonar.")

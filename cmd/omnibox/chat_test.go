@@ -218,3 +218,16 @@ func TestSearchEngineSettings(t *testing.T) {
 		t.Fatalf("%v", err)
 	}
 }
+
+// A recording is written down only through OpenRouter; anything but a WAV is refused.
+func TestTranscribeNeedsOpenRouterAndWav(t *testing.T) {
+	c, _ := chatRig(t)
+	h := http.HandlerFunc(c.serveTranscribe)
+	if w := post(h, "/api/chat/transcribe", `{"data":"not audio"}`); w.Code != 400 || !strings.Contains(w.Body.String(), "Некорректная запись") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	wav := `{"data":"UklGR` + strings.Repeat("A", 80) + `"}`
+	if w := post(h, "/api/chat/transcribe", wav); w.Code != 400 || !strings.Contains(w.Body.String(), "Подключите OpenRouter") {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+}
