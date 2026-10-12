@@ -18,6 +18,8 @@ type Chat struct {
 	SearchLanguage string `json:"search_language,omitempty"` // "", ru or en
 	// SearchDefault turns web search on in new chats.
 	SearchDefault bool `json:"search_default"`
+	// NoReadPages keeps the search to SearXNG's snippets: the pages found are not opened.
+	NoReadPages bool `json:"no_read_pages,omitempty"`
 	// SiteIcons shows the sources' own icons, which the browser loads from each site; off, the
 	// sources get letter badges and the panel loads nothing from outside.
 	SiteIcons bool `json:"site_icons,omitempty"`

@@ -15,7 +15,7 @@ async function saveGateway(body){const d=await api('/api/gateway',body);ST.gatew
 // ── web search and chat data ──
 function renderChatSettings(){const s=S.chatSettings;if(!s)return;byId('searx').value=s.search_url||'';byId('search-n').value=String(s.search_results);
   if(!['3','5','8'].includes(String(s.search_results)))byId('search-n').insertAdjacentHTML('beforeend',`<option value="${s.search_results}" selected>${s.search_results}</option>`);
-  byId('search-lang').value=s.search_language||'';byId('search-default').checked=!!s.search_default;byId('site-icons').checked=!!s.site_icons;
+  byId('search-lang').value=s.search_language||'';byId('search-default').checked=!!s.search_default;byId('site-icons').checked=!!s.site_icons;byId('read-pages').checked=s.read_pages!==false;
   // Suggestions: the chat's own model or a favourite OpenRouter one; another local model would have to be started.
   byId('follow-on').checked=!!s.follow_ups;const fm=s.follow_up_model||'',favs=models().filter(m=>m.source==='cloud'&&m.favorite);
   byId('follow-model').innerHTML='<option value="">Та же модель, что в чате</option>'+favs.map(m=>`<option value="${esc(m.key)}">${esc(m.name)} · OpenRouter</option>`).join('')+(fm&&!favs.some(m=>m.key===fm)?`<option value="${esc(fm)}">${esc(chatModelName(fm))} · OpenRouter</option>`:'');
@@ -142,7 +142,7 @@ byId('api-save').addEventListener('click',()=>saveGateway({action:'save',base_ur
   public_origin:byId('public-origin').value.trim(),trusted_proxies:byId('trusted').value.split(',').map(s=>s.trim()).filter(Boolean)}).then(()=>notice('Настройки API сохранены.')).catch(fail));
 byId('searx-check').addEventListener('click',async()=>{const st=byId('search-state');st.textContent='Проверяем…';st.className='pill';
   try{const d=await api('/api/chat-settings',{action:'check-search',search_url:byId('searx').value.trim()});st.textContent=`Работает · ${d.search_ms} мс`;st.className='pill ok';}catch(e){st.textContent='Ошибка';st.className='pill warn';fail(e);}});
-byId('search-save').addEventListener('click',()=>saveChatSettings({search_url:byId('searx').value.trim(),search_results:Number(byId('search-n').value),search_language:byId('search-lang').value,search_default:byId('search-default').checked,site_icons:byId('site-icons').checked}).then(()=>notice('Настройки веб-поиска сохранены.')).catch(fail));
+byId('search-save').addEventListener('click',()=>saveChatSettings({search_url:byId('searx').value.trim(),search_results:Number(byId('search-n').value),search_language:byId('search-lang').value,search_default:byId('search-default').checked,site_icons:byId('site-icons').checked,read_pages:byId('read-pages').checked}).then(()=>notice('Настройки веб-поиска сохранены.')).catch(fail));
 byId('or-connect').addEventListener('click',async()=>{const key=byId('or-key').value.trim();byId('or-key').value='';if(!key){notice('Вставьте ключ OpenRouter.',true);return;}
   try{await cloudAction({action:'key-save',key});notice('OpenRouter подключён: список моделей загружен.');await Promise.all([refreshAccount(),refreshLibrary()]);renderCloud();}catch(e){fail(e);}});
 byId('or-disconnect').addEventListener('click',()=>cloudAction({action:'key-forget'}).then(()=>{S.account=null;renderNow();notice('Ключ OpenRouter удалён с ПК.');return refreshLibrary();}).catch(fail));

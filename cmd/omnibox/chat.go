@@ -149,6 +149,7 @@ func (c *chatSide) runner(local func(ctx context.Context, session string, body [
 			}
 			return nil, errors.New("OpenRouter не подключён: добавьте ключ в «Настройки → OpenRouter».")
 		},
+		Read: websearch.Reader{}.Read,
 		Search: func(ctx context.Context, q string) ([]websearch.Result, error) {
 			s := c.Store.Get().ChatSettings()
 			return websearch.Client{URL: s.SearchURL}.Search(ctx, q, s.SearchLanguage, s.SearchResults)
@@ -381,6 +382,7 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 		SearchDefault  *bool   `json:"search_default"`
 		SiteIcons      *bool   `json:"site_icons"`
 		FollowUps      *bool   `json:"follow_ups"`
+		ReadPages      *bool   `json:"read_pages"`
 		FollowUpModel  *string `json:"follow_up_model"`
 	}
 	if err := body(r, &in); err != nil {
@@ -409,6 +411,9 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			if in.SiteIcons != nil {
 				s.SiteIcons = *in.SiteIcons
+			}
+			if in.ReadPages != nil {
+				s.NoReadPages = !*in.ReadPages
 			}
 			if in.FollowUps != nil {
 				s.FollowUps = *in.FollowUps
@@ -472,7 +477,7 @@ func (c *chatSide) settingsView() map[string]any {
 		}
 	}
 	return map[string]any{"retention_hours": s.RetentionHours, "search_url": s.SearchURL, "search_results": s.SearchResults,
-		"search_language": s.SearchLanguage, "search_default": s.SearchDefault, "site_icons": s.SiteIcons,
+		"search_language": s.SearchLanguage, "search_default": s.SearchDefault, "site_icons": s.SiteIcons, "read_pages": !s.NoReadPages,
 		"follow_ups": s.FollowUps, "follow_up_model": s.FollowUpModel, "chats": len(list), "chats_bytes": size}
 }
 

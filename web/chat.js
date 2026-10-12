@@ -51,7 +51,8 @@ function metaHTML(m){const x=m.meta||{};const parts=[esc(chatModelName(m.model))
   if(x.tokens_per_second)parts.push(`${String(x.tokens_per_second).replace('.',',')} ток/с`);
   return parts.map(p=>`<span>${p}</span>`).join('')+(x.cost_usd?`<span class="cost" title="Стоимость по данным OpenRouter">${money(x.cost_usd)}</span>`:'');}
 function traceHTML(m){const x=m.meta||{};let h='';
-  if(x.searches?.length)h+=`<details class="step"><summary><svg class="i i15"><use href="#i-globe"/></svg>Искал в интернете · ${x.searches.length} ${plural(x.searches.length,'запрос','запроса','запросов')}${x.sources?.length?` · ${x.sources.length} ${plural(x.sources.length,'источник','источника','источников')}`:''}</summary><div class="in">${x.searches.map(q=>`<span>«${esc(q)}»</span>`).join('')}</div></details>`;
+  const pages=x.pages||[];
+  if(x.searches?.length||pages.length)h+=`<details class="step"><summary><svg class="i i15"><use href="#i-globe"/></svg>${x.searches?.length?`Искал в интернете · ${x.searches.length} ${plural(x.searches.length,'запрос','запроса','запросов')}`:'Читал страницы'}${x.sources?.length?` · ${x.sources.length} ${plural(x.sources.length,'источник','источника','источников')}`:''}${pages.length?` · прочитано ${pages.length} ${plural(pages.length,'страница','страницы','страниц')}`:''}</summary><div class="in">${(x.searches||[]).map(q=>`<span>«${esc(q)}»</span>`).join('')}${pages.map(u=>`<span class="rd">Прочитано: <a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(u)||u)}</a></span>`).join('')}</div></details>`;
   return h?`<div class="trace">${h}</div>`:'';}
 function thinkHTML(m,open){if(!m.reasoning)return '';const s=m.reasoning_seconds?` · ${String(m.reasoning_seconds).replace('.',',')} с`:'';
   return `<details class="step think"${open?' open':''}><summary><svg class="i i15"><use href="#i-brain"/></svg>Размышления${s}</summary><div class="in">${esc(m.reasoning)}</div></details>`;}
@@ -246,6 +247,7 @@ async function send(opts={}){if(C.busy)return;stopFollowUps();const m=curModel()
         else if(ev==='delta'){answer+=v.t;if(!pending)pending=requestAnimationFrame(paintAnswer);}
         else if(ev==='reasoning'){thinking+=v.t;const d=live.querySelector('details.think');d.hidden=false;d.querySelector('.in').textContent=thinking;}
         else if(ev==='search'){live.querySelector('.trace').insertAdjacentHTML('beforeend',`<span class="status-line"><svg class="i i15"><use href="#i-globe"/></svg>Ищу: «${esc(v.query)}»</span>`);scrollDown();}
+        else if(ev==='read'){live.querySelector('.trace').insertAdjacentHTML('beforeend',`<span class="status-line"><svg class="i i15"><use href="#i-file"/></svg>Читаю: ${esc(hostOf(v.url)||v.url)}</span>`);scrollDown();}
         else if(ev==='sources'){sources=v||[];}
         else if(ev==='status'){const s=live.querySelector('.status-line:last-child');s.hidden=false;s.textContent=v.text;}
         else if(ev==='done'){done=v;}}}

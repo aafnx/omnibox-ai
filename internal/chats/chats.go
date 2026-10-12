@@ -159,6 +159,8 @@ type Meta struct {
 	CostUSD         float64  `json:"cost_usd"`
 	Sources         []Source `json:"sources,omitempty"`
 	Searches        []string `json:"searches,omitempty"`
+	// Pages are the addresses of the sources read in full for this answer.
+	Pages []string `json:"pages,omitempty"`
 	// FollowUps are questions the user may ask next, written after the answer on request.
 	FollowUps []string `json:"follow_ups,omitempty"`
 }

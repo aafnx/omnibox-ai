@@ -51,8 +51,9 @@ type Runner struct {
 	// Cloud returns the OpenRouter client with the saved key.
 	Cloud func() (*openrouter.Client, error)
 	Spend *openrouter.Spend
-	// Search asks SearXNG.
+	// Search asks SearXNG; Read opens a page of the results or one the user named.
 	Search func(ctx context.Context, query string) ([]websearch.Result, error)
+	Read   func(ctx context.Context, url string) (websearch.Page, error)
 	Now    func() time.Time
 	Logf   func(format string, args ...any)
 
@@ -183,6 +184,7 @@ type turn struct {
 	assistant *chats.Assistant
 	media     []map[string]any // image, audio and video parts of this message only
 	web       bool
+	read      bool // pages of the results are read in full
 	effort    string
 }
 
@@ -209,6 +211,9 @@ func (r *Runner) prepare(ctx context.Context, in Request) (*turn, error) {
 		return nil, refuse(409, "Модель %s не запущена. Выберите её в списке моделей чата — она запустится.", model.Name)
 	}
 	t := &turn{chat: chat, model: model, context: ctxLen, web: in.Web, effort: reasoning.Choose(model.Reasoning, in.Effort)}
+	if r.Config != nil {
+		t.read = in.Web && r.Read != nil && !r.Config().ChatSettings().NoReadPages
+	}
 	assistantID := chat.AssistantID
 	if in.Assistant != nil {
 		assistantID = *in.Assistant
