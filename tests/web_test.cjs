@@ -72,6 +72,10 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.ok(mth.includes('цена $5 и $10')&&mth.includes('<code>echo $HOME$</code>')&&mth.includes('echo $a$</code></pre>')&&mth.includes('data-tex="x_1"'),mth);
   assert.ok(out.includes('<ul><li>раз</li><li>два</li></ul>'));assert.ok(out.includes('<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>'));
 
+  // A long site name is cut in the chip's text, not by CSS (an overflow:hidden chip stood above the line).
+  const lc=run("md('Факт [1].',[{title:'T',url:'https://very-long-subdomain.example-news-site.com/z'}])");
+  assert.ok(lc.includes('<span class="c">very-long-subdomain.examp…</span>'),lc);
+  assert.ok(!/\.cite \.c\{[^}]*overflow:hidden/.test(css),'the citation chip keeps its text baseline');
   // Lists: bullets under a numbered item nest in it; a numbered list after a paragraph keeps counting.
   const lst=run("md('1. **Реестр.** Но:\\n   - может сломать\\n   - перезапишется\\n2. **Варианты:**\\n   - поддержка\\n\\nТекст\\n\\n3. Третий\\n- маркер')");
   assert.ok(lst.includes('<ol><li><b>Реестр.</b> Но:<ul><li>может сломать</li><li>перезапишется</li></ul></li><li><b>Варианты:</b><ul><li>поддержка</li></ul></li></ol>'),lst);

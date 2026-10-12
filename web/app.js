@@ -167,9 +167,12 @@ function inlineMd(s,sources){
   const codes=[];s=s.replace(/`([^`\n]+)`/g,(_,c)=>{codes.push(c);return `\u0000${codes.length-1}\u0000`;});
   s=s.replace(/\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]{1,800})\)/g,(_,t,u)=>`<a href="${u}" target="_blank" rel="noopener noreferrer">${t}</a>`);
   s=s.replace(/\*\*([^*\n]+)\*\*/g,'<b>$1</b>').replace(/(^|[^*\w])\*([^*\n]+)\*(?=[^*\w]|$)/g,'$1<i>$2</i>');
+  // A long site name is cut here, not by CSS: a chip with overflow:hidden sits on the line by its
+  // bottom edge and stood above the text.
+  const clipHost=h=>h.length>26?h.slice(0,25)+'…':h;
   // Citations read as the source's site; a run of them ([2][3]) is one chip with "+1", the rest in its tip.
   if(sources?.length)s=s.replace(/(?:\[\d{1,2}\](?!\())+/g,m=>{const list=[...m.matchAll(/\d+/g)].map(x=>sources[+x[0]-1]).filter(Boolean);if(!list.length)return m;
-    const tip=list.map(x=>x.title||x.url).join(' · ');return `<a class="cite" href="${esc(list[0].url)}" target="_blank" rel="noopener noreferrer" title="${esc(tip)}"><span class="c">${esc(hostOf(list[0].url)||'источник')}${list.length>1?` +${list.length-1}`:''}</span></a>`;});
+    const tip=list.map(x=>x.title||x.url).join(' · ');return `<a class="cite" href="${esc(list[0].url)}" target="_blank" rel="noopener noreferrer" title="${esc(tip)}"><span class="c">${esc(clipHost(hostOf(list[0].url)||'источник'))}${list.length>1?` +${list.length-1}`:''}</span></a>`;});
   return s.replace(/\u0000(\d+)\u0000/g,(_,i)=>`<code>${codes[+i]}</code>`);}
 // Formulas are taken out before escaping — TeX is full of < > & — and come back as spans that
 // KaTeX renders. Code is skipped: a $ in a shell line is not math. "$5 and $10" is not math either:
