@@ -59,6 +59,9 @@ type Runner struct {
 
 	// learned are parameters OpenRouter refused for a model; they are not sent again.
 	learned sync.Map
+	// jobs are the answers being written, by chat (jobs.go).
+	jobsMu sync.Mutex
+	jobs   map[string]*job
 }
 
 // File is an attached file as the browser sends it.
@@ -120,8 +123,16 @@ func (r *Runner) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusBadRequest, "Некорректный запрос сообщения.")
 		return
 	}
+	j, err := r.reserve(in.ChatID)
+	if err != nil {
+		var p *problem
+		errors.As(err, &p)
+		writeError(w, p.status, p.message)
+		return
+	}
 	turn, err := r.prepare(req.Context(), in)
 	if err != nil {
+		r.release(j)
 		var p *problem
 		if errors.As(err, &p) {
 			writeError(w, p.status, p.message)
@@ -135,14 +146,26 @@ func (r *Runner) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Сообщение не сохранено. Подробности — в журнале панели.")
 		return
 	}
-	h := w.Header()
-	h.Set("Content-Type", "text/event-stream; charset=utf-8")
-	h.Set("Cache-Control", "no-store")
-	h.Set("X-Accel-Buffering", "no")
-	h.Set("X-Content-Type-Options", "nosniff")
-	w.WriteHeader(http.StatusOK)
-	out := &stream{w: w, flush: http.NewResponseController(w)}
-	r.run(req.Context(), turn, out)
+	// The answer is the job's: this request only follows it, and its end does not stop the model.
+	ctx, cancel := context.WithTimeout(context.Background(), jobTimeout)
+	j.cancel = cancel
+	go func() {
+		defer cancel()
+		defer func() {
+			// The job runs outside the HTTP server, which used to catch a panic: it is caught here.
+			if v := recover(); v != nil {
+				r.logf("chat: answer failed: %v", v)
+				j.publish(event("status", map[string]string{"text": "Ответ прерван из-за ошибки службы. Подробности — в журнале панели."}))
+			}
+			// Released before the end is told: a browser that reads the chat after "done" finds
+			// no answer being written and does not follow it again.
+			r.release(j)
+			j.finish()
+		}()
+		r.run(ctx, turn, &stream{job: j})
+	}()
+	sseHeaders(w)
+	j.follow(req.Context(), w)
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {
@@ -154,26 +177,15 @@ func writeError(w http.ResponseWriter, status int, message string) {
 	_, _ = w.Write(body)
 }
 
-// stream writes server-sent events to the browser; a closed tab only stops the writing.
+// stream sends the answer's events to its job; a side task without a job sends nowhere.
 type stream struct {
-	w     io.Writer
-	flush *http.ResponseController
-	mu    sync.Mutex
-	gone  bool
+	job *job
 }
 
-func (s *stream) send(event string, v any) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.gone {
-		return
+func (s *stream) send(name string, v any) {
+	if s.job != nil {
+		s.job.publish(event(name, v))
 	}
-	data, _ := json.Marshal(v)
-	if _, err := fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, data); err != nil {
-		s.gone = true
-		return
-	}
-	_ = s.flush.Flush()
 }
 
 // turn is a prepared message: everything checked, the user's message stored.

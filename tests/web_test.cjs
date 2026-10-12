@@ -332,6 +332,24 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   // Dictation: a browser without speech recognition shows no microphone.
   run('renderMic()');assert.equal(nodes['mic-btn'].hidden,true);
 
+  // Background answers: "busy" is the open chat's answer; the stop button asks the service to stop.
+  run("C.streams={};C.chat={id:'bg',messages:[]}");assert.equal(run('C.busy'),null);
+  run("newStream('other',{})");assert.equal(run('C.busy'),null,'an answer in another chat does not block this one');
+  run("newStream('bg',{})");assert.equal(run('C.busy.chat'),'bg');
+  const stops=[];context.fetch=async(p,o)=>{stops.push([p,JSON.parse(o.body)]);return {ok:true,json:async()=>({stopped:true})};};
+  await run('stopAnswer()');assert.deepEqual(stops,[['/api/chat/stop',{chat_id:'bg'}]]);assert.equal(run('C.busy.ctrl.signal.aborted'),false,'the page does not cut the stream itself');
+  // The chat list marks chats whose answer is being written.
+  run("C.threads=[{id:'bg',title:'Фон',created:'2026-10-12T09:00:00Z'},{id:'x',title:'X',created:'2026-10-12T09:00:00Z'}];C.hits=null;renderThreads()");
+  assert.equal((nodes['thread-list'].innerHTML.match(/отвечает…/g)||[]).length,1);run("C.streams={}");
+  // Coming back to a chat whose answer is being written follows it from the start, then reads the chat as stored.
+  const seen=[];context.fetch=async(p)=>{seen.push(p);
+    if(p==='/api/chat/active')return {ok:true,json:async()=>({chats:['bg']})};
+    if(p.startsWith('/api/chat/stream'))return {ok:true,status:200,body:{getReader:()=>{let n=0;return {read:async()=>n++?{done:true}:{done:false,value:new TextEncoder().encode('event: delta\ndata: {"t":"Пишу"}\n\nevent: done\ndata: {"message":{"id":"a9","role":"assistant","text":"Пишу"}}\n\n')}};}}};
+    return {ok:true,json:async()=>({id:'bg',title:'Фон',messages:[{id:'u9',role:'user',text:'?'},{id:'a9',role:'assistant',text:'Пишу'}]})};};
+  await run('checkActive()');await new Promise(r=>setTimeout(r,20));
+  assert.ok(seen.includes('/api/chat/stream?chat_id=bg')&&seen.includes('/api/chats?id=bg'),seen.join(' '));assert.equal(run("Object.keys(C.streams).length"),0);
+  context.fetch=oldFetch;run("C.chat=null;C.active=new Set()");
+
   // Spending: fractions of a cent stay visible, nothing spent reads $0,00.
   assert.equal(run('money(0.00042)'),'$0,0004');assert.equal(run('money(0.00001)'),'<$0,0001');assert.equal(run('money(0)'),'$0,00');assert.equal(run('money(1.5)'),'$1,50');assert.equal(run('money(undefined)'),'$0,00');
   // The key's limit, its period, what is left, and when it expires.

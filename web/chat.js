@@ -1,6 +1,8 @@
 'use strict';
 // Chat: the threads stored on the PC, the conversation, the composer.
-const C={threads:[],hits:null,chat:null,chosen:'',web:false,attached:[],busy:null,starting:false,pickerQ:'',renaming:null,follow:null};
+const C={threads:[],hits:null,chat:null,chosen:'',web:false,attached:[],starting:false,pickerQ:'',renaming:null,follow:null,streams:{},active:new Set()};
+// busy is the answer being written in the open chat, if any.
+Object.defineProperty(C,'busy',{get(){return C.chat?C.streams[C.chat.id]||null:null;},set(){}});
 try{C.chosen=localStorage.getItem('omnibox-model')||'';}catch(e){}
 let efforts={};try{efforts=JSON.parse(localStorage.getItem('omnibox-effort')||'{}')||{};}catch(e){efforts={};}
 const ACT_USER='<div class="mact"><button type="button" data-act="copy" title="Копировать" aria-label="Копировать"><svg class="i"><use href="#i-copy"/></svg></button><button type="button" data-act="edit" title="Изменить и отправить заново" aria-label="Изменить сообщение"><svg class="i"><use href="#i-edit"/></svg></button><button type="button" data-act="resend" title="Отправить ещё раз" aria-label="Отправить ещё раз"><svg class="i"><use href="#i-retry"/></svg></button><button type="button" class="del" data-act="delete" title="Удалить сообщение" aria-label="Удалить сообщение"><svg class="i"><use href="#i-trash"/></svg></button></div>';
@@ -14,7 +16,8 @@ const leftText=t=>{const h=hoursLeft(t);return h>=24?`удалится чере�
 // they never cover the title. A row being renamed is a field.
 function threadRow(t){const cur=C.chat?.id===t.id;
   if(C.renaming===t.id)return `<li class="t"><input id="thread-rename" class="trename" value="${esc(t.title)}" maxlength="120" aria-label="Название чата" data-rename-id="${t.id}"></li>`;
-  return `<li class="t"><a href="#chat" data-thread="${t.id}" class="${cur?'on':''}"><span class="tt">${esc(t.title)}</span><small>${dateShort(t.created)}${t.pinned||!t.expires?'':` · <span class="remain${hoursLeft(t)<24?' soon':''}" title="${leftText(t)}"><svg class="i"><use href="#i-clock"/></svg>${esc(remain(t))}</span>`}</small></a>`+
+  const writing=C.streams[t.id]||C.active.has(t.id);
+  return `<li class="t"><a href="#chat" data-thread="${t.id}" class="${cur?'on':''}"><span class="tt">${esc(t.title)}</span><small>${writing?'<span class="writing">отвечает…</span> · ':''}${dateShort(t.created)}${t.pinned||!t.expires?'':` · <span class="remain${hoursLeft(t)<24?' soon':''}" title="${leftText(t)}"><svg class="i"><use href="#i-clock"/></svg>${esc(remain(t))}</span>`}</small></a>`+
   `<button type="button" class="tmore" data-tmenu="${t.id}" aria-haspopup="menu" aria-expanded="false" title="Действия" aria-label="Действия с чатом «${esc(t.title)}»"><svg class="i"><use href="#i-dots"/></svg></button></li>`;}
 function threadMenu(t){const f=followOn(t);return `<button type="button" role="menuitem" data-rename="${t.id}"><svg class="i"><use href="#i-edit"/></svg>Переименовать</button>`+
   `<button type="button" role="menuitemcheckbox" aria-checked="${f}" data-follow-chat="${t.id}" class="${f?'on2':''}" title="Вопросы для продолжения под последним ответом. По умолчанию — как в «Настройки → Чат»."><svg class="i"><use href="#i-spark"/></svg>Предлагать вопросы<span class="tick">${f?'вкл':'выкл'}</span></button>`+
@@ -43,7 +46,7 @@ function renderThreads(){const list=byId('thread-list');
   setHTML(list,tg('Избранные',pin)+tg('Чаты',rest)||'<li class="group">Чатов пока нет</li>');renderKeep();}
 function renderKeep(){const k=byId('keep');const t=C.chat&&C.threads.find(x=>x.id===C.chat.id);k.hidden=!t||t.pinned||!t.expires;if(k.hidden)return;
   k.classList.toggle('soon',hoursLeft(t)<24);k.innerHTML=`<svg class="i"><use href="#i-clock"/></svg>${esc(remain(t))}`;k.title=`Создан ${dateShort(t.created)}, ${leftText(t)}. Срок меняется в «Настройки → Данные и хранение».`;}
-async function loadThreads(){const d=await api('/api/chats');C.threads=d.chats||[];renderThreads();}
+async function loadThreads(){const d=await api('/api/chats');C.threads=d.chats||[];renderThreads();checkActive();}
 
 // ── one chat ──
 function chatModelName(key){return modelByKey(key)?.name||(key||'').replace(/^(prismml|ollama|cloud):/,'');}
@@ -108,12 +111,12 @@ function followTarget(){const msgs=C.chat?.messages||[],m=msgs[msgs.length-1];re
 function renderChat(){const box=byId('message-list');const c=C.chat;
   if(!c||!c.messages?.length){setHTML(box,`<div class="empty"><b>${c?esc(c.title):'Новый чат'}</b><span>Спросите что-нибудь. Можно приложить файлы и включить поиск в интернете.</span></div>`);}
   else setHTML(box,c.messages.map((m,i)=>m.role==='user'?userHTML(m):botHTML(m,i===c.messages.length-1&&followOn(c),c.messages[i-1])).join(''));
-  enhance(box,true);showChatCost();renderKeep();scrollDown(true);}
+  enhance(box,true);const s=c&&C.streams[c.id];if(s){s.el=null;paintLive(s);}showChatCost();renderKeep();scrollDown(true);}
 function scrollDown(force){const el=byId('messages');if(force||el.scrollHeight-el.scrollTop-el.clientHeight<160)el.scrollTop=el.scrollHeight;}
 function showChatCost(){const c=byId('chat-cost');const paid=(C.chat?.messages||[]).filter(m=>m.meta?.cost_usd>0);c.hidden=!paid.length;if(!paid.length)return;
   const sum=paid.reduce((s,m)=>s+m.meta.cost_usd,0);c.innerHTML=`${money(sum)}<span class="lbl"> за чат</span>`;
   c.title=`Стоимость этого чата по данным OpenRouter: ${paid.length} ${plural(paid.length,'ответ','ответа','ответов')}. Локальные ответы бесплатны.`;}
-async function openChat(id){stopFollowUps();C.chat=await api('/api/chats?id='+encodeURIComponent(id));
+async function openChat(id,{follow=true}={}){stopFollowUps();C.chat=await api('/api/chats?id='+encodeURIComponent(id));renderSend();if(follow&&!C.streams[id])checkActive();
   if(C.chat.model&&modelByKey(C.chat.model))setChosen(C.chat.model,false);
   C.web=webDefault(C.chat.assistant_id);renderAll();}
 function newChat(){stopFollowUps();C.chat=null;C.attached=[];C.web=webDefault(S.assistants.default);C.asst=S.assistants.default||'';const a=asstById(C.asst);if(a?.model&&modelByKey(a.model))setChosen(a.model,false);renderAll();byId('prompt').focus();}
@@ -232,51 +235,95 @@ function recheckAttached(){const m=curModel();if(!m)return;const drop=C.attached
 const readB64=f=>new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result).replace(/^data:[^,]*,/,''));r.onerror=()=>reject(new Error(`«${f.name}» не прочитан.`));r.readAsDataURL(f);});
 
 // ── sending: the answer streams as server-sent events ──
+// ── sending: the service writes the answer as a job; the browser follows it ──
+// Each chat has at most one answer being written. Its state lives here, not in the page, so the
+// answer keeps going and is drawn again when the owner comes back to the chat, the tab or the
+// app; a lost connection is followed again from the start. Only the stop button stops the model.
+const LIVE='<div class="msg bot live"><div class="trace"></div><details class="step think" hidden><summary><svg class="i i15"><use href="#i-brain"/></svg><span>Размышляет…</span></summary><div class="in"></div></details><div class="md caret"></div><div class="sources-slot"></div><div class="status-line" hidden></div></div>';
+function paintLive(s){if(C.chat?.id!==s.chat)return;const box=byId('message-list');
+  if(!s.el||s.el.isConnected===false){box.querySelector('.empty')?.remove();box.querySelectorAll('.follow').forEach(el=>el.remove());box.insertAdjacentHTML('beforeend',LIVE);s.el=box.lastElementChild;}
+  const el=s.el;el.querySelector('.trace').innerHTML=s.trace.join('');
+  const th=el.querySelector('details.think');th.hidden=!s.thinking;th.querySelector('.in').textContent=s.thinking;
+  const mdEl=el.querySelector('.md');mdEl.innerHTML=md(s.answer,s.sources);enhance(mdEl,false);
+  const st=el.querySelector('.status-line:last-child');st.hidden=!s.status;st.textContent=s.status;
+  if(s.err){mdEl.classList.remove('caret');if(!el.querySelector('.err'))el.insertAdjacentHTML('beforeend',`<div class="err">${esc(s.err)}</div>`);}
+  scrollDown();}
+function schedulePaint(s){if(!s.pending)s.pending=requestAnimationFrame(()=>{s.pending=0;paintLive(s);});}
+// consume reads the job's events into the chat's state until the answer ends.
+async function consume(r,s){const reader=r.body.getReader(),dec=new TextDecoder();let buf='';
+  for(;;){const {value,done:end}=await reader.read();if(end)break;buf+=dec.decode(value,{stream:true});let i;
+    while((i=buf.indexOf('\n\n'))>=0){const block=buf.slice(0,i);buf=buf.slice(i+2);let ev='',dt='';block.split('\n').forEach(l=>{if(l.startsWith('event: '))ev=l.slice(7);else if(l.startsWith('data: '))dt+=l.slice(6);});
+      let v;try{v=JSON.parse(dt);}catch(e){continue;}
+      if(ev==='user'){s.userMessage=v;const c=C.chat?.id===s.chat?C.chat:null;const p=c?.messages?.find(m=>m.pending);if(p&&!s.again)Object.assign(p,v,{pending:false});
+        const u=byId('message-list').querySelector('.msg.user:not([data-id]),.msg.user[data-id=""]');if(u&&!s.again&&c)u.dataset.id=v.id;}
+      else if(ev==='delta'){s.answer+=v.t;}
+      else if(ev==='reasoning'){s.thinking+=v.t;}
+      else if(ev==='search'){s.trace.push(`<span class="status-line"><svg class="i i15"><use href="#i-globe"/></svg>Ищу: «${esc(v.query)}»</span>`);}
+      else if(ev==='read'){s.trace.push(`<span class="status-line"><svg class="i i15"><use href="#i-file"/></svg>Читаю: ${esc(hostOf(v.url)||v.url)}</span>`);}
+      else if(ev==='sources'){s.sources=v||[];}
+      else if(ev==='status'){s.status=v.text;}
+      else if(ev==='done'){s.done=v;}
+      schedulePaint(s);}}}
+function newStream(chat,opts){const s={chat,opts,again:opts.retry||opts.edit||'',answer:'',thinking:'',sources:[],trace:[],status:'',err:'',userMessage:null,done:null,ctrl:new AbortController(),el:null,pending:0};
+  C.streams[chat]=s;renderSend();renderThreads();return s;}
 async function send(opts={}){if(C.busy)return;stopFollowUps();if(rec)rec.stop();const m=curModel();
   if(!m){notice('Выберите модель в списке над чатом.',true);byId('picker-btn').click();return;}
   if(C.starting){notice('Модель ещё запускается — подождите несколько секунд.');return;}
   const text=opts.retry?'':(opts.text??byId('prompt').value).trim();const files=opts.retry||opts.text!==undefined?[]:C.attached;const again=opts.retry||opts.edit;
   if(!text&&!files.length&&!opts.retry)return;
   if(m.source==='local'&&!m.running){await startLocal(m);if(!modelByKey(m.key)?.running)return;}
-  if(!C.chat){C.chat=await api('/api/chats',{action:'create',model:m.key,assistant_id:chatAsst()||''});C.chat.messages=[];C.threads.unshift(C.chat);renderThreads();}
+  if(!C.chat){C.chat=await api('/api/chats',{action:'create',model:m.key,assistant_id:chatAsst()||''});C.chat.messages=[];C.threads.unshift(C.chat);
+    if(C.followNew!==undefined&&C.followNew!==!!S.chatSettings?.follow_ups){C.chat.follow_ups=C.followNew;api('/api/chats',{action:'follow-ups',id:C.chat.id,mode:C.followNew?'on':'off'}).catch(()=>{});}
+    C.followNew=undefined;renderThreads();}
   const chat=C.chat;
   let data;try{data=await Promise.all(files.map(async a=>({name:a.name,data:await readB64(a.file)})));}catch(e){fail(e);return;}
   if(C.chat?.id!==chat.id)return;
   const box=byId('message-list');if(!C.chat.messages.length)box.innerHTML='';box.querySelectorAll('.follow').forEach(el=>el.remove());
-  if(!again){box.insertAdjacentHTML('beforeend',userHTML({text,attachments:files.map(a=>({name:a.name,kind:a.kind,size:a.size}))}));if(opts.text===undefined){byId('prompt').value='';C.attached=[];renderAttached();byId('attach-warn').hidden=true;}}
-  box.insertAdjacentHTML('beforeend','<div class="msg bot live"><div class="trace"></div><details class="step think" hidden><summary><svg class="i i15"><use href="#i-brain"/></svg><span>Размышляет…</span></summary><div class="in"></div></details><div class="md caret"></div><div class="sources-slot"></div><div class="status-line" hidden></div></div>');
-  const live=box.lastElementChild;scrollDown(true);
-  const ctrl=new AbortController();C.busy=ctrl;renderSend();
+  const attachments=files.map(a=>({name:a.name,kind:a.kind,size:a.size}));
+  // The question shows at once and stays when the owner leaves and comes back during the answer.
+  if(!again){box.insertAdjacentHTML('beforeend',userHTML({text,attachments}));C.chat.messages.push({role:'user',text,attachments,pending:true});
+    if(opts.text===undefined){byId('prompt').value='';C.attached=[];renderAttached();byId('attach-warn').hidden=true;}}
+  const s=newStream(chat.id,opts);paintLive(s);scrollDown(true);
   const body={chat_id:chat.id,model:m.key,text,files:data,web:!!(C.web&&S.chatSettings?.search_url),effort:C.effort||'',assistant_id:chatAsst()||''};if(opts.retry)body.retry=opts.retry;if(opts.edit)body.edit=opts.edit;
-  let answer='',thinking='',sources=[],done=null,userMessage=null;
-  try{const r=await fetch('/api/chat/send',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:JSON.stringify(body),signal:ctrl.signal});
-    if(!r.ok){let msg=`Ошибка ${r.status}`;try{msg=(await r.json()).error||msg;}catch(e){}if(r.status===401)showLogin();throw new Error(msg);}
-    const reader=r.body.getReader(),dec=new TextDecoder();let buf='',pending=0;
-    const paintAnswer=()=>{pending=0;const el=live.querySelector('.md');el.innerHTML=md(answer,sources);enhance(el,false);if(C.chat?.id===chat.id)scrollDown();};
-    for(;;){const {value,done:end}=await reader.read();if(end)break;buf+=dec.decode(value,{stream:true});let i;
-      while((i=buf.indexOf('\n\n'))>=0){const block=buf.slice(0,i);buf=buf.slice(i+2);let ev='',dt='';block.split('\n').forEach(l=>{if(l.startsWith('event: '))ev=l.slice(7);else if(l.startsWith('data: '))dt+=l.slice(6);});
-        let v;try{v=JSON.parse(dt);}catch(e){continue;}
-        if(ev==='user'){userMessage=v;const u=box.querySelector('.msg.user:not([data-id]),.msg.user[data-id=""]');if(u&&!again)u.dataset.id=v.id;}
-        else if(ev==='delta'){answer+=v.t;if(!pending)pending=requestAnimationFrame(paintAnswer);}
-        else if(ev==='reasoning'){thinking+=v.t;const d=live.querySelector('details.think');d.hidden=false;d.querySelector('.in').textContent=thinking;}
-        else if(ev==='search'){live.querySelector('.trace').insertAdjacentHTML('beforeend',`<span class="status-line"><svg class="i i15"><use href="#i-globe"/></svg>Ищу: «${esc(v.query)}»</span>`);scrollDown();}
-        else if(ev==='read'){live.querySelector('.trace').insertAdjacentHTML('beforeend',`<span class="status-line"><svg class="i i15"><use href="#i-file"/></svg>Читаю: ${esc(hostOf(v.url)||v.url)}</span>`);scrollDown();}
-        else if(ev==='sources'){sources=v||[];}
-        else if(ev==='status'){const s=live.querySelector('.status-line:last-child');s.hidden=false;s.textContent=v.text;}
-        else if(ev==='done'){done=v;}}}
-  }catch(e){if(e.name!=='AbortError'){live.querySelector('.md').classList.remove('caret');live.insertAdjacentHTML('beforeend',`<div class="err">${esc(e.message)}</div>`);}}
-  finally{C.busy=null;renderSend();}
-  if(done?.message){const msg=done.message,target=C.chat?.id===chat.id?C.chat:chat;target.messages=target.messages||[];
-    // Answered again or edited: the question now carries the earlier versions, as stored.
-    if(again){const i=target.messages.findIndex(x=>x.id===again);const u=userMessage||target.messages[i];target.messages=(i>=0?target.messages.slice(0,i):target.messages).concat(u?[u]:[]);}
-    else if((text||files.length)&&!target.messages.some(x=>userMessage?.id&&x.id===userMessage.id)){target.messages.push(userMessage||{role:'user',text,attachments:files.map(a=>({name:a.name,kind:a.kind,size:a.size}))});}
-    if(!target.messages.some(x=>x.id===msg.id))target.messages.push(msg);
-    if(done.chat){const i=C.threads.findIndex(t=>t.id===done.chat.id);if(i>=0)C.threads[i]=done.chat;else C.threads.unshift(done.chat);target.title=done.chat.title;}
-    renderThreads();if(C.chat?.id===chat.id){renderChat();showChatCost();renderFoot();const f=followTarget();if(f)requestFollowUps(chat.id,f.id);if(titleWanted())requestTitle(chat.id);}if(msg.meta?.cost_usd)refreshAccount();
-  }else if(C.chat?.id===chat.id){setTimeout(()=>{if(C.chat?.id===chat.id)openChat(chat.id).catch(()=>{});},400);}
-  if(C.chat?.id===chat.id)scrollDown();}
-function renderSend(){const b=byId('send');b.classList.toggle('stop',!!C.busy);b.setAttribute('aria-label',C.busy?'Остановить ответ':'Отправить');b.title=C.busy?'Остановить ответ':'';
-  b.innerHTML=`<svg class="i"><use href="#${C.busy?'i-stop':'i-up'}"/></svg>`;b.disabled=false;}
+  try{const r=await fetch('/api/chat/send',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:JSON.stringify(body),signal:s.ctrl.signal});
+    if(!r.ok){let msg=`Ошибка ${r.status}`;try{msg=(await r.json()).error||msg;}catch(e){}if(r.status===401)showLogin();throw Object.assign(new Error(msg),{refused:true});}
+    await consume(r,s);
+  }catch(e){if(e.name!=='AbortError'){if(e.refused){s.err=e.message;}else s.lost=true;}}
+  finish(s,chat,text,attachments);}
+// finish ends a followed answer: the stored messages replace the provisional ones.
+function finish(s,chat,text,attachments){if(C.streams[s.chat]===s)delete C.streams[s.chat];window.cancelAnimationFrame?.(s.pending);renderSend();
+  const cur=C.chat?.id===s.chat;
+  if(s.done?.message){const msg=s.done.message;
+    if(s.done.chat){const i=C.threads.findIndex(t=>t.id===s.done.chat.id);if(i>=0)C.threads[i]=s.done.chat;else C.threads.unshift(s.done.chat);}
+    if(cur&&!s.attached){const target=C.chat;target.messages=(target.messages||[]).filter(x=>!x.pending||!s.userMessage);
+      // Answered again or edited: the question now carries the earlier versions, as stored.
+      if(s.again){const i=target.messages.findIndex(x=>x.id===s.again);const u=s.userMessage||target.messages[i];target.messages=(i>=0?target.messages.slice(0,i):target.messages).concat(u?[u]:[]);}
+      else if((text||attachments?.length)&&!target.messages.some(x=>s.userMessage?.id&&x.id===s.userMessage.id)){target.messages.push(s.userMessage||{role:'user',text,attachments});}
+      if(!target.messages.some(x=>x.id===msg.id))target.messages.push(msg);if(s.done.chat)target.title=s.done.chat.title;}
+    renderThreads();
+    if(cur&&s.attached){openChat(s.chat,{follow:false}).catch(()=>{});}
+    else if(cur){renderChat();showChatCost();renderFoot();const f=followTarget();if(f)requestFollowUps(s.chat,f.id);if(titleWanted())requestTitle(s.chat);}
+    if(msg.meta?.cost_usd)refreshAccount();return;}
+  renderThreads();
+  if(s.err){if(cur)paintLive(s);if(cur&&!s.again&&C.chat.messages.at(-1)?.pending)C.chat.messages.pop();return;}
+  // The connection was lost (a phone put the page to sleep) or stopped by hand: the service has
+  // the answer — follow it again, or read the chat as stored.
+  if(cur)setTimeout(()=>{if(C.chat?.id===s.chat)openChat(s.chat).catch(()=>{});},400);}
+// follow joins an answer the service is writing for a chat this page is not following.
+async function follow(chatId){if(C.streams[chatId])return;const s=newStream(chatId,{});s.attached=true;
+  try{const r=await fetch('/api/chat/stream?chat_id='+encodeURIComponent(chatId),{credentials:'same-origin',signal:s.ctrl.signal});
+    if(r.status===204||!r.ok){delete C.streams[chatId];renderSend();renderThreads();return;}
+    paintLive(s);await consume(r,s);}
+  catch(e){if(e.name!=='AbortError')s.lost=true;}
+  if(s.lost){if(C.streams[chatId]===s)delete C.streams[chatId];renderSend();return;}
+  finish(s);}
+// The chats whose answer is being written: asked when the list or a chat is opened.
+async function checkActive(){let ids=[];try{ids=(await api('/api/chat/active')).chats||[];}catch(e){return;}
+  C.active=new Set(ids);if(C.chat&&C.active.has(C.chat.id)&&!C.streams[C.chat.id])follow(C.chat.id);renderThreads();}
+async function stopAnswer(){const s=C.busy;if(!s)return;
+  try{await api('/api/chat/stop',{chat_id:s.chat});}catch(e){s.ctrl.abort();}}
+function renderSend(){const busy=!!C.busy,b=byId('send');b.classList.toggle('stop',busy);b.setAttribute('aria-label',busy?'Остановить ответ':'Отправить');b.title=busy?'Остановить ответ':'';
+  b.innerHTML=`<svg class="i"><use href="#${busy?'i-stop':'i-up'}"/></svg>`;b.disabled=false;}
 
 // ── message actions ──
 async function messageAction(act,el){const msg=el.closest('.msg');const id=msg.dataset.id;const stored=(C.chat?.messages||[]).find(m=>m.id===id);
@@ -351,7 +398,7 @@ async function delAll(all){const r=await api('/api/chats',{action:'delete-all',k
   await loadThreads();if(C.chat&&!C.threads.some(t=>t.id===C.chat.id))newChat();}
 
 // ── events ──
-byId('composer').addEventListener('submit',e=>{e.preventDefault();if(C.busy){C.busy.abort();return;}send().catch(fail);});
+byId('composer').addEventListener('submit',e=>{e.preventDefault();if(C.busy){stopAnswer();return;}send().catch(fail);});
 // Enter sends; Ctrl+Enter (or Shift+Enter) starts a new line. A phone's keyboard has no Ctrl, so on a
 // touch screen Enter starts a new line and the arrow button sends.
 const touchOnly=()=>matchMedia('(hover:none) and (pointer:coarse)').matches;
