@@ -1,1 +1,0 @@
-||window.webkitSpeechRecognition;let rec=null,recording=null,transcribing=false,dict=null;
