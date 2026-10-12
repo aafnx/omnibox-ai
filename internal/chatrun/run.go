@@ -14,6 +14,7 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/chats"
 	"github.com/aafnx/omnibox-ai/internal/openrouter"
 	"github.com/aafnx/omnibox-ai/internal/reasoning"
+	"github.com/aafnx/omnibox-ai/internal/today"
 	"github.com/aafnx/omnibox-ai/internal/websearch"
 )
 
@@ -105,7 +106,7 @@ func (r *Runner) run(ctx context.Context, t *turn, out *stream) {
 
 // conversation is the system prompt, the history that fits the context and this message.
 func (r *Runner) conversation(t *turn) []map[string]any {
-	system := []string{"Сегодня " + r.now().Format("2006-01-02") + "."}
+	system := []string{today.Prompt(r.now())}
 	if t.assistant != nil && strings.TrimSpace(t.assistant.Instructions) != "" {
 		system = append(system, t.assistant.Instructions)
 	}

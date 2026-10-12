@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+
+	"github.com/aafnx/omnibox-ai/internal/today"
 )
 
 // CloudRoute serves the OpenRouter models the owner chose to show to /v1 clients. Their requests
@@ -59,6 +61,11 @@ func (g *Gateway) cloudGenerate(w http.ResponseWriter, r *http.Request, model st
 	}
 	usage["include"] = true
 	req["usage"] = usage
+	if now := g.dateFor(g.Config()); now != nil {
+		if messages, ok := req["messages"].([]any); ok {
+			req["messages"] = today.Inject(messages, *now)
+		}
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), requestTimeout)
 	defer cancel()
 	resp, err := g.Cloud.Forward(ctx, model, req)

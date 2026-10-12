@@ -25,6 +25,7 @@ import (
 
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/platform"
+	"github.com/aafnx/omnibox-ai/internal/today"
 )
 
 const (
@@ -301,8 +302,9 @@ func intValue(v any) (int64, bool) {
 	return i, err == nil
 }
 
-// prepare checks a generation request and adds the options OmniBox enforces.
-func prepare(body []byte, route string, t Target) ([]byte, bool, *admissionError) {
+// prepare checks a generation request and adds the options OmniBox enforces; with now set, a chat
+// request also gets the current date.
+func prepare(body []byte, route string, t Target, now *time.Time) ([]byte, bool, *admissionError) {
 	json := decodeObject(body)
 	if json == nil {
 		return nil, false, &admissionError{400, "A JSON object is required."}
@@ -350,6 +352,10 @@ func prepare(body []byte, route string, t Target) ([]byte, bool, *admissionError
 			options["num_gpu"] = 0
 		}
 		json["options"] = options
+		changed = true
+	}
+	if messages, ok := json["messages"].([]any); ok && now != nil && route == "/v1/chat/completions" {
+		json["messages"] = today.Inject(messages, *now)
 		changed = true
 	}
 	streaming, _ := json["stream"].(bool)
@@ -409,7 +415,7 @@ func (g *Gateway) generate(w http.ResponseWriter, r *http.Request, cfg *config.C
 	if cfg.Storage.RequestLog == "content" && r.URL.Path != "/v1/embeddings" {
 		c = newCapture(body)
 	}
-	forward, _, perr := prepare(body, r.URL.Path, t)
+	forward, _, perr := prepare(body, r.URL.Path, t, g.dateFor(cfg))
 	if perr != nil {
 		fail(w, perr.status, perr.message)
 		return
@@ -567,4 +573,16 @@ func (u *usageReader) finish() {
 	if u.capture != nil {
 		u.capture.setBody(u.text)
 	}
+}
+
+// dateFor is the time to tell /v1 chat requests, or nil when the owner left it off.
+func (g *Gateway) dateFor(cfg *config.Config) *time.Time {
+	if !cfg.API.InjectDate {
+		return nil
+	}
+	now := time.Now()
+	if g.Now != nil {
+		now = g.Now()
+	}
+	return &now
 }

@@ -22,6 +22,7 @@ type View struct {
 	HasKey              bool   `json:"has_key"`
 	QueueDepth          int    `json:"queue_depth"`
 	QueueTimeoutSeconds int    `json:"queue_timeout_seconds"`
+	InjectDate          bool   `json:"inject_date"`
 	// The NAS reverse proxy: its HTTPS address and the addresses it connects from.
 	PublicOrigin   string    `json:"public_origin"`
 	TrustedProxies []string  `json:"trusted_proxies"`
@@ -41,7 +42,7 @@ type KeyView struct {
 // SettingsView returns the API settings without secrets; usage is the journal's count per key.
 func SettingsView(c *config.Config, usage map[string]KeyUsage) View {
 	v := View{Enabled: c.API.Enabled, PublicURL: c.API.PublicURL, RequireKey: c.API.RequireKey, HasKey: len(c.API.Keys) > 0 || c.API.KeyHash != "",
-		QueueDepth: c.API.QueueDepth, QueueTimeoutSeconds: c.API.QueueTimeout(),
+		QueueDepth: c.API.QueueDepth, QueueTimeoutSeconds: c.API.QueueTimeout(), InjectDate: c.API.InjectDate,
 		PublicOrigin: c.Panel.PublicOrigin, TrustedProxies: append([]string{}, c.Panel.TrustedProxies...), Keys: []KeyView{}}
 	for _, k := range c.API.Keys {
 		kv := KeyView{ID: config.KeyID(k.Hash), Name: k.Name}
@@ -164,6 +165,12 @@ func UpdateSettings(store *config.Store, body map[string]any) (string, error) {
 						c.Panel.TrustedProxies = append(c.Panel.TrustedProxies, ip)
 					}
 				}
+			case "inject_date":
+				on, ok := value.(bool)
+				if !ok {
+					return errors.New("inject_date: true или false.")
+				}
+				c.API.InjectDate = on
 			case "queue_depth", "queue_timeout_seconds":
 				// The panel decodes numbers as json.Number; tests and older callers pass float64.
 				n, ok := value.(float64)

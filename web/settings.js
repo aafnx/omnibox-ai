@@ -6,7 +6,7 @@ const ST={gateway:null,storage:null,update:null,editing:null,emoji:'',wipe:''};
 function renderGateway(){const g=ST.gateway;if(!g)return;const base=g.base_url||`${location.protocol}//${location.host}/v1`;
   byId('base').value=base;byId('api-state').textContent=g.enabled?'API включён':'API выключен';byId('api-state').className='pill'+(g.enabled?' ok':'');
   const run=runningModel();byId('base-hint').innerHTML=run?`Имя модели — <span class="mono">${esc(run.alias||run.id)}</span>.${S.cloud?.expose_api?' Избранные модели OpenRouter — по их id.':''}`:'Имя модели появится, когда модель запущена; его можно изменить в карточке модели.';
-  byId('require-key').checked=!!g.require_key;byId('nokey-warn').hidden=!!g.require_key;
+  byId('require-key').checked=!!g.require_key;byId('inject-date').checked=!!g.inject_date;byId('nokey-warn').hidden=!!g.require_key;
   setHTML(byId('keys'),(g.keys||[]).map(k=>`<tr><td>${esc(k.name)}</td><td>${k.created?dateShort(k.created):'—'}</td><td>${k.last_used?new Date(k.last_used).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}):'—'}</td><td class="num">${fmtN(k.requests||0)}</td><td class="num"><button class="btn ghost sm danger-text" type="button" data-revoke="${esc(k.id)}" data-name="${esc(k.name)}">Отозвать</button></td></tr>`).join('')||'<tr><td colspan="5" class="muted">Ключей нет.</td></tr>');
   byId('queue-depth').value=g.queue_depth;byId('queue-timeout').value=g.queue_timeout_seconds;byId('public-url').value=g.base_url||'';byId('public-origin').value=g.public_origin||'';byId('trusted').value=(g.trusted_proxies||[]).join(', ');}
 async function saveGateway(body){const d=await api('/api/gateway',body);ST.gateway=d.gateway;renderGateway();
@@ -134,6 +134,7 @@ function renderEngineManager(list){setHTML(byId('engine-manager'),(list||[]).map
 async function engineAction(body){const op=await operation(body);SV.engines=(await api('/api/engines')).engines;renderEngineManager(SV.engines);return op;}
 
 // ── events ──
+byId('inject-date').addEventListener('change',e=>saveGateway({action:'save',inject_date:e.target.checked}).then(()=>notice(e.target.checked?'Модели в API получают текущую дату.':'Дата в запросы API больше не добавляется.')).catch(err=>{e.target.checked=!e.target.checked;fail(err);}));
 byId('require-key').addEventListener('change',e=>{const on=e.target.checked;if(on&&!(ST.gateway?.keys||[]).length){e.target.checked=false;notice('Сначала создайте ключ ниже.',true);return;}
   saveGateway({action:'save',require_key:on}).then(()=>notice(on?'Ключ API теперь обязателен.':'API доступен без ключа.')).catch(err=>{e.target.checked=!on;fail(err);});});
 byId('key-add').addEventListener('click',()=>{const name=byId('key-name').value.trim();if(!name){notice('Введите имя клиента.',true);return;}saveGateway({action:'add',name}).then(()=>{byId('key-name').value='';}).catch(fail);});

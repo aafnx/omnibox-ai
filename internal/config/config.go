@@ -124,6 +124,9 @@ type API struct {
 	QueueDepth int `json:"queue_depth"`
 	// QueueTimeoutSeconds bounds the wait in the queue; 0 means the default of 60 s.
 	QueueTimeoutSeconds int `json:"queue_timeout_seconds,omitempty"`
+	// InjectDate tells the model of a /v1 chat request the current date and time: a line in the
+	// system message. Off by default, since it changes what clients send.
+	InjectDate bool `json:"inject_date,omitempty"`
 }
 
 // APIKey is one client's key, e.g. Jan, Pi or Open WebUI.
