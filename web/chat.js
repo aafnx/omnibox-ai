@@ -55,7 +55,7 @@ async function loadThreads(){const d=await api('/api/chats');C.threads=d.chats||
 // ── one chat ──
 function chatModelName(key){return modelByKey(key)?.name||(key||'').replace(/^(prismml|ollama|cloud):/,'');}
 function userHTML(m){const files=(m.attachments||[]).map(a=>`<span class="fchip"><svg class="i"><use href="#${KIND_ICON[a.kind]||'i-file'}"/></svg><span class="fn">${esc(a.name)}</span><span class="fs">${fsize(a.size||0)}</span></span>`).join('');
-  return `<div class="msg user" data-id="${esc(m.id||'')}">${files?`<div class="files">${files}</div>`:''}${m.text?`<div class="bubble">${esc(m.text)}</div>`:''}${ACT_USER}</div>`;}
+  return `<div class="msg user" data-id="${esc(m.id||'')}">${files?`<div class="files">${files}</div>`:''}${m.text?`<div class="bubble">${linkify(m.text)}</div>`:''}${ACT_USER}</div>`;}
 function metaHTML(m){const x=m.meta||{};const name=chatModelName(m.model);const parts=[];
   if(x.seconds)parts.push(`${String(x.seconds).replace('.',',')} с`);if(x.output_tokens)parts.push(`${fmtN(x.output_tokens)} ${plural(x.output_tokens,'токен','токена','токенов')}`);
   if(x.tokens_per_second)parts.push(`${String(x.tokens_per_second).replace('.',',')} ток/с`);
@@ -75,6 +75,11 @@ function favHTML(u){let site='';try{site=new URL(u).hostname;}catch(e){}const h=
 function sourcesHTML(list){if(!list?.length)return '';const n=list.length,seen=new Set(),stack=list.filter(s=>{const h=hostOf(s.url);if(seen.has(h))return false;seen.add(h);return true;}).slice(0,3);
   return `<details class="srcs"><summary><span class="favs">${stack.map(s=>favHTML(s.url)).join('')}</span>${n} ${plural(n,'источник','источника','источников')}</summary>`+
     `<ol class="srclist">${list.map((s,i)=>`<li><a href="${esc(s.url)}" target="_blank" rel="noopener noreferrer"><span class="n">${i+1}</span>${favHTML(s.url)}<span class="st"><b>${esc(s.title||s.url)}</b><span>${esc(hostOf(s.url))}</span></span></a></li>`).join('')}</ol></details>`;}
+// Web addresses in the user's own text become links with the site's badge; the rest stays text.
+function linkify(t){const re=/https?:\/\/[^\s<>"'«»]+/g;let out='',at=0;for(const m of String(t).matchAll(re)){let u=m[0].replace(/[.,;:!?)\]}]+$/,'');
+    let ok=false;try{ok=/^https?:$/.test(new URL(u).protocol);}catch(e){}if(!ok)continue;
+    out+=esc(t.slice(at,m.index))+`<a class="ulink" href="${esc(u)}" target="_blank" rel="noopener noreferrer">${favHTML(u)}<span>${esc(u.replace(/^https?:\/\/(www\.)?/,''))}</span></a>`;at=m.index+u.length;}
+  return out+esc(String(t).slice(at));}
 // A favicon that loaded covers the letter; one that failed is removed, the letter stays.
 document.addEventListener('load',e=>{const t=e.target;if(t?.tagName==='IMG'&&t.parentElement?.classList?.contains('fav'))t.parentElement.classList.add('img');},true);
 document.addEventListener('error',e=>{const t=e.target;if(t?.tagName==='IMG'&&t.parentElement?.classList?.contains('fav'))t.remove();},true);
@@ -301,7 +306,7 @@ async function consume(r,s){const reader=r.body.getReader(),dec=new TextDecoder(
       schedulePaint(s);}}}
 function newStream(chat,opts){const s={chat,opts,again:opts.retry||opts.edit||'',answer:'',thinking:'',sources:[],trace:[],status:'',err:'',userMessage:null,done:null,ctrl:new AbortController(),el:null,pending:0};
   C.streams[chat]=s;renderSend();renderThreads();return s;}
-async function send(opts={}){if(C.busy)return;stopFollowUps();if(rec)rec.stop();const m=curModel();
+async function send(opts={}){if(C.busy)return;stopFollowUps();if(dict)dict.stop();const m=curModel();
   if(!m){notice('Выберите модель в списке над чатом.',true);byId('picker-btn').click();return;}
   if(C.starting){notice('Модель ещё запускается — подождите несколько секунд.');return;}
   const text=opts.retry?'':(opts.text??byId('prompt').value).trim();const files=opts.retry||opts.text!==undefined?[]:C.attached;const again=opts.retry||opts.edit;
@@ -396,34 +401,64 @@ async function switchBranch(btn){if(C.busy||!C.chat)return;stopFollowUps();
 // Microsoft's service, Safari recognizes on the device. Brave has the API but no service behind
 // it ("network" at once): there, or when chosen in the settings, the panel records the voice and
 // an OpenRouter model that hears audio writes it down. Reading aloud uses the system's voices.
-const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null,recording=null,transcribing=false;
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null,recording=null,transcribing=false,dict=null;
 const canRecord=()=>!!(navigator.mediaDevices?.getUserMedia&&window.MediaRecorder);
-function voiceServer(){if(S.chatSettings?.voice_server||!SR)return true;try{return localStorage.getItem('omnibox-voice-server')==='1';}catch(e){return false;}}
-function renderMic(){const b=byId('mic-btn');b.hidden=!SR&&!canRecord();const on=!!rec||!!recording;b.setAttribute('aria-pressed',String(on));b.classList.toggle('rec',on);b.disabled=transcribing;
-  b.title=transcribing?'Распознаём запись…':on?'Слушаю… нажмите, чтобы закончить':voiceServer()?'Голосовой ввод: запись распознаёт модель OpenRouter':'Голосовой ввод: распознаёт браузер (Chrome и Edge — через облачный сервис Google или Microsoft)';}
+// Safari's recognition (every browser on iPhone is Safari inside) often listens and writes
+// nothing: there a recording written down by OpenRouter is the reliable way, when it is connected.
+function webkitOnly(){const ua=navigator.userAgent||'';return /iP(hone|ad|od)/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1)||(/Safari\//.test(ua)&&!/Chrome|Chromium|Edg|OPR|Firefox/.test(ua));}
+function voiceServer(){if(S.chatSettings?.voice_server||!SR)return true;if(webkitOnly()&&S.cloud?.connected&&canRecord())return true;
+  try{return localStorage.getItem('omnibox-voice-server')==='1';}catch(e){return false;}}
+function renderMic(){const b=byId('mic-btn');b.hidden=!SR&&!canRecord();const on=!!dict;b.setAttribute('aria-pressed',String(on));b.classList.toggle('rec',on);b.disabled=transcribing;
+  b.title=transcribing?'Распознаём запись…':on?'Слушаю… нажмите, чтобы закончить':voiceServer()?'Голосовой ввод: запись распознаёт модель OpenRouter':'Голосовой ввод: распознаёт браузер (Chrome и Edge — через облачный сервис Google или Microsoft)';
+  byId('composer').classList.toggle('dictating',!!dict||transcribing);byId('dict').hidden=!dict&&!transcribing;byId('dict-state').textContent=transcribing?'Распознаём…':'';
+  byId('dict-stop').disabled=transcribing;byId('dict-cancel').disabled=transcribing;}
 function insertDictation(text){const ta=byId('prompt');if(!text)return;ta.value=(ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value)+text;ta.dispatchEvent(new Event('input'));ta.focus();}
-function toggleMic(){if(rec){rec.stop();return;}if(recording){recording.stop();return;}if(transcribing)return;
-  if(voiceServer()){startRecording();return;}
-  const ta=byId('prompt'),base=ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value;
-  rec=new SR();rec.lang='ru-RU';rec.interimResults=true;rec.continuous=true;let heard=false;
-  rec.onresult=e=>{heard=true;let t='';for(const r of e.results)t+=r[0].transcript;ta.value=base+t;};
-  rec.onerror=e=>{if(e.error==='not-allowed')notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);
-    else if((e.error==='network'||e.error==='service-not-allowed')&&!heard&&canRecord()){
-      // The browser has no recognition service (Brave): record instead, from now on.
-      try{localStorage.setItem('omnibox-voice-server','1');}catch(x){}rec.onend=null;rec=null;
-      notice('Этот браузер не распознаёт речь сам — записываю голос, текст распознает модель OpenRouter. Говорите и нажмите микрофон ещё раз.');startRecording();}
-    else if(e.error!=='no-speech'&&e.error!=='aborted')notice('Голосовой ввод прервался.',true);};
-  rec.onend=()=>{rec=null;renderMic();byId('prompt').focus();};
-  try{rec.start();}catch(e){rec=null;}renderMic();}
+// The waveform: the voice's loudness over the last seconds, newest on the right, like Claude's.
+const WAVE_BARS=36;
+function startWave(stream){const w=byId('dict-wave');w.innerHTML='<i></i>'.repeat(WAVE_BARS);const bars=[...w.children||[]];const lv=new Array(WAVE_BARS).fill(0);
+  const paint=()=>bars.forEach((b,k)=>{b.style.height=`${3+Math.round(lv[k]*22)}px`;b.classList.toggle('on',lv[k]>0.06);});
+  const AC=window.AudioContext||window.webkitAudioContext;if(!stream||!AC){paint();return ()=>{};}
+  let ctx,an,buf,raf;try{ctx=new AC();an=ctx.createAnalyser();an.fftSize=512;ctx.createMediaStreamSource(stream).connect(an);buf=new Uint8Array(an.fftSize);}catch(e){paint();return ()=>{};}
+  let last=0;const tick=t=>{raf=requestAnimationFrame(tick);if(t-last<70)return;last=t;an.getByteTimeDomainData(buf);let sum=0;for(const v of buf){const x=(v-128)/128;sum+=x*x;}
+    lv.shift();lv.push(Math.min(1,Math.sqrt(sum/buf.length)*4));paint();};raf=requestAnimationFrame(tick);
+  return ()=>{cancelAnimationFrame(raf);ctx.close?.();};}
+let micStarting=false;
+function toggleMic(){if(dict){dict.stop();return;}if(transcribing||micStarting)return;micStarting=true;(voiceServer()?startRecording():startRecognition()).finally(()=>{micStarting=false;});}
+// Browser recognition writes into the field as it hears; Safari stops after a pause, so it is
+// started again until the user presses stop. Cancel puts the text back as it was.
+async function startRecognition(){const ta=byId('prompt'),before=ta.value;let base=before&&!/\s$/.test(before)?before+' ':before,heard=false,done=false;
+  // Safari would lose the microphone to a second capture: there the waveform stays flat.
+  let stream=null;if(!webkitOnly()&&navigator.mediaDevices?.getUserMedia){try{stream=await navigator.mediaDevices.getUserMedia({audio:true});}catch(e){}}
+  const stopWave=startWave(stream);
+  const finish=()=>{const after=dict?.after;done=true;stopWave();stream?.getTracks().forEach(t=>t.stop());rec=null;dict=null;renderMic();ta.focus();
+    if(!heard&&webkitOnly())notice(S.cloud?.connected?'Браузер не распознал речь. Включите «Настройки → Чат → Голосовой ввод через OpenRouter».':'Браузер не распознал речь. Проверьте, что включена «Диктовка» в настройках iPhone (Основные → Клавиатура).',true);
+    if(after)byId('composer').requestSubmit();};
+  const listen=()=>{rec=new SR();rec.lang='ru-RU';rec.interimResults=true;rec.continuous=!webkitOnly();
+    rec.onresult=e=>{let fin='',mid='';for(const r of e.results){if(r.isFinal)fin+=r[0].transcript;else mid=r[0].transcript;}if(fin||mid)heard=true;ta.value=base+fin+mid;ta.dispatchEvent(new Event('input'));};
+    rec.onerror=e=>{if(e.error==='not-allowed'){done=true;notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);}
+      else if((e.error==='network'||e.error==='service-not-allowed')&&!heard&&canRecord()){
+        // The browser has no recognition service (Brave): record instead, from now on.
+        try{localStorage.setItem('omnibox-voice-server','1');}catch(x){}done=true;heard=true;rec.onend=null;finish();
+        notice('Этот браузер не распознаёт речь сам — записываю голос, текст распознает модель OpenRouter. Говорите и нажмите «Стоп».');startRecording();}
+      else if(e.error!=='no-speech'&&e.error!=='aborted'){done=true;notice('Голосовой ввод прервался.',true);}};
+    rec.onend=()=>{if(!done&&dict){base=ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value;try{listen();return;}catch(e){}}finish();};
+    rec.start();};
+  dict={mode:'sr',stop:()=>{done=true;rec?.stop();},cancel:()=>{done=true;heard=true;rec?.abort();ta.value=before;ta.dispatchEvent(new Event('input'));},after:false};
+  try{listen();}catch(e){finish();return;}renderMic();}
+// A recording goes to OpenRouter after stop; its text lands in the field (and is sent, after the send button).
 async function startRecording(){if(!canRecord()){notice('Этот браузер не умеет записывать звук.',true);return;}
   if(!S.cloud?.connected){notice('Для голосового ввода в этом браузере нужен OpenRouter: «Настройки → OpenRouter». Или откройте панель в Chrome, Edge или Safari.',true);return;}
   let stream;try{stream=await navigator.mediaDevices.getUserMedia({audio:true});}catch(e){notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);return;}
-  const mr=new MediaRecorder(stream),chunks=[];mr.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
-  const limit=setTimeout(()=>{if(mr.state==='recording')mr.stop();},230000);
-  mr.onstop=async()=>{clearTimeout(limit);stream.getTracks().forEach(t=>t.stop());recording=null;transcribing=true;renderMic();
+  const mr=new MediaRecorder(stream),chunks=[];mr.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};const stopWave=startWave(stream);
+  const limit=setTimeout(()=>{if(mr.state==='recording')mr.stop();},230000);let dropped=false;
+  mr.onstop=async()=>{clearTimeout(limit);stopWave();stream.getTracks().forEach(t=>t.stop());const after=dict?.after;recording=null;dict=null;
+    if(dropped){renderMic();return;}transcribing=true;renderMic();
     try{const wav=await toWav(new Blob(chunks,{type:mr.mimeType}));const d=await api('/api/chat/transcribe',{data:wav});
-      if(d.text)insertDictation(d.text);else notice('Речь не распознана.',true);}catch(e){fail(e);}finally{transcribing=false;renderMic();}};
-  recording=mr;mr.start();renderMic();}
+      if(d.text)insertDictation(d.text);else notice('Речь не распознана.',true);transcribing=false;renderMic();if(d.text&&after)byId('composer').requestSubmit();}
+    catch(e){fail(e);}finally{transcribing=false;renderMic();}};
+  recording=mr;dict={mode:'rec',stop:()=>{if(mr.state==='recording')mr.stop();},cancel:()=>{dropped=true;if(mr.state==='recording')mr.stop();},after:false};mr.start();renderMic();}
+// Send while dictating: the text is finished first, then sent.
+function dictateThenSend(){if(transcribing)return true;if(!dict)return false;dict.after=true;dict.stop();return true;}
 // toWav turns a recording into 16 kHz mono WAV in base64: every model that hears audio reads it.
 async function toWav(blob){const AC=window.AudioContext||window.webkitAudioContext,ctx=new AC();
   try{const src=await ctx.decodeAudioData(await blob.arrayBuffer());const rate=16000,n=Math.max(1,Math.ceil(src.duration*rate));
@@ -466,7 +501,7 @@ async function delAll(all){const r=await api('/api/chats',{action:'delete-all',k
   await loadThreads();if(C.chat&&!C.threads.some(t=>t.id===C.chat.id))newChat();}
 
 // ── events ──
-byId('composer').addEventListener('submit',e=>{e.preventDefault();if(C.busy){stopAnswer();return;}send().catch(fail);});
+byId('composer').addEventListener('submit',e=>{e.preventDefault();if(C.busy){stopAnswer();return;}if(dictateThenSend())return;send().catch(fail);});
 // Enter sends; Ctrl+Enter (or Shift+Enter) starts a new line. A phone's keyboard has no Ctrl, so on a
 // touch screen Enter starts a new line and the arrow button sends.
 const touchOnly=()=>matchMedia('(hover:none) and (pointer:coarse)').matches;
@@ -512,6 +547,8 @@ document.addEventListener('click',e=>{
   if(!e.target.closest('.pluswrap'))byId('plus-pop').hidden=true;
   if(e.target.closest('#plus-btn')){const p=byId('plus-pop');p.hidden=!p.hidden;byId('plus-btn').setAttribute('aria-expanded',String(!p.hidden));if(!p.hidden)renderPlus();return;}
   if(e.target.closest('#mic-btn')){toggleMic();return;}
+  if(e.target.closest('#dict-stop')){dict?.stop();return;}
+  if(e.target.closest('#dict-cancel')){dict?.cancel();return;}
   const fq=e.target.closest('[data-follow]');if(fq){if(!C.busy)send({text:fq.dataset.follow}).catch(fail);return;}
   if(e.target.closest('#think-btn')){byId('think-pop').hidden=!byId('think-pop').hidden;return;}
   if(e.target.closest('#ctx-btn')){const p=byId('ctx-pop');p.hidden=!p.hidden;byId('ctx-btn').setAttribute('aria-expanded',String(!p.hidden));if(!p.hidden)renderCtxMeter();return;}

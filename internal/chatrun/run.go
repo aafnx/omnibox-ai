@@ -68,7 +68,7 @@ func (r *Runner) run(ctx context.Context, t *turn, out *stream) {
 	if t.web && r.Search != nil && !t.native {
 		// Pages the user named are read first: they are what the question is about.
 		if t.read {
-			messages = r.readInto(ctx, messages, a, t, linksIn(t.user.Text, 2), out)
+			messages = r.readInto(ctx, messages, a, t, linksIn(t.user.Text, 2), 2, out)
 		}
 		// The question restated with the conversation's context and its queries; results are
 		// kept to the question even if a query drifts.
@@ -90,7 +90,7 @@ func (r *Runner) run(ctx context.Context, t *turn, out *stream) {
 		}
 		// Snippets are short: the best pages are read, so the answer has the facts themselves.
 		if t.read {
-			messages = r.readInto(ctx, messages, a, t, r.topUnread(a, t), out)
+			messages = r.readInto(ctx, messages, a, t, r.topUnread(a, t), r.pageWant(t), out)
 		}
 	}
 	// A model whose engine returned its tool call as text once gets no tools again: it answers
