@@ -4,7 +4,7 @@ const C={threads:[],hits:null,chat:null,chosen:'',web:false,attached:[],busy:nul
 try{C.chosen=localStorage.getItem('omnibox-model')||'';}catch(e){}
 let efforts={};try{efforts=JSON.parse(localStorage.getItem('omnibox-effort')||'{}')||{};}catch(e){efforts={};}
 const ACT_USER='<div class="mact"><button type="button" data-act="copy" title="Копировать" aria-label="Копировать"><svg class="i"><use href="#i-copy"/></svg></button><button type="button" data-act="edit" title="Изменить и отправить заново" aria-label="Изменить сообщение"><svg class="i"><use href="#i-edit"/></svg></button><button type="button" data-act="resend" title="Отправить ещё раз" aria-label="Отправить ещё раз"><svg class="i"><use href="#i-retry"/></svg></button><button type="button" class="del" data-act="delete" title="Удалить сообщение" aria-label="Удалить сообщение"><svg class="i"><use href="#i-trash"/></svg></button></div>';
-const ACT_BOT='<div class="mact"><button type="button" data-act="copy" title="Копировать" aria-label="Копировать"><svg class="i"><use href="#i-copy"/></svg></button><button type="button" data-act="retry" title="Ответить заново" aria-label="Ответить заново"><svg class="i"><use href="#i-retry"/></svg></button><button type="button" class="del" data-act="delete" title="Удалить сообщение" aria-label="Удалить сообщение"><svg class="i"><use href="#i-trash"/></svg></button></div>';
+const ACT_BOT='<div class="mact"><button type="button" data-act="copy" title="Копировать" aria-label="Копировать"><svg class="i"><use href="#i-copy"/></svg></button><button type="button" class="speak" data-act="speak" title="Прочитать вслух" aria-label="Прочитать вслух" aria-pressed="false"><svg class="i"><use href="#i-audio"/></svg></button><button type="button" data-act="retry" title="Ответить заново" aria-label="Ответить заново"><svg class="i"><use href="#i-retry"/></svg></button><button type="button" class="del" data-act="delete" title="Удалить сообщение" aria-label="Удалить сообщение"><svg class="i"><use href="#i-trash"/></svg></button></div>';
 
 // ── threads ──
 const hoursLeft=t=>t.expires?(Date.parse(t.expires)-Date.now())/3600000:Infinity;
@@ -19,6 +19,9 @@ function threadRow(t){const cur=C.chat?.id===t.id;
 function threadMenu(t){const f=followOn(t);return `<button type="button" role="menuitem" data-rename="${t.id}"><svg class="i"><use href="#i-edit"/></svg>Переименовать</button>`+
   `<button type="button" role="menuitemcheckbox" aria-checked="${f}" data-follow-chat="${t.id}" class="${f?'on2':''}" title="Вопросы для продолжения под последним ответом. По умолчанию — как в «Настройки → Чат»."><svg class="i"><use href="#i-spark"/></svg>Предлагать вопросы<span class="tick">${f?'вкл':'выкл'}</span></button>`+
   `<button type="button" role="menuitem" data-pin="${t.id}" class="${t.pinned?'on':''}"><svg class="i"><use href="#i-star"/></svg>${t.pinned?'Убрать из избранного':'В избранное'}</button>`+
+  `<div class="msep"></div><button type="button" role="menuitem" data-export="md" data-chat="${t.id}"><svg class="i"><use href="#i-download"/></svg>Скачать Markdown</button>`+
+  `<button type="button" role="menuitem" data-export="json" data-chat="${t.id}"><svg class="i"><use href="#i-download"/></svg>Скачать JSON</button>`+
+  `<button type="button" role="menuitem" data-export="copy" data-chat="${t.id}"><svg class="i"><use href="#i-copy"/></svg>Копировать весь чат</button><div class="msep"></div>`+
   `<button type="button" role="menuitem" class="del" data-del-thread="${t.id}"><svg class="i"><use href="#i-trash"/></svg>Удалить</button>`;}
 // The menu is fixed to the window: the list scrolls and would cut it off.
 function openThreadMenu(btn){const t=C.threads.find(x=>x.id===btn.dataset.tmenu);const m=byId('thread-menu');if(!t)return;
@@ -105,7 +108,7 @@ function followTarget(){const msgs=C.chat?.messages||[],m=msgs[msgs.length-1];re
 function renderChat(){const box=byId('message-list');const c=C.chat;
   if(!c||!c.messages?.length){setHTML(box,`<div class="empty"><b>${c?esc(c.title):'Новый чат'}</b><span>Спросите что-нибудь. Можно приложить файлы и включить поиск в интернете.</span></div>`);}
   else setHTML(box,c.messages.map((m,i)=>m.role==='user'?userHTML(m):botHTML(m,i===c.messages.length-1&&followOn(c),c.messages[i-1])).join(''));
-  showChatCost();renderKeep();scrollDown(true);}
+  enhance(box,true);showChatCost();renderKeep();scrollDown(true);}
 function scrollDown(force){const el=byId('messages');if(force||el.scrollHeight-el.scrollTop-el.clientHeight<160)el.scrollTop=el.scrollHeight;}
 function showChatCost(){const c=byId('chat-cost');const paid=(C.chat?.messages||[]).filter(m=>m.meta?.cost_usd>0);c.hidden=!paid.length;if(!paid.length)return;
   const sum=paid.reduce((s,m)=>s+m.meta.cost_usd,0);c.innerHTML=`${money(sum)}<span class="lbl"> за чат</span>`;
@@ -229,7 +232,7 @@ function recheckAttached(){const m=curModel();if(!m)return;const drop=C.attached
 const readB64=f=>new Promise((resolve,reject)=>{const r=new FileReader();r.onload=()=>resolve(String(r.result).replace(/^data:[^,]*,/,''));r.onerror=()=>reject(new Error(`«${f.name}» не прочитан.`));r.readAsDataURL(f);});
 
 // ── sending: the answer streams as server-sent events ──
-async function send(opts={}){if(C.busy)return;stopFollowUps();const m=curModel();
+async function send(opts={}){if(C.busy)return;stopFollowUps();if(rec)rec.stop();const m=curModel();
   if(!m){notice('Выберите модель в списке над чатом.',true);byId('picker-btn').click();return;}
   if(C.starting){notice('Модель ещё запускается — подождите несколько секунд.');return;}
   const text=opts.retry?'':(opts.text??byId('prompt').value).trim();const files=opts.retry||opts.text!==undefined?[]:C.attached;const again=opts.retry||opts.edit;
@@ -249,7 +252,7 @@ async function send(opts={}){if(C.busy)return;stopFollowUps();const m=curModel()
   try{const r=await fetch('/api/chat/send',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:JSON.stringify(body),signal:ctrl.signal});
     if(!r.ok){let msg=`Ошибка ${r.status}`;try{msg=(await r.json()).error||msg;}catch(e){}if(r.status===401)showLogin();throw new Error(msg);}
     const reader=r.body.getReader(),dec=new TextDecoder();let buf='',pending=0;
-    const paintAnswer=()=>{pending=0;live.querySelector('.md').innerHTML=md(answer,sources);if(C.chat?.id===chat.id)scrollDown();};
+    const paintAnswer=()=>{pending=0;const el=live.querySelector('.md');el.innerHTML=md(answer,sources);enhance(el,false);if(C.chat?.id===chat.id)scrollDown();};
     for(;;){const {value,done:end}=await reader.read();if(end)break;buf+=dec.decode(value,{stream:true});let i;
       while((i=buf.indexOf('\n\n'))>=0){const block=buf.slice(0,i);buf=buf.slice(i+2);let ev='',dt='';block.split('\n').forEach(l=>{if(l.startsWith('event: '))ev=l.slice(7);else if(l.startsWith('data: '))dt+=l.slice(6);});
         let v;try{v=JSON.parse(dt);}catch(e){continue;}
@@ -277,6 +280,7 @@ function renderSend(){const b=byId('send');b.classList.toggle('stop',!!C.busy);b
 
 // ── message actions ──
 async function messageAction(act,el){const msg=el.closest('.msg');const id=msg.dataset.id;const stored=(C.chat?.messages||[]).find(m=>m.id===id);
+  if(act==='speak'){speak(stored?.text??msg.querySelector('.md')?.textContent??'',el);return;}
   if(act==='copy'){await copyText(stored?.text??msg.innerText);el.title='Скопировано';return;}
   if(act==='delete'){if(!id||!C.chat)return msg.remove();const s=await api('/api/chats',{action:'delete-message',id:C.chat.id,message_id:id});C.chat.messages=C.chat.messages.filter(m=>m.id!==id);msg.remove();
     const i=C.threads.findIndex(t=>t.id===s.id);if(i>=0)C.threads[i]=s;showChatCost();return;}
@@ -302,6 +306,42 @@ function sendEdit(msg){const id=msg.dataset.id,text=(msg.querySelector('.edit-ta
   C.chat.messages=all.slice(0,i+1);return send({edit:id,text}).catch(fail);}
 async function switchBranch(btn){if(C.busy||!C.chat)return;stopFollowUps();
   C.chat=await api('/api/chats',{action:'branch',id:C.chat.id,message_id:btn.dataset.branch,index:+btn.dataset.to});renderChat();showChatCost();}
+
+// ── voice: dictation and reading aloud, both by the browser ──
+// Recognition is the browser's own: Chrome and Edge send the sound to Google's or Microsoft's
+// service, Safari recognizes on the device when it can. Reading aloud uses the system's voices.
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
+function renderMic(){const b=byId('mic-btn');b.hidden=!SR;b.setAttribute('aria-pressed',String(!!rec));b.classList.toggle('rec',!!rec);
+  b.title=rec?'Слушаю… нажмите, чтобы закончить':'Голосовой ввод: распознаёт браузер (Chrome и Edge — через облачный сервис Google или Microsoft)';}
+function toggleMic(){if(rec){rec.stop();return;}if(!SR)return;const ta=byId('prompt'),base=ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value;
+  rec=new SR();rec.lang='ru-RU';rec.interimResults=true;rec.continuous=true;
+  rec.onresult=e=>{let t='';for(const r of e.results)t+=r[0].transcript;ta.value=base+t;};
+  rec.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed')notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);else if(e.error!=='no-speech'&&e.error!=='aborted')notice('Голосовой ввод прервался.',true);};
+  rec.onend=()=>{rec=null;renderMic();byId('prompt').focus();};
+  try{rec.start();}catch(e){rec=null;}renderMic();}
+// Text to read: Markdown marks, links and citation numbers out; code is named, not spelled.
+function speechText(t){return String(t).replace(/```[\s\S]*?(```|$)/g,' (фрагмент кода) ').replace(/`([^`]*)`/g,'$1').replace(/!?\[([^\]]*)\]\([^)]*\)/g,'$1').replace(/\[\d{1,2}\]/g,'')
+  .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm,'').replace(/[*_~|]/g,'').replace(/\$\$?/g,'').replace(/\n{2,}/g,'\n').trim();}
+let speaking=null;
+function speak(text,btn){const syn=window.speechSynthesis;if(!syn){notice('Этот браузер не умеет читать вслух.',true);return;}
+  const was=speaking;syn.cancel();if(was){was.setAttribute('aria-pressed','false');speaking=null;if(was===btn)return;}
+  const u=new SpeechSynthesisUtterance(speechText(text));u.lang='ru-RU';const v=syn.getVoices().find(x=>/^ru/i.test(x.lang));if(v)u.voice=v;
+  u.onend=u.onerror=()=>{if(speaking===btn){btn.setAttribute('aria-pressed','false');speaking=null;}};speaking=btn;btn.setAttribute('aria-pressed','true');syn.speak(u);}
+
+// ── export: the chat as Markdown or JSON, made in the browser ──
+const roleName=m=>m.role==='user'?'Вы':`Модель · ${chatModelName(m.model)}`;
+function chatMarkdown(c){const date=d=>d?new Date(d).toLocaleString('ru-RU',{day:'numeric',month:'long',year:'numeric',hour:'2-digit',minute:'2-digit'}):'';
+  let s=`# ${c.title}\n\n_Экспорт из OmniBox AI · ${date(new Date())}_\n`;
+  for(const m of c.messages||[]){s+=`\n## ${roleName(m)}\n\n${(m.text||'').trim()}\n`;
+    if(m.attachments?.length)s+=`\n_Файлы: ${m.attachments.map(a=>a.name).join(', ')}_\n`;
+    if(m.error)s+=`\n_Ошибка: ${m.error}_\n`;
+    const src=m.meta?.sources||[];if(src.length)s+='\nИсточники:\n'+src.map((x,i)=>`${i+1}. [${(x.title||x.url).replace(/[\[\]]/g,'')}](${x.url})`).join('\n')+'\n';}
+  return s;}
+function fileName(c,ext){return `${(c.title||'chat').replace(/[\\/:*?"<>|\u0000-\u001f]+/g,' ').replace(/\s+/g,' ').trim().slice(0,60)||'chat'} ${String(c.created||new Date().toISOString()).slice(0,10)}.${ext}`;}
+function download(name,type,text){const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([text],{type}));a.download=name;document.body.append(a);a.click();setTimeout(()=>{URL.revokeObjectURL(a.href);a.remove();},2000);}
+async function exportChat(id,kind){const c=C.chat?.id===id?C.chat:await api('/api/chats?id='+encodeURIComponent(id));
+  if(kind==='copy'){await copyText(chatMarkdown(c));notice('Чат скопирован как Markdown.');return;}
+  if(kind==='json')download(fileName(c,'json'),'application/json',JSON.stringify(c,null,2));else download(fileName(c,'md'),'text/markdown;charset=utf-8',chatMarkdown(c));}
 
 // ── deleting chats ──
 function askDelAll(step){const pins=C.threads.filter(t=>t.pinned).length,rest=C.threads.length-pins;byId('del-all').hidden=false;
@@ -352,6 +392,8 @@ document.addEventListener('click',e=>{
   if(!e.target.closest('#thread-menu')&&!e.target.closest('[data-tmenu]'))closeThreadMenu();
   const tm=e.target.closest('[data-tmenu]');if(tm){openThreadMenu(tm);return;}
   const rn=e.target.closest('[data-rename]');if(rn){startRename(rn.dataset.rename);return;}
+  const ex=e.target.closest('[data-export]');if(ex){closeThreadMenu();exportChat(ex.dataset.chat,ex.dataset.export).catch(fail);return;}
+  if(e.target.closest('#mic-btn')){toggleMic();return;}
   const fc=e.target.closest('[data-follow-chat]');if(fc){closeThreadMenu();toggleChatFollow(fc.dataset.followChat).catch(fail);return;}
   const fq=e.target.closest('[data-follow]');if(fq){if(!C.busy)send({text:fq.dataset.follow}).catch(fail);return;}
   if(e.target.closest('#think-btn')){byId('think-pop').hidden=!byId('think-pop').hidden;return;}
@@ -378,6 +420,7 @@ document.addEventListener('click',e=>{
 });
 on('library',()=>{if(S.page==='chat'){renderPicker();renderThink();renderWeb();renderFoot();}});
 on('status',()=>{if(S.page==='chat')renderCtxMeter();});
+renderMic();
 PAGES.chat={show(again){if(!C.chosen||!modelByKey(C.chosen)){const r=runningModel()||models().find(m=>m.favorite)||models()[0];if(r)C.chosen=r.key;}
   if(again){refreshLibrary().catch(()=>{});}
   loadThreads().then(()=>{if(!C.chat)C.web=webDefault(chatAsst());renderAll();}).catch(fail);renderAll();}};

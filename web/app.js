@@ -170,12 +170,21 @@ function inlineMd(s,sources){
   if(sources?.length)s=s.replace(/(?:\[\d{1,2}\](?!\())+/g,m=>{const list=[...m.matchAll(/\d+/g)].map(x=>sources[+x[0]-1]).filter(Boolean);if(!list.length)return m;
     const tip=list.map(x=>x.title||x.url).join(' · ');return `<a class="cite" href="${esc(list[0].url)}" target="_blank" rel="noopener noreferrer" title="${esc(tip)}"><span class="c">${esc(hostOf(list[0].url)||'источник')}${list.length>1?` +${list.length-1}`:''}</span></a>`;});
   return s.replace(/\u0000(\d+)\u0000/g,(_,i)=>`<code>${codes[+i]}</code>`);}
+// Formulas are taken out before escaping — TeX is full of < > & — and come back as spans that
+// KaTeX renders. Code is skipped: a $ in a shell line is not math. "$5 and $10" is not math either:
+// a closing $ needs no space before it and no digit after it.
+const MATH=/```[\s\S]*?(?:```|$)|`[^`\n]*`|\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$(?=[^\s$])([^$\n]*?[^\s$\\])\$(?!\d)/g;
+function takeMath(text){const math=[];const out=text.replace(MATH,(m,dd,br,pr,inl)=>{if(m[0]==='`')return m;const tex=dd??br??pr??inl;math.push({tex:tex.trim(),display:dd!==undefined||br!==undefined});return `\u0001${math.length-1}\u0001`;});return {out,math};}
 function md(text,sources){
-  const lines=esc(text).split('\n');let out=[],i=0;
+  const tm=takeMath(String(text??''));
+  const lines=esc(tm.out).split('\n');let out=[],i=0;
   const para=[];const flush=()=>{if(para.length){out.push(`<p>${inlineMd(para.join('<br>'),sources)}</p>`);para.length=0;}};
   while(i<lines.length){const l=lines[i];
     const fence=l.match(/^\s*```\s*([\w+-]*)\s*$/);
-    if(fence){flush();const code=[];i++;while(i<lines.length&&!/^\s*```\s*$/.test(lines[i]))code.push(lines[i++]);i++;out.push(`<pre><button type="button" class="copycode">Копировать</button><code>${code.join('\n')}</code></pre>`);continue;}
+    if(fence){flush();const code=[];i++;while(i<lines.length&&!/^\s*```\s*$/.test(lines[i]))code.push(lines[i++]);i++;const lang=fence[1].toLowerCase();
+      // Inside code a formula is text again.
+      const body=code.join('\n').replace(/\u0001(\d+)\u0001/g,(_,n)=>esc((tm.math[+n].display?'$$':'$')+tm.math[+n].tex+(tm.math[+n].display?'$$':'$')));
+      out.push(`<pre${lang?` data-lang="${lang}"`:''}><button type="button" class="copycode">Копировать</button><code${lang?` class="language-${lang}"`:''}>${body}</code></pre>`);continue;}
     const h=l.match(/^(#{1,6})\s+(.+)$/);if(h){flush();out.push(`<${h[1].length<=2?'h3':'h4'}>${inlineMd(h[2],sources)}</${h[1].length<=2?'h3':'h4'}>`);i++;continue;}
     if(/^\s*([-*_])\s*\1\s*\1[\s\1]*$/.test(l)){flush();out.push('<hr>');i++;continue;}
     if(/^\s*&gt;\s?/.test(l)){flush();const q=[];while(i<lines.length&&/^\s*&gt;\s?/.test(lines[i]))q.push(lines[i++].replace(/^\s*&gt;\s?/,''));out.push(`<blockquote>${inlineMd(q.join('<br>'),sources)}</blockquote>`);continue;}
@@ -187,7 +196,29 @@ function md(text,sources){
       out.push(`<table><thead><tr>${head.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`);continue;}
     if(!l.trim()){flush();i++;continue;}
     para.push(l);i++;}
-  flush();return out.join('');}
+  flush();return out.join('').replace(/\u0001(\d+)\u0001/g,(_,n)=>{const x=tm.math[+n];return `<span class="math${x.display?' display':''}" data-tex="${esc(x.tex)}">${esc(x.tex)}</span>`;});}
+// ── answers: formulas (KaTeX, as MathML), code colours (highlight.js), diagrams (Mermaid) ──
+// The libraries are embedded and loaded only when an answer has something for them; while an
+// answer streams only formulas are drawn, colours and diagrams wait for its end.
+const LIBS={};
+function loadLib(name){return LIBS[name]??=new Promise((resolve,reject)=>{const s=document.createElement('script');s.src=`/vendor/${name}.min.js`;
+  s.onload=()=>resolve(window[{katex:'katex',highlight:'hljs',mermaid:'mermaid'}[name]]);s.onerror=()=>{delete LIBS[name];reject(new Error('Библиотека не загрузилась.'));};document.body.append(s);});}
+let mermaidN=0,mermaidReady=false;
+const MMD_FONT='Inter, system-ui, sans-serif';
+const darkTheme=()=>document.documentElement.getAttribute('data-theme')==='dark'||(theme==='system'&&matchMedia('(prefers-color-scheme: dark)').matches);
+async function enhance(root,final){if(!root?.querySelectorAll)return;
+  const math=[...root.querySelectorAll('.math[data-tex]:not(.done)')];
+  if(math.length)loadLib('katex').then(k=>math.forEach(el=>{try{el.innerHTML=k.renderToString(el.dataset.tex,{output:'mathml',displayMode:el.classList.contains('display'),throwOnError:false});el.classList.add('done');}catch(e){}})).catch(()=>{});
+  if(!final)return;
+  const code=[...root.querySelectorAll('pre[data-lang] code:not(.hljs)')].filter(c=>c.parentElement.dataset.lang!=='mermaid');
+  if(code.length)loadLib('highlight').then(h=>code.forEach(c=>{const lang=c.parentElement.dataset.lang;if(h.getLanguage(lang))h.highlightElement(c);})).catch(()=>{});
+  const charts=[...root.querySelectorAll('pre[data-lang="mermaid"]:not(.done)')];
+  if(charts.length)loadLib('mermaid').then(async m=>{if(!mermaidReady){m.initialize({startOnLoad:false,securityLevel:'strict',theme:darkTheme()?'dark':'neutral',flowchart:{htmlLabels:false},fontFamily:MMD_FONT,themeVariables:{fontFamily:MMD_FONT,fontSize:'14px'}});mermaidReady=true;}
+    for(const pre of charts){pre.classList.add('done');try{const {svg}=await m.render('mmd'+(++mermaidN),pre.querySelector('code').textContent);
+      // Mermaid's own styles stay out (the CSP keeps inline styles off the page): the panel's
+      // stylesheet draws the diagram in the brand's colours, the same font it was measured with.
+      const fig=document.createElement('figure');fig.className='chart-mmd';fig.innerHTML=`${svg}<details class="mini"><summary>Код диаграммы</summary></details>`;
+      pre.replaceWith(fig);fig.querySelector('details').append(pre);}catch(e){pre.insertAdjacentHTML('beforebegin','<div class="small faint">Диаграмма не построена: в коде ошибка.</div>');}}}).catch(()=>{});}
 document.addEventListener('click',e=>{const b=e.target.closest('.copycode');if(!b)return;copyText(b.nextElementSibling.textContent).then(()=>{b.textContent='Скопировано';setTimeout(()=>b.textContent='Копировать',1500);},fail);});
 async function copyText(text){if(navigator.clipboard&&window.isSecureContext){await navigator.clipboard.writeText(text);return;}
   const t=document.createElement('textarea');t.value=text;document.body.append(t);t.select();const ok=document.execCommand('copy');t.remove();if(!ok)throw new Error('Выделите текст и скопируйте вручную.');}

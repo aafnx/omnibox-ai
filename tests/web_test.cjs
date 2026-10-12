@@ -65,7 +65,11 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   // A run of citations is one chip: the first site, "+N" and every title in the tip; unknown numbers stay text.
   const run2=run("md('Факт [1][2] и [9].',[{title:'Один',url:'https://www.one.example/a'},{title:'Два',url:'https://two.example/b'}])");
   assert.ok(run2.includes('<span class="c">one.example +1</span>')&&run2.includes('title="Один · Два"')&&run2.includes('[9]'),run2);
-  assert.ok(out.includes('<pre><button type="button" class="copycode">')&&out.includes('fmt.Println(&quot;&lt;b&gt;&quot;)'));
+  assert.ok(out.includes('<pre data-lang="go"><button type="button" class="copycode">')&&out.includes('<code class="language-go">fmt.Println(&quot;&lt;b&gt;&quot;)'),out);
+  // Formulas are kept from escaping and Markdown, then marked for KaTeX; prices and code are not math.
+  const mth=run("md('Площадь $S = \\\\pi r^2$ и $$\\\\frac{a<b}{c}$$, цена $5 и $10, `echo $HOME$`\\n\\n```sh\\necho $a$\\n```\\n\\n\\\\[x_1\\\\]')");
+  assert.ok(mth.includes('<span class="math" data-tex="S = \\pi r^2">')&&mth.includes('<span class="math display" data-tex="\\frac{a&lt;b}{c}">'),mth);
+  assert.ok(mth.includes('цена $5 и $10')&&mth.includes('<code>echo $HOME$</code>')&&mth.includes('echo $a$</code></pre>')&&mth.includes('data-tex="x_1"'),mth);
   assert.ok(out.includes('<ul><li>раз</li><li>два</li></ul>'));assert.ok(out.includes('<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>'));
 
   // Reasoning scale: "off" only where thinking can be switched off; tokens and cost as a small note.
@@ -317,6 +321,16 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   const em={dataset:{id:'u1'},nextElementSibling:null,classList:{add(){},remove(){}},querySelector:s=>s==='.edit-ta'?{value:' новый '}:s==='.bubble'?{}:null,closest:()=>null,insertAdjacentHTML(){}};
   await run('sendEdit')(em);assert.equal(esent[0].edit,'u1');assert.equal(esent[0].text,'новый');assert.equal(nodes.prompt.value,'черновик');
   context.fetch=oldFetch;run('C.chat=null;C.busy=null');
+
+  // Reading aloud skips Markdown, links and citation numbers; code is named, not spelled.
+  assert.equal(run("speechText('## Итог\\n**Ясно** [1], см. [сайт](https://x.example).\\n```js\\nx()\\n```')"),'Итог\nЯсно , см. сайт.\n (фрагмент кода)');
+  // Export: Markdown with the speakers, files and sources; a file name without forbidden characters.
+  const ec={title:'Погода: Казань/сегодня',created:'2026-10-12T09:00:00Z',messages:[{role:'user',text:'Погода?',attachments:[{name:'a.docx'}]},{role:'assistant',model:'cloud:o/m',text:'Ясно [1].',meta:{sources:[{title:'Я[н]декс',url:'https://ya.ru/p'}]}}]};
+  const emd=run(`chatMarkdown(${JSON.stringify(ec)})`);
+  assert.ok(emd.startsWith('# Погода: Казань/сегодня\n')&&emd.includes('## Вы\n\nПогода?\n')&&emd.includes('_Файлы: a.docx_')&&emd.includes('## Модель · Облачная')&&emd.includes('1. [Яндекс](https://ya.ru/p)'),emd);
+  assert.equal(run(`fileName(${JSON.stringify(ec)},'md')`),'Погода Казань сегодня 2026-10-12.md');
+  // Dictation: a browser without speech recognition shows no microphone.
+  run('renderMic()');assert.equal(nodes['mic-btn'].hidden,true);
 
   // Spending: fractions of a cent stay visible, nothing spent reads $0,00.
   assert.equal(run('money(0.00042)'),'$0,0004');assert.equal(run('money(0.00001)'),'<$0,0001');assert.equal(run('money(0)'),'$0,00');assert.equal(run('money(1.5)'),'$1,50');assert.equal(run('money(undefined)'),'$0,00');

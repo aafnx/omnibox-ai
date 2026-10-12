@@ -764,3 +764,39 @@ details.srcs summary:hover{border-color:var(--iris-line);color:var(--text)}
 .editbox{display:grid;gap:8px;width:min(100%,640px);justify-self:end}
 .edit-ta{width:100%;border:1px solid var(--iris-line);border-radius:var(--r);background:var(--surface);padding:10px 12px;resize:vertical;min-height:72px;line-height:1.45}
 .ebtns{display:flex;justify-content:flex-end;gap:8px}
+/* Dictation sits before the paperclip; while it listens it is filled. */
+.composer .mic{margin-left:auto;min-width:0;width:34px;height:34px;padding:0;border-radius:50%}
+.composer .ctxwrap:not([hidden])~.mic{margin-left:0}
+.composer .mic:not([hidden])~.attach-r{margin-left:0}
+.composer .mic.rec{background:var(--iris);border-color:var(--iris);color:#fff}
+.mact button.speak[aria-pressed="true"]{color:var(--iris-text);opacity:1}
+.tmenu .msep{height:1px;background:var(--line);margin:3px 6px}
+/* Formulas: KaTeX writes MathML, which the browser lays out; display formulas get their own line. */
+.math.display{display:block;overflow-x:auto;text-align:center;margin:6px 0}
+.math:not(.done){font-family:var(--mono);font-size:12.5px;color:var(--muted)}
+.math math{font-size:1.08em}
+/* Code: the language over the block, colours by token in the brand's tones. */
+.md pre[data-lang]::before{content:attr(data-lang);position:absolute;top:7px;left:12px;font-size:11px;color:var(--faint);font-family:var(--font);text-transform:lowercase}
+.md pre[data-lang]{padding-top:28px}
+.hljs-keyword,.hljs-selector-tag,.hljs-built_in,.hljs-meta .hljs-keyword,.hljs-doctag{color:var(--iris-text)}
+.hljs-string,.hljs-regexp,.hljs-attr,.hljs-selector-attr,.hljs-template-variable{color:#b25a1e}
+.hljs-number,.hljs-literal,.hljs-symbol,.hljs-bullet{color:var(--ok)}
+.hljs-comment,.hljs-quote{color:var(--faint);font-style:italic}
+.hljs-title,.hljs-section,.hljs-name,.hljs-selector-id,.hljs-selector-class{color:var(--text);font-weight:600}
+.hljs-type,.hljs-class .hljs-title,.hljs-params,.hljs-variable{color:var(--muted)}
+.hljs-meta,.hljs-tag,.hljs-deletion{color:var(--err)} .hljs-addition{color:var(--ok)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .hljs-string,:root:not([data-theme="light"]) .hljs-regexp,:root:not([data-theme="light"]) .hljs-attr{color:#ffb380}}
+:root[data-theme="dark"] .hljs-string,:root[data-theme="dark"] .hljs-regexp,:root[data-theme="dark"] .hljs-attr{color:#ffb380}
+/* Diagrams: drawn as a picture, the code under a disclosure. */
+figure.chart-mmd{margin:4px 0;display:grid;gap:6px;justify-items:start;background:var(--surface);border:1px solid var(--line);border-radius:var(--r-s);padding:12px;overflow-x:auto}
+figure.chart-mmd>svg{max-width:100%;height:auto}
+/* Mermaid's diagram drawn by the panel's stylesheet: shapes, lines, arrows and labels. */
+svg[id^="mmd"] text,svg[id^="mmd"] tspan,[id^="dmmd"] text{font-family:var(--font);font-size:14px;fill:var(--text)}
+svg[id^="mmd"] .node rect,svg[id^="mmd"] .node polygon,svg[id^="mmd"] .node circle,svg[id^="mmd"] .node ellipse,svg[id^="mmd"] .node path,
+svg[id^="mmd"] .actor,svg[id^="mmd"] .labelBox,svg[id^="mmd"] .note,svg[id^="mmd"] rect.task,svg[id^="mmd"] .entityBox,svg[id^="mmd"] .stateGroup rect{fill:var(--iris-soft);stroke:var(--iris);stroke-width:1.2px}
+svg[id^="mmd"] .cluster rect{fill:var(--surface2);stroke:var(--line-strong)}
+svg[id^="mmd"] .edgePath path,svg[id^="mmd"] .flowchart-link,svg[id^="mmd"] path.relation,svg[id^="mmd"] .messageLine0,svg[id^="mmd"] .messageLine1,svg[id^="mmd"] .actor-line,svg[id^="mmd"] line{stroke:var(--muted);stroke-width:1.4px;fill:none}
+svg[id^="mmd"] marker path,svg[id^="mmd"] .arrowheadPath,svg[id^="mmd"] .arrowMarkerPath{fill:var(--muted);stroke:var(--muted)}
+svg[id^="mmd"] .edgeLabel,svg[id^="mmd"] .edgeLabel rect,svg[id^="mmd"] .labelBkg{fill:var(--surface);background:var(--surface)}
+svg[id^="mmd"] .pieCircle{stroke:var(--surface);stroke-width:2px}
+.md pre{tab-size:4}
