@@ -12,7 +12,7 @@
 - **Облако и поиск** (по действию владельца, не по таймеру): модели OpenRouter в чате и, по опции, в `/v1`; веб-поиск чата через SearXNG владельца.
 - **Движки** — отдельные службы ОС `omnibox-prismml` и `omnibox-ollama` (`omnibox engine <движок>`, `internal/host`): PrismML `llama-server` (Bonsai PQ2 и обычные GGUF) и Ollama на loopback (8801, 8802). Оба движка остаются.
 - **Настройки** — один `config.json` (`internal/config`); пишет только служба, атомарно, через `config.Store`.
-- **Клиенты API:** Jan, Pi, Open WebUI. Доступ только из LAN и WireGuard; HTTPS завершает reverse proxy на Synology NAS (`https://llm.fnx.red`). Wake-on-LAN — через Home Assistant.
+- **Клиенты API:** Jan, Pi и другие OpenAI-совместимые клиенты. Доступ только из LAN и WireGuard; HTTPS завершает reverse proxy на Synology NAS (`https://llm.fnx.red`). Wake-on-LAN — через Home Assistant.
 
 PowerShell-версия удалена из `main` по решению владельца; последняя — ветка `powershell-0.17.1`. Go-версия выпущена в 0.18.0. Её не исправляют и к ней не возвращаются; совместимость с её файлами не нужна (чистая установка). Всё из PowerShell-версии перенесено; дальнейшие задачи — в `docs/roadmap.md`.
 

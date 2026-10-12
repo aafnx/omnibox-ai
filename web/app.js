@@ -62,7 +62,7 @@ const CAP={
   video:{icon:'i-video',name:'Видео',tip:'Понимает видео: смотрит ролик и отвечает по нему.'},
   audio:{icon:'i-audio',name:'Аудио',tip:'Понимает аудио: речь, записи разговоров, звуки.'},
   reasoning:{icon:'i-brain',name:'Рассуждения',tip:'Думает перед ответом: точнее на задачах с логикой, кодом и математикой, но отвечает дольше.'},
-  tools:{icon:'i-tool',name:'Функции',tip:'Вызывает инструменты: веб-поиск в чате OmniBox, функции и MCP-серверы в Open WebUI или Jan.'},
+  tools:{icon:'i-tool',name:'Функции',tip:'Вызывает инструменты: веб-поиск в чате OmniBox, функции и MCP-серверы в Jan и других клиентах.'},
   draws:{icon:'i-spark',name:'Рисует',tip:'Рисует изображения по текстовому описанию.'},
 };
 const OFF={vision:'Не понимает изображения.',video:'Не понимает видео.',audio:'Не понимает аудио.',reasoning:'Отвечает сразу, без отдельного этапа размышлений.',tools:'Не вызывает инструменты: веб-поиск в чате будет выполняться по каждому вопросу.',draws:'Не рисует: отвечает только текстом.'};
@@ -175,6 +175,19 @@ function inlineMd(s,sources){
 // a closing $ needs no space before it and no digit after it.
 const MATH=/```[\s\S]*?(?:```|$)|`[^`\n]*`|\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\\(([\s\S]+?)\\\)|\$(?=[^\s$])([^$\n]*?[^\s$\\])\$(?!\d)/g;
 function takeMath(text){const math=[];const out=text.replace(MATH,(m,dd,br,pr,inl)=>{if(m[0]==='`')return m;const tex=dd??br??pr??inl;math.push({tex:tex.trim(),display:dd!==undefined||br!==undefined});return `\u0001${math.length-1}\u0001`;});return {out,math};}
+// Lists nest by indent: "- " items under "1." stay bullets inside that item instead of running on
+// as 2., 3., 4. A numbered list that resumes after a paragraph keeps its number (start).
+const LIST_ITEM=/^\s*([-*+]|\d{1,3}[.)])\s+/;
+const indentOf=l=>l.match(/^\s*/)[0].replace(/\t/g,'    ').length;
+function listMd(lines,i,sources){const base=indentOf(lines[i]),ordered=/^\s*\d/.test(lines[i]),start=ordered?parseInt(lines[i].match(/\d+/)[0],10):1,items=[];
+  while(i<lines.length&&LIST_ITEM.test(lines[i])&&indentOf(lines[i])===base&&/^\s*\d/.test(lines[i])===ordered){
+    let item=inlineMd(lines[i++].replace(LIST_ITEM,''),sources),sub='';
+    while(i<lines.length){const l=lines[i];
+      if(LIST_ITEM.test(l)&&indentOf(l)>base){const [h,n]=listMd(lines,i,sources);sub+=h;i=n;continue;}
+      if(!LIST_ITEM.test(l)&&/^\s+\S/.test(l)&&indentOf(l)>base){item+='<br>'+inlineMd(l.trim(),sources);i++;continue;}
+      break;}
+    items.push(`<li>${item}${sub}</li>`);}
+  return [ordered?`<ol${start!==1?` start="${start}"`:''}>${items.join('')}</ol>`:`<ul>${items.join('')}</ul>`,i];}
 function md(text,sources){
   const tm=takeMath(String(text??''));
   const lines=esc(tm.out).split('\n');let out=[],i=0;
@@ -188,9 +201,7 @@ function md(text,sources){
     const h=l.match(/^(#{1,6})\s+(.+)$/);if(h){flush();out.push(`<${h[1].length<=2?'h3':'h4'}>${inlineMd(h[2],sources)}</${h[1].length<=2?'h3':'h4'}>`);i++;continue;}
     if(/^\s*([-*_])\s*\1\s*\1[\s\1]*$/.test(l)){flush();out.push('<hr>');i++;continue;}
     if(/^\s*&gt;\s?/.test(l)){flush();const q=[];while(i<lines.length&&/^\s*&gt;\s?/.test(lines[i]))q.push(lines[i++].replace(/^\s*&gt;\s?/,''));out.push(`<blockquote>${inlineMd(q.join('<br>'),sources)}</blockquote>`);continue;}
-    if(/^\s*([-*+]|\d{1,3}[.)])\s+/.test(l)){flush();const ordered=/^\s*\d/.test(l);const items=[];
-      while(i<lines.length&&/^\s*([-*+]|\d{1,3}[.)])\s+/.test(lines[i])){let item=lines[i++].replace(/^\s*([-*+]|\d{1,3}[.)])\s+/,'');while(i<lines.length&&/^\s{2,}\S/.test(lines[i])&&!/^\s*([-*+]|\d{1,3}[.)])\s+/.test(lines[i]))item+='<br>'+lines[i++].trim();items.push(`<li>${inlineMd(item,sources)}</li>`);}
-      out.push(ordered?`<ol>${items.join('')}</ol>`:`<ul>${items.join('')}</ul>`);continue;}
+    if(LIST_ITEM.test(l)){flush();const [h,n]=listMd(lines,i,sources);out.push(h);i=n;continue;}
     if(/^\s*\|.*\|\s*$/.test(l)&&i+1<lines.length&&/^\s*\|[\s:|-]+\|\s*$/.test(lines[i+1])){flush();const cells=r=>r.trim().replace(/^\||\|$/g,'').split('|').map(c=>inlineMd(c.trim(),sources));
       const head=cells(l);i+=2;const rows=[];while(i<lines.length&&/^\s*\|.*\|\s*$/.test(lines[i]))rows.push(cells(lines[i++]));
       out.push(`<table><thead><tr>${head.map(c=>`<th>${c}</th>`).join('')}</tr></thead><tbody>${rows.map(r=>`<tr>${r.map(c=>`<td>${c}</td>`).join('')}</tr>`).join('')}</tbody></table>`);continue;}

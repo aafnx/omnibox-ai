@@ -117,6 +117,7 @@
             <div class="attach-warn" id="attach-warn" role="alert" hidden></div><div class="attached" id="attached" hidden></div>
             <textarea id="prompt" rows="2" placeholder="Спросите о чём угодно…" aria-label="Сообщение"></textarea>
             <div class="row">
+              <div class="websearch pluswrap"><button type="button" class="tog" id="plus-btn" aria-haspopup="true" aria-expanded="false" aria-label="Ещё: настройки и действия чата" title="Ещё"><svg class="i i15"><use href="#i-plus"/></svg></button><div class="pop plus-pop" id="plus-pop" hidden></div></div>
               <div class="picker asst-picker"><button type="button" id="asst-btn" class="asst-chip" aria-expanded="false" aria-haspopup="true"></button><div class="menu" id="asst-menu" hidden></div></div>
               
               <div class="websearch thinkwrap"><button type="button" class="tog" id="think-btn" aria-haspopup="true" aria-label="Размышления" title="Размышления"><svg class="i i15"><use href="#i-brain"/></svg></button><div class="pop" id="think-pop" hidden></div></div>
@@ -194,9 +195,9 @@
         <div class="sections">
           <div class="panel" id="s-api"><header><h2>Подключение клиентов</h2><span class="pill" id="api-state">API</span></header>
             <div class="body">
-              <div class="field"><label for="base">Адрес для Jan, Open WebUI, Pi</label><div class="copy"><input id="base" type="text" readonly><button class="btn" type="button" data-copy="base">Копировать</button></div><span class="hint" id="base-hint"></span></div>
+              <div class="field"><label for="base">Адрес для клиентов: Jan, Pi и других</label><div class="copy"><input id="base" type="text" readonly><button class="btn" type="button" data-copy="base">Копировать</button></div><span class="hint" id="base-hint"></span></div>
               <div class="line"><div><b>Требовать ключ API</b><div class="small muted">Без ключа к API может обратиться любой в вашей сети.</div></div><label class="switch"><input type="checkbox" id="require-key" aria-label="Требовать ключ API"><span></span></label></div>
-              <div class="line"><div><b>Сообщать модели дату и время</b><div class="small muted">В запросы Jan, Open WebUI и Pi добавляется строка с сегодняшней датой, днём недели и временем этого ПК — модель понимает «сегодня» и «завтра». В чате OmniBox дата есть всегда.</div></div><label class="switch"><input type="checkbox" id="inject-date" aria-label="Сообщать модели дату и время"><span></span></label></div>
+              <div class="line"><div><b>Сообщать модели дату и время</b><div class="small muted">В запросы Jan, Pi и других клиентов добавляется строка с сегодняшней датой, днём недели и временем этого ПК — модель понимает «сегодня» и «завтра». В чате OmniBox дата есть всегда.</div></div><label class="switch"><input type="checkbox" id="inject-date" aria-label="Сообщать модели дату и время"><span></span></label></div>
               <div class="warnbox" id="nokey-warn" hidden>Ключ не требуется: любой в LAN и WireGuard может пользоваться моделями.</div>
               <div class="stack8"><b>Ключи API</b><div class="tablewrap"><table class="keys"><thead><tr><th>Клиент</th><th>Создан</th><th>Последний запрос</th><th class="num">Запросов</th><th></th></tr></thead><tbody id="keys"></tbody></table></div>
                 <div class="copy"><input type="text" id="key-name" maxlength="40" placeholder="Имя клиента, например Ноутбук" aria-label="Имя клиента"><button class="btn" type="button" id="key-add">Создать ключ</button></div>
@@ -212,8 +213,8 @@
             </div></div>
           <div class="panel" id="s-chat"><header><h2>Чат</h2></header>
             <div class="body">
-              <div class="line"><div><b>Предлагать вопросы после ответа</b><div class="small muted">Под последним ответом — 3–5 вопросов, которые можно задать дальше, как «Продолжить» в Open WebUI; нажатие отправляет вопрос. Это отдельный короткий запрос к модели после ответа. В каждом чате можно включить или выключить отдельно: меню «⋯» в списке чатов.</div></div><label class="switch"><input type="checkbox" id="follow-on" aria-label="Предлагать вопросы после ответа"><span></span></label></div>
-              <div class="line"><div><b>Название чата пишет модель</b><div class="small muted">После первого ответа модель даёт чату короткое название по сути разговора, как в Open WebUI. До этого и при выключенной опции название — начало первого вопроса. Чат, который вы переименовали, модель не трогает.</div></div><label class="switch"><input type="checkbox" id="auto-title" aria-label="Название чата пишет модель"><span></span></label></div>
+              <div class="line"><div><b>Предлагать вопросы после ответа</b><div class="small muted">Под последним ответом — 3–5 вопросов, которые можно задать дальше; нажатие отправляет вопрос. Это отдельный короткий запрос к модели после ответа. В каждом чате можно включить или выключить отдельно: меню «⋯» в списке чатов.</div></div><label class="switch"><input type="checkbox" id="follow-on" aria-label="Предлагать вопросы после ответа"><span></span></label></div>
+              <div class="line"><div><b>Название чата пишет модель</b><div class="small muted">После первого ответа модель даёт чату короткое название по сути разговора. До этого и при выключенной опции название — начало первого вопроса. Чат, который вы переименовали, модель не трогает.</div></div><label class="switch"><input type="checkbox" id="auto-title" aria-label="Название чата пишет модель"><span></span></label></div>
               <div class="line"><div><b>Кто пишет вопросы и названия</b><div class="small muted" id="follow-model-hint">Та же модель, что отвечала: локальная — бесплатно, но несколько секунд занимает видеокарту; облачная — по цене её токенов.</div></div><select id="follow-model" class="sel-auto"></select></div>
             </div></div>
           <div class="panel" id="s-search"><header><h2>Веб-поиск</h2><span class="pill" id="search-state">Не проверен</span></header>
@@ -251,7 +252,7 @@
                   <div id="by-model" class="bymodel"></div>
                 </div>
                 <div class="line"><div><b>Предупреждать о низком балансе</b><div class="small muted">Уведомление в панели, когда на счёте меньше указанной суммы.</div></div><select id="or-low" class="sel-fit"><option value="1">$1</option><option value="2">$2</option><option value="5">$5</option><option value="0">Не предупреждать</option></select></div>
-                <div class="line"><div><b>Показывать в API OmniBox</b><div class="small muted" id="or-expose-hint">Jan, Open WebUI и Pi увидят избранные модели OpenRouter. Запросы оплачиваются с вашего ключа.</div></div><label class="switch"><input type="checkbox" id="or-expose" aria-label="Показывать модели OpenRouter в API"><span></span></label></div>
+                <div class="line"><div><b>Показывать в API OmniBox</b><div class="small muted" id="or-expose-hint">Jan, Pi и другие клиенты увидят избранные модели OpenRouter. Запросы оплачиваются с вашего ключа.</div></div><label class="switch"><input type="checkbox" id="or-expose" aria-label="Показывать модели OpenRouter в API"><span></span></label></div>
                 <div class="line"><div><b>Список моделей</b><div class="small muted" id="or-fetched">Обновляется при открытии раздела «Модели», не чаще раза в час.</div></div><button class="btn sm" type="button" id="or-refresh">Обновить</button></div>
                 <div class="line"><span class="muted small" id="or-keyinfo"></span><button class="btn ghost sm danger-text" type="button" id="or-disconnect">Отключить и удалить ключ</button></div>
               </div>
@@ -334,7 +335,7 @@
         <div class="verdict" id="d-verdict"></div>
         <span class="hint" id="d-rec"></span></div>
       <div class="line" id="d-vision-row"><div><b>Изображения</b><div class="small muted">Подключать проектор изображений</div></div><label class="switch"><input type="checkbox" id="d-vision" aria-label="Изображения"><span></span></label></div>
-      <div class="field" id="d-alias-row"><label for="d-alias">Имя модели в API</label><input id="d-alias" type="text" maxlength="80"><span class="hint">Это имя указывается в Jan, Open WebUI и Pi. Пусто — из названия файла.</span></div>
+      <div class="field" id="d-alias-row"><label for="d-alias">Имя модели в API</label><input id="d-alias" type="text" maxlength="80"><span class="hint">Это имя указывается в Jan, Pi и других клиентах. Пусто — из названия файла.</span></div>
       <div class="adv-head" id="d-adv-row"><div><b>Расширенный режим</b><div class="small muted">Кеш, слои, сэмплинг и размышления. Сохраняется только для этой модели.</div></div><label class="switch"><input type="checkbox" id="adv-on" aria-label="Расширенный режим"><span></span></label></div>
       <div id="adv" class="adv-stack" hidden><div class="adv-status"><span id="adv-count" class="small muted"></span><button class="btn ghost sm" type="button" id="adv-reset" hidden>Сбросить к базовым</button></div><div id="adv-groups"></div></div>
     </section>

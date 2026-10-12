@@ -748,7 +748,7 @@ details.mini>summary:hover{color:var(--text)}
           <thead><tr><th>Время</th><th>Откуда</th><th>Модель</th><th class="num">Токены</th><th class="num">Скорость</th></tr></thead>
           <tbody>
             <tr><td>14:32</td><td>Чат OmniBox · поиск</td><td>Gemma 4 · 12B</td><td class="num">2 140 → 412</td><td class="num">61 ток/с</td></tr>
-            <tr><td>14:18</td><td>Open WebUI · ключ «NAS»</td><td>Gemma 4 · 12B</td><td class="num">812 → 1 030</td><td class="num">63 ток/с</td></tr>
+            <tr><td>14:18</td><td>Клиент · ключ «NAS»</td><td>Gemma 4 · 12B</td><td class="num">812 → 1 030</td><td class="num">63 ток/с</td></tr>
             <tr><td>13:57</td><td>Jan · ключ «Ноутбук»</td><td>Gemma 4 · 12B</td><td class="num">5 610 → 640</td><td class="num">58 ток/с</td></tr>
           </tbody></table></div>
       </div>
@@ -766,7 +766,7 @@ details.mini>summary:hover{color:var(--text)}
         <div class="sections">
           <div class="panel" id="s-api"><header><h2>Подключение клиентов</h2><span class="pill ok">API включён</span></header>
             <div class="body">
-              <div class="field"><label for="base">Адрес для Jan, Open WebUI, Pi</label><div class="copy"><input id="base" type="text" readonly value="https://llm.fnx.red/v1"><button class="btn" type="button" data-copy="base">Копировать</button></div><span class="hint">Имя модели — то, что указано в карточке модели, например <span class="mono">gemma-4-12b-it-q4_k_m</span>.</span></div>
+              <div class="field"><label for="base">Адрес для клиентов: Jan, Pi и других</label><div class="copy"><input id="base" type="text" readonly value="https://llm.fnx.red/v1"><button class="btn" type="button" data-copy="base">Копировать</button></div><span class="hint">Имя модели — то, что указано в карточке модели, например <span class="mono">gemma-4-12b-it-q4_k_m</span>.</span></div>
               <div class="line"><div><b>Ключи API</b><div class="small muted">3 ключа: NAS, Ноутбук, Телефон</div></div><button class="btn sm" type="button">Управлять</button></div>
             </div></div>
           <div class="panel" id="s-assist"><header><h2>Ассистенты</h2><button class="btn sm primary" type="button" data-asst-new><svg class="i" style="width:15px;height:15px"><use href="#i-plus"/></svg>Новый ассистент</button></header>
@@ -795,7 +795,7 @@ details.mini>summary:hover{color:var(--text)}
                   <div id="by-model" class="bymodel"></div>
                 </div>
                 <div class="line"><div><b>Предупреждать о низком балансе</b><div class="small muted">Уведомление в панели, когда на счёте меньше указанной суммы.</div></div><select id="or-low" style="width:auto"><option>$1</option><option selected>$2</option><option>$5</option><option>Не предупреждать</option></select></div>
-                <div class="line"><div><b>Показывать в API OmniBox</b><div class="small muted">Jan, Open WebUI и Pi увидят избранные модели OpenRouter по адресу llm.fnx.red. Запросы оплачиваются с вашего ключа.</div></div><label class="switch"><input type="checkbox" aria-label="Показывать модели OpenRouter в API"><span></span></label></div>
+                <div class="line"><div><b>Показывать в API OmniBox</b><div class="small muted">Jan, Pi и другие клиенты увидят избранные модели OpenRouter по адресу llm.fnx.red. Запросы оплачиваются с вашего ключа.</div></div><label class="switch"><input type="checkbox" aria-label="Показывать модели OpenRouter в API"><span></span></label></div>
                 <div class="line"><div><b>Список моделей</b><div class="small muted">Обновлён сегодня в 14:20. Обновляется при открытии раздела «Модели», не чаще раза в час.</div></div><button class="btn sm" type="button">Обновить</button></div>
                 <div class="line"><span class="muted small">Ключ: sk-or-v1-…7f3a · сохранён 8 окт</span><button class="btn ghost sm" type="button" id="or-disconnect" style="color:var(--err)">Отключить и удалить ключ</button></div>
               </div>
@@ -865,7 +865,7 @@ details.mini>summary:hover{color:var(--text)}
         <span class="hint" id="d-rec"></span></div>
       <div class="line"><div><b>Изображения</b><div class="small muted">Подключать проектор изображений</div></div><label class="switch"><input type="checkbox" checked aria-label="Изображения"><span></span></label></div>
       <div class="line"><div><b>Размышления</b><div class="small muted">Думать перед ответом</div></div><label class="switch"><input type="checkbox" aria-label="Размышления"><span></span></label></div>
-      <div class="field"><label for="d-alias">Имя модели в API</label><input id="d-alias" type="text" value="gemma-4-12b-it-q4_k_m"><span class="hint">Это имя указывается в Jan, Open WebUI и Pi.</span></div>
+      <div class="field"><label for="d-alias">Имя модели в API</label><input id="d-alias" type="text" value="gemma-4-12b-it-q4_k_m"><span class="hint">Это имя указывается в Jan, Pi и других клиентах.</span></div>
       <div class="adv-head"><div><b>Расширенный режим</b><div class="small muted">Кеш, слои, сэмплинг и размышления. Сохраняется только для этой модели.</div></div><label class="switch"><input type="checkbox" id="adv-on" aria-label="Расширенный режим"><span></span></label></div>
       <div id="adv" hidden><div class="adv-status"><span id="adv-count" class="small muted">Все значения базовые: подобраны под модель и RTX 5080.</span><button class="btn ghost sm" type="button" id="adv-reset" hidden>Сбросить к базовым</button></div><div id="adv-groups"></div></div>
     </section>
@@ -932,17 +932,17 @@ const CAP={
   vision:{icon:'i-eye',name:'Изображения',tip:'Понимает изображения: скриншоты, фото, сканы документов. Работает с проектором mmproj — он скачивается вместе с моделью.'},
   novision:{icon:'i-eye',name:'Изображения: нужен проектор',tip:'Модель умеет видеть, но файл проектора mmproj не скачан. Нажмите на модель → «Скачать проектор».',missing:true},
   reason:{icon:'i-brain',name:'Рассуждения',tip:'Думает перед ответом: точнее на задачах с логикой, кодом и математикой, но отвечает дольше. Можно выключить в настройках модели.'},
-  tools:{icon:'i-tool',name:'Функции',tip:'Умеет вызывать инструменты по запросу: веб-поиск в чате OmniBox, функции и MCP-серверы в Open WebUI или Jan. Какие инструменты доступны, решает клиент.'},
+  tools:{icon:'i-tool',name:'Функции',tip:'Умеет вызывать инструменты по запросу: веб-поиск в чате OmniBox, функции и MCP-серверы в Jan и других клиентах. Какие инструменты доступны, решает клиент.'},
   audio:{icon:'i-audio',name:'Аудио',tip:'Понимает аудио: речь, записи разговоров, звуки.'},
   video:{icon:'i-video',name:'Видео',tip:'Понимает видео: смотрит ролик и отвечает по нему.'},
   gen:{icon:'i-spark',name:'Рисует',tip:'Рисует изображения по текстовому описанию.'},
 };
 const OFF={audio:'Не понимает аудио.',vision:'Не понимает изображения.',video:'Не понимает видео.',reason:'Отвечает сразу, без отдельного этапа размышлений.',tools:'Не вызывает инструменты: веб-поиск в чате будет выполняться по каждому вопросу.',gen:'Не рисует: отвечает только текстом.'};
 const DESC={
-  vision:'Понимает изображения: скриншоты, фото, сканы. В чате OmniBox — кнопка «Изображение»; в Open WebUI и Jan — вложения.',
+  vision:'Понимает изображения: скриншоты, фото, сканы. В чате OmniBox — кнопка «Изображение»; в Jan и других клиентах — вложения.',
   novision:'Модель умеет видеть, но проектор mmproj не скачан. Скачается за минуту, примерно 0,8 ГБ.',
   reason:'Думает перед ответом. Полезно для кода, логики и математики; ответ приходит позже. Включается и выключается ниже.',
-  tools:'Вызывает инструменты, когда они нужны. В чате OmniBox это веб-поиск через SearXNG; в Open WebUI и Jan — их функции и MCP-серверы: файлы, календарь, Home Assistant.',
+  tools:'Вызывает инструменты, когда они нужны. В чате OmniBox это веб-поиск через SearXNG; в Jan и других клиентах — их функции и MCP-серверы: файлы, календарь, Home Assistant.',
 };
 const models=[
   {name:'Gemma 4 · 12B',engine:'PrismML',file:'unsloth-gemma-4-12b-it-GGUF-gemma-4-12b-it-Q4_K_M.gguf',quant:'Q4_K_M',size:'7,3 ГБ',ctx:'128K',caps:['vision','tools'],state:'live',w:8.1,layers:48,kv:.055,max:128,cur:64},
@@ -1240,7 +1240,7 @@ conv.addEventListener('drop',e=>{e.preventDefault();dragDepth=0;$('#drop').hidde
 
 const threads=[
   {id:1,title:'Wake-on-LAN через Synology',created:'8 окт',age:0,keep:30,pinned:false},
-  {id:2,title:'Настройка Open WebUI на NAS',created:'2 сен',age:36,keep:30,pinned:true},
+  {id:2,title:'Настройка клиентов на NAS',created:'2 сен',age:36,keep:30,pinned:true},
   {id:3,title:'Скрипт резервного копирования',created:'8 окт',age:0,keep:30,pinned:false},
   {id:4,title:'Разбор логов nginx',created:'7 окт',age:1,keep:30,pinned:false},
   {id:5,title:'Рецепт на ужин из того, что есть',created:'7 окт',age:1,keep:1,ageH:23.6,pinned:false},

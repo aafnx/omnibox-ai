@@ -129,7 +129,7 @@ type API struct {
 	InjectDate bool `json:"inject_date,omitempty"`
 }
 
-// APIKey is one client's key, e.g. Jan, Pi or Open WebUI.
+// APIKey is one client's key, e.g. Jan or Pi.
 type APIKey struct {
 	ID      string    `json:"id"`
 	Name    string    `json:"name"`

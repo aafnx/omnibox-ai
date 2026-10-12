@@ -19,13 +19,17 @@ function threadRow(t){const cur=C.chat?.id===t.id;
   const writing=C.streams[t.id]||C.active.has(t.id);
   return `<li class="t"><a href="#chat" data-thread="${t.id}" class="${cur?'on':''}"><span class="tt">${esc(t.title)}</span><small>${writing?'<span class="writing">отвечает…</span> · ':''}${dateShort(t.created)}${t.pinned||!t.expires?'':` · <span class="remain${hoursLeft(t)<24?' soon':''}" title="${leftText(t)}"><svg class="i"><use href="#i-clock"/></svg>${esc(remain(t))}</span>`}</small></a>`+
   `<button type="button" class="tmore" data-tmenu="${t.id}" aria-haspopup="menu" aria-expanded="false" title="Действия" aria-label="Действия с чатом «${esc(t.title)}»"><svg class="i"><use href="#i-dots"/></svg></button></li>`;}
-function threadMenu(t){const f=followOn(t);return `<button type="button" role="menuitem" data-rename="${t.id}"><svg class="i"><use href="#i-edit"/></svg>Переименовать</button>`+
-  `<button type="button" role="menuitemcheckbox" aria-checked="${f}" data-follow-chat="${t.id}" class="${f?'on2':''}" title="Вопросы для продолжения под последним ответом. По умолчанию — как в «Настройки → Чат»."><svg class="i"><use href="#i-spark"/></svg>Предлагать вопросы<span class="tick">${f?'вкл':'выкл'}</span></button>`+
+// The list's menu is about the chat as a whole; what happens inside it is in the composer's "+".
+function threadMenu(t){return `<button type="button" role="menuitem" data-rename="${t.id}"><svg class="i"><use href="#i-edit"/></svg>Переименовать</button>`+
   `<button type="button" role="menuitem" data-pin="${t.id}" class="${t.pinned?'on':''}"><svg class="i"><use href="#i-star"/></svg>${t.pinned?'Убрать из избранного':'В избранное'}</button>`+
-  `<div class="msep"></div><button type="button" role="menuitem" data-export="md" data-chat="${t.id}"><svg class="i"><use href="#i-download"/></svg>Скачать Markdown</button>`+
-  `<button type="button" role="menuitem" data-export="json" data-chat="${t.id}"><svg class="i"><use href="#i-download"/></svg>Скачать JSON</button>`+
-  `<button type="button" role="menuitem" data-export="copy" data-chat="${t.id}"><svg class="i"><use href="#i-copy"/></svg>Копировать весь чат</button><div class="msep"></div>`+
   `<button type="button" role="menuitem" class="del" data-del-thread="${t.id}"><svg class="i"><use href="#i-trash"/></svg>Удалить</button>`;}
+// ── the composer's "+": settings of this chat and what can be done with it ──
+function renderPlus(){const c=C.chat,has=!!c?.messages?.length,f=followOn(c||{follow_ups:C.followNew});
+  setHTML(byId('plus-pop'),`<div class="line"><div><b>Предлагать вопросы</b><div class="small muted">Под ответом — вопросы для продолжения, в этом чате. Для всех чатов — «Настройки → Чат».</div></div><label class="switch"><input type="checkbox" id="plus-follow"${f?' checked':''} aria-label="Предлагать вопросы в этом чате"><span></span></label></div>`+
+    `<div class="pmenu"><span class="ph">Этот чат</span>`+
+    `<button type="button" data-export="md"${has?'':' disabled'}><svg class="i"><use href="#i-download"/></svg>Скачать Markdown</button>`+
+    `<button type="button" data-export="json"${has?'':' disabled'}><svg class="i"><use href="#i-download"/></svg>Скачать JSON</button>`+
+    `<button type="button" data-export="copy"${has?'':' disabled'}><svg class="i"><use href="#i-copy"/></svg>Копировать весь чат</button></div>`);}
 // The menu is fixed to the window: the list scrolls and would cut it off.
 function openThreadMenu(btn){const t=C.threads.find(x=>x.id===btn.dataset.tmenu);const m=byId('thread-menu');if(!t)return;
   if(!m.hidden&&m.dataset.for===t.id){closeThreadMenu();return;}
@@ -52,10 +56,11 @@ async function loadThreads(){const d=await api('/api/chats');C.threads=d.chats||
 function chatModelName(key){return modelByKey(key)?.name||(key||'').replace(/^(prismml|ollama|cloud):/,'');}
 function userHTML(m){const files=(m.attachments||[]).map(a=>`<span class="fchip"><svg class="i"><use href="#${KIND_ICON[a.kind]||'i-file'}"/></svg><span class="fn">${esc(a.name)}</span><span class="fs">${fsize(a.size||0)}</span></span>`).join('');
   return `<div class="msg user" data-id="${esc(m.id||'')}">${files?`<div class="files">${files}</div>`:''}${m.text?`<div class="bubble">${esc(m.text)}</div>`:''}${ACT_USER}</div>`;}
-function metaHTML(m){const x=m.meta||{};const parts=[esc(chatModelName(m.model))];
+function metaHTML(m){const x=m.meta||{};const name=chatModelName(m.model);const parts=[];
   if(x.seconds)parts.push(`${String(x.seconds).replace('.',',')} с`);if(x.output_tokens)parts.push(`${fmtN(x.output_tokens)} ${plural(x.output_tokens,'токен','токена','токенов')}`);
   if(x.tokens_per_second)parts.push(`${String(x.tokens_per_second).replace('.',',')} ток/с`);
-  return parts.map(p=>`<span>${p}</span>`).join('')+(x.cost_usd?`<span class="cost" title="Стоимость по данным OpenRouter">${money(x.cost_usd)}</span>`:'');}
+  // A long model name ends in an ellipsis; the whole name is in its tip.
+  return `<span class="mname" title="${esc(name)}">${esc(name)}</span>`+parts.map(p=>`<span>${p}</span>`).join('')+(x.cost_usd?`<span class="cost" title="Стоимость по данным OpenRouter">${money(x.cost_usd)}</span>`:'');}
 function traceHTML(m){const x=m.meta||{};let h='';
   const pages=x.pages||[];
   if(x.searches?.length||pages.length)h+=`<details class="step"><summary><svg class="i i15"><use href="#i-globe"/></svg>${x.searches?.length?`Искал в интернете · ${x.searches.length} ${plural(x.searches.length,'запрос','запроса','запросов')}`:'Читал страницы'}${x.sources?.length?` · ${x.sources.length} ${plural(x.sources.length,'источник','источника','источников')}`:''}${pages.length?` · прочитано ${pages.length} ${plural(pages.length,'страница','страницы','страниц')}`:''}</summary><div class="in">${(x.searches||[]).map(q=>`<span>«${esc(q)}»</span>`).join('')}${pages.map(u=>`<span class="rd">Прочитано: <a href="${esc(u)}" target="_blank" rel="noopener noreferrer">${esc(hostOf(u)||u)}</a></span>`).join('')}</div></details>`;
@@ -168,8 +173,10 @@ function renderFoot(){const m=curModel();const f=byId('chat-foot');renderCtxMete
 // ── assistants ──
 const asstById=id=>(S.assistants.assistants||[]).find(a=>a.id===id);
 const chatAsst=()=>C.chat?C.chat.assistant_id:(C.asst??S.assistants.default);
-// An emoji sits in its own box: emoji fonts carry their own ascent, which pushed it off the circle's centre.
-function avatar(a,cls=''){if(a)return `<span class="av ${cls}${a.emoji?' emo':''}">${a.emoji?`<span class="em">${esc(a.emoji)}</span>`:esc((a.name.trim()[0]||'?').toUpperCase())}</span>`;
+// An emoji is drawn in an SVG, centred on the middle of its em box: as text, emoji fonts (Segoe
+// UI Emoji on Windows) sit on their own baseline and pushed it off the circle's centre.
+const emojiSVG=e=>`<svg class="emo-svg" viewBox="0 0 20 20" aria-hidden="true"><text x="10" y="10.6" text-anchor="middle" dominant-baseline="central">${esc(e)}</text></svg>`;
+function avatar(a,cls=''){if(a)return `<span class="av ${cls}${a.emoji?' emo':''}">${a.emoji?emojiSVG(a.emoji):esc((a.name.trim()[0]||'?').toUpperCase())}</span>`;
   return cls.includes('slot')?`<span class="av none ${cls}"><svg class="i"><use href="#i-user"/></svg></span>`:`<span class="av none ${cls}"></span>`;}
 function renderAssist(){const a=asstById(chatAsst());const b=byId('asst-btn');b.className='asst-chip'+(a?' on':'');
   b.innerHTML=avatar(a,a?'':'slot');b.title=a?`Ассистент: ${a.name}`:'Без ассистента — нажмите, чтобы выбрать';b.setAttribute('aria-label',b.title);
@@ -337,7 +344,9 @@ async function messageAction(act,el){const msg=el.closest('.msg');const id=msg.d
     C.chat.messages=all.slice(0,all.indexOf(user)+1);let n=msg;while(n){const next=n.nextElementSibling;n.remove();n=next;}send({retry:user.id});}}
 
 // The chat's own switch; a choice equal to the setting goes back to following the setting.
-async function toggleChatFollow(id){const t=C.threads.find(x=>x.id===id);if(!t)return;const next=!followOn(t),glob=!!S.chatSettings?.follow_ups;
+// The open chat's switch; a new chat takes it when it is created. A choice equal to the
+// setting follows the setting again.
+async function setChatFollow(next){const glob=!!S.chatSettings?.follow_ups;if(!C.chat){C.followNew=next===glob?undefined:next;return;}const id=C.chat.id;
   const s=await api('/api/chats',{action:'follow-ups',id,mode:next===glob?'auto':next?'on':'off'});const i=C.threads.findIndex(x=>x.id===id);if(i>=0)C.threads[i]=s;
   notice(next?'В этом чате под ответами будут вопросы для продолжения.':'В этом чате вопросы после ответов выключены.');
   if(C.chat?.id===id){C.chat.follow_ups=s.follow_ups;if(!next){stopFollowUps();renderChat();}else{const f=followTarget();if(f)requestFollowUps(id,f.id);}}}
@@ -424,6 +433,7 @@ byId('attach-btn').addEventListener('click',()=>byId('attach-input').click());
 byId('attach-input').addEventListener('change',e=>{addFiles([...e.target.files]);e.target.value='';});
 byId('attached').addEventListener('click',e=>{const b=e.target.closest('[data-unattach]');if(b){C.attached.splice(+b.dataset.unattach,1);renderAttached();}});
 byId('attach-warn').addEventListener('click',e=>{if(e.target.closest('#attach-warn-x'))byId('attach-warn').hidden=true;});
+byId('plus-pop').addEventListener('change',e=>{if(e.target.id==='plus-follow')setChatFollow(e.target.checked).then(renderPlus).catch(err=>{fail(err);renderPlus();});});
 byId('web-on').addEventListener('change',e=>{C.web=e.target.checked;renderWeb();});
 const conv=byId('conv');let dragDepth=0;
 conv.addEventListener('dragenter',e=>{if(![...e.dataTransfer.types].includes('Files'))return;e.preventDefault();dragDepth++;byId('drop').hidden=false;});
@@ -439,9 +449,10 @@ document.addEventListener('click',e=>{
   if(!e.target.closest('#thread-menu')&&!e.target.closest('[data-tmenu]'))closeThreadMenu();
   const tm=e.target.closest('[data-tmenu]');if(tm){openThreadMenu(tm);return;}
   const rn=e.target.closest('[data-rename]');if(rn){startRename(rn.dataset.rename);return;}
-  const ex=e.target.closest('[data-export]');if(ex){closeThreadMenu();exportChat(ex.dataset.chat,ex.dataset.export).catch(fail);return;}
+  const ex=e.target.closest('[data-export]');if(ex){byId('plus-pop').hidden=true;if(C.chat)exportChat(C.chat.id,ex.dataset.export).catch(fail);return;}
+  if(!e.target.closest('.pluswrap'))byId('plus-pop').hidden=true;
+  if(e.target.closest('#plus-btn')){const p=byId('plus-pop');p.hidden=!p.hidden;byId('plus-btn').setAttribute('aria-expanded',String(!p.hidden));if(!p.hidden)renderPlus();return;}
   if(e.target.closest('#mic-btn')){toggleMic();return;}
-  const fc=e.target.closest('[data-follow-chat]');if(fc){closeThreadMenu();toggleChatFollow(fc.dataset.followChat).catch(fail);return;}
   const fq=e.target.closest('[data-follow]');if(fq){if(!C.busy)send({text:fq.dataset.follow}).catch(fail);return;}
   if(e.target.closest('#think-btn')){byId('think-pop').hidden=!byId('think-pop').hidden;return;}
   if(e.target.closest('#ctx-btn')){const p=byId('ctx-pop');p.hidden=!p.hidden;byId('ctx-btn').setAttribute('aria-expanded',String(!p.hidden));if(!p.hidden)renderCtxMeter();return;}
@@ -471,4 +482,4 @@ renderMic();
 PAGES.chat={show(again){if(!C.chosen||!modelByKey(C.chosen)){const r=runningModel()||models().find(m=>m.favorite)||models()[0];if(r)C.chosen=r.key;}
   if(again){refreshLibrary().catch(()=>{});}
   loadThreads().then(()=>{if(!C.chat)C.web=webDefault(chatAsst());renderAll();}).catch(fail);renderAll();}};
-document.addEventListener('keydown',e=>{if(e.key==='Escape'){['think-pop','web-pop','asst-menu','picker-menu','ctx-pop'].forEach(id=>byId(id).hidden=true);closeThreadMenu();}});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){['think-pop','web-pop','asst-menu','picker-menu','ctx-pop','plus-pop'].forEach(id=>byId(id).hidden=true);closeThreadMenu();}});
