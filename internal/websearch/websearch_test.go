@@ -81,3 +81,23 @@ func TestRegion(t *testing.T) {
 		}
 	}
 }
+
+// News are asked from SearXNG's news category among fresh pages; when that finds nothing the
+// search widens to fresh pages of any kind, then to any page.
+func TestSearXNGNewsWidenWhenEmpty(t *testing.T) {
+	var asked []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		asked = append(asked, q.Get("categories")+"/"+q.Get("time_range"))
+		if q.Get("time_range") != "" {
+			w.Write([]byte(`{"results":[]}`))
+			return
+		}
+		w.Write([]byte(`{"results":[{"title":"ИИ","url":"https://a.example/","content":"новости ИИ"}]}`))
+	}))
+	defer srv.Close()
+	got, err := Client{URL: srv.URL, Recency: "week", News: true}.Search(context.Background(), "новости ИИ", "ru", 5)
+	if err != nil || len(got) != 1 || strings.Join(asked, " ") != "news/week /week /" {
+		t.Fatalf("%v %v %v", got, err, asked)
+	}
+}

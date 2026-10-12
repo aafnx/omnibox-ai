@@ -16,6 +16,7 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/control"
 	"github.com/aafnx/omnibox-ai/internal/platform"
 	"github.com/aafnx/omnibox-ai/internal/telemetry"
+	"github.com/aafnx/omnibox-ai/internal/websearch"
 )
 
 func chatRig(t *testing.T) (*chatSide, string) {
@@ -222,7 +223,7 @@ func TestSearchEngineSettings(t *testing.T) {
 	if s := c.Store.Get().ChatSettings(); s.SonarModel != "perplexity/sonar-pro" || c.searchReady(s) || !c.openaiSearch() {
 		t.Fatalf("%+v", s)
 	}
-	if _, err := c.search(context.Background(), "q"); err == nil || !strings.Contains(err.Error(), "ключом OpenRouter") {
+	if _, err := c.search(context.Background(), websearch.Query{Text: "q"}); err == nil || !strings.Contains(err.Error(), "ключом OpenRouter") {
 		t.Fatalf("%v", err)
 	}
 }

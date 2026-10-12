@@ -33,10 +33,26 @@ type Found struct {
 	CostUSD float64
 }
 
+// Query is one search: its words and, for news and other fresh facts, how recent the pages must
+// be. Without them "последние новости ИИ" finds encyclopedia articles years old.
+type Query struct {
+	Text string
+	// Recency is day, week, month or year; "" for any time.
+	Recency string
+	// News asks the engine's news search where it has one.
+	News bool
+}
+
+// Recencies are the accepted values of Query.Recency.
+var Recencies = []string{"day", "week", "month", "year"}
+
 // Client is a SearXNG instance with the JSON format enabled.
 type Client struct {
 	URL  string
 	HTTP *http.Client
+	// Recency and News narrow the search as in Query.
+	Recency string
+	News    bool
 }
 
 var defaultHTTP = &http.Client{
@@ -48,8 +64,23 @@ var defaultHTTP = &http.Client{
 
 const maxResponse = 4 << 20
 
-// Search returns up to n results; lang is "", ru or en ("" lets SearXNG decide).
+// Search returns up to n results; lang is "", ru or en ("" lets SearXNG decide). A news or
+// recent search that finds nothing is widened step by step: fresh pages of any kind, then any.
 func (c Client) Search(ctx context.Context, query, lang string, n int) ([]Result, error) {
+	for {
+		res, err := c.search(ctx, query, lang, n)
+		if err != nil || len(res) > 0 || (!c.News && c.Recency == "") {
+			return res, err
+		}
+		if c.News {
+			c.News = false
+		} else {
+			c.Recency = ""
+		}
+	}
+}
+
+func (c Client) search(ctx context.Context, query, lang string, n int) ([]Result, error) {
 	if c.URL == "" {
 		return nil, errors.New("Веб-поиск не настроен: укажите адрес SearXNG в «Настройки → Веб-поиск».")
 	}
@@ -63,6 +94,12 @@ func (c Client) Search(ctx context.Context, query, lang string, n int) ([]Result
 	q := url.Values{"q": {query}, "format": {"json"}, "safesearch": {"0"}}
 	if l := region(lang, query); l != "" {
 		q.Set("language", l)
+	}
+	if c.Recency != "" {
+		q.Set("time_range", c.Recency)
+	}
+	if c.News {
+		q.Set("categories", "news")
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.URL, "/")+"/search?"+q.Encode(), nil)
 	if err != nil {

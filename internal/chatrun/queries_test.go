@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/aafnx/omnibox-ai/internal/chats"
 	"github.com/aafnx/omnibox-ai/internal/config"
@@ -17,7 +18,8 @@ func planningRig(t *testing.T) (*rig, *[]string) {
 	g.r.Config = config.Default
 	var mu sync.Mutex
 	queries := &[]string{}
-	g.r.Search = func(_ context.Context, q string) (websearch.Found, error) {
+	g.r.Search = func(_ context.Context, sq websearch.Query) (websearch.Found, error) {
+		q := sq.Text
 		mu.Lock()
 		*queries = append(*queries, q)
 		mu.Unlock()
@@ -100,7 +102,8 @@ func TestParsePlanKeywordsAndAnchors(t *testing.T) {
 func TestAnsweringEngineGetsTheQuestion(t *testing.T) {
 	g, queries := planningRig(t)
 	g.r.SearchByQuestion = func() bool { return true }
-	g.r.Search = func(_ context.Context, q string) (websearch.Found, error) {
+	g.r.Search = func(_ context.Context, sq websearch.Query) (websearch.Found, error) {
+		q := sq.Text
 		*queries = append(*queries, q)
 		return websearch.Found{Summary: "Курс евро 95,1 ₽.", CostUSD: 0.007, Results: []websearch.Result{{Title: "ЦБ", URL: "https://cbr.example/"}}}, nil
 	}
@@ -164,5 +167,48 @@ func TestChatGPTSearchesItself(t *testing.T) {
 	c, _ := g.r.Chats.Get(g.chat.ID)
 	if m := c.Messages[len(c.Messages)-1].Meta; len(m.Searches) != 1 || m.Searches[0] != "погода Казань" {
 		t.Fatalf("%+v", m)
+	}
+}
+
+// The owner's case: "последние новости по ИИ" found an encyclopedia article about a film. News
+// are searched as news, among fresh pages; the planner says so, or the word itself does.
+func TestNewsAreSearchedFresh(t *testing.T) {
+	g := newRig(t)
+	g.r.Config = config.Default
+	var got []websearch.Query
+	g.r.Search = func(_ context.Context, q websearch.Query) (websearch.Found, error) {
+		got = append(got, q)
+		return websearch.Found{Results: []websearch.Result{{Title: "Новости ИИ", URL: "https://news.example/ai", Snippet: "OpenAI выпустила"}}}, nil
+	}
+	g.replies = []string{
+		sse(`{"choices":[{"delta":{"content":"{\"question\": \"Последние новости об ИИ\", \"queries\": [\"новости искусственный интеллект октябрь 2026\"], \"recency\": \"week\", \"news\": true}"}}]}`),
+		sse(`{"choices":[{"delta":{"content":"Главное за неделю [1]."}}]}`),
+	}
+	if code, ev := g.send(Request{ChatID: g.chat.ID, Model: local.Key, Text: "Найди последние новости по ИИ", Web: true}); code != 200 {
+		t.Fatalf("%d %v", code, ev)
+	}
+	if len(got) != 1 || got[0].Recency != "week" || !got[0].News {
+		t.Fatalf("planned %+v", got)
+	}
+	// A planner that leaves the fields out, or no planner at all: the word "новости" is enough.
+	if p, ok := parsePlan(`{"question":"q","queries":["новости ИИ"],"recency":"forever"}`); !ok || p.Recency != "" {
+		t.Fatalf("an unknown recency is dropped: %+v", p)
+	}
+	if r, news := freshness("Что нового? Дай новости ИИ"); r != "week" || !news {
+		t.Fatalf("%q %v", r, news)
+	}
+	if r, news := freshness("Как включить WoL"); r != "" || news {
+		t.Fatalf("%q %v", r, news)
+	}
+}
+
+// "Из других источников" needs the sites of the last answer: the planner sees them.
+func TestPlannerSeesTheLastAnswersSites(t *testing.T) {
+	prompt := mustJSON(planPrompt([]chats.Message{
+		{Role: "user", Text: "Новости ИИ"},
+		{Role: "assistant", Text: "Вот новости [1].", Meta: &chats.Meta{Sources: []chats.Source{{URL: "https://www.habr.com/a"}, {URL: "https://habr.com/b"}, {URL: "https://3dnews.ru/c"}}}},
+	}, chats.Message{Role: "user", Text: "Найди из других источников"}, time.Now()))
+	if !strings.Contains(prompt, "(источники ответа: habr.com, 3dnews.ru)") {
+		t.Fatal(prompt)
 	}
 }

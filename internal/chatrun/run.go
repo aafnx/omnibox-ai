@@ -54,8 +54,11 @@ type answer struct {
 	searchResults map[string]string
 	pages         []string // addresses read in full
 	subject       string
-	err           string
-	llamaSpeed    float64
+	// recency and news narrow every search of the answer, the model's own included.
+	recency    string
+	news       bool
+	err        string
+	llamaSpeed float64
 }
 
 func (r *Runner) run(ctx context.Context, t *turn, out *stream) {
@@ -73,7 +76,7 @@ func (r *Runner) run(ctx context.Context, t *turn, out *stream) {
 		// The question restated with the conversation's context and its queries; results are
 		// kept to the question even if a query drifts.
 		plan := r.planSearch(ctx, t, a, out)
-		a.subject = plan.Question
+		a.subject, a.recency, a.news = plan.Question, plan.Recency, plan.News
 		queries := plan.Queries
 		// No queries: the planner found nothing to search for (a greeting, a rewrite of a text).
 		if len(queries) > 0 && r.SearchByQuestion != nil && r.SearchByQuestion() {
@@ -556,7 +559,7 @@ func (r *Runner) search(ctx context.Context, a *answer, q string, out *stream) s
 	}
 	a.searches = append(a.searches, q)
 	out.send("search", map[string]string{"query": q})
-	found, err := r.Search(ctx, q)
+	found, err := r.Search(ctx, websearch.Query{Text: q, Recency: a.recency, News: a.news})
 	a.sideCost += found.CostUSD
 	if err != nil {
 		out.send("status", map[string]string{"text": err.Error()})

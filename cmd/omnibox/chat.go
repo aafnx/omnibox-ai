@@ -208,7 +208,7 @@ func (c *chatSide) runner(local func(ctx context.Context, session string, body [
 }
 
 // search asks the engine chosen in the settings.
-func (c *chatSide) search(ctx context.Context, q string) (websearch.Found, error) {
+func (c *chatSide) search(ctx context.Context, q websearch.Query) (websearch.Found, error) {
 	s := c.Store.Get().ChatSettings()
 	switch s.SearchEngine {
 	case websearch.EngineSonar:
@@ -217,7 +217,7 @@ func (c *chatSide) search(ctx context.Context, q string) (websearch.Found, error
 			return websearch.Found{}, errors.New("Поиск через Perplexity Sonar работает с ключом OpenRouter: добавьте его в «Настройки → OpenRouter».")
 		}
 		model := sonarModel(s)
-		found, err := cl.Sonar(ctx, model, q, today.Line(time.Now()))
+		found, err := cl.Sonar(ctx, model, q.Text, today.Line(time.Now()))
 		if found.CostUSD > 0 {
 			if err := c.Spend.Add(model, found.CostUSD, openrouter.SourceChat); err != nil {
 				c.logf("openrouter: spend ledger: %v", err)
@@ -229,10 +229,10 @@ func (c *chatSide) search(ctx context.Context, q string) (websearch.Found, error
 		}
 		return found, err
 	case websearch.EnginePerplexity, websearch.EngineTavily, websearch.EngineBrave:
-		res, err := websearch.Engine{Name: s.SearchEngine, Key: c.SearchKeys.Get(s.SearchEngine)}.Search(ctx, q, s.SearchLanguage, s.SearchResults)
+		res, err := websearch.Engine{Name: s.SearchEngine, Key: c.SearchKeys.Get(s.SearchEngine), Recency: q.Recency, News: q.News}.Search(ctx, q.Text, s.SearchLanguage, s.SearchResults)
 		return websearch.Found{Results: res}, err
 	}
-	res, err := websearch.Client{URL: s.SearchURL}.Search(ctx, q, s.SearchLanguage, s.SearchResults)
+	res, err := websearch.Client{URL: s.SearchURL, Recency: q.Recency, News: q.News}.Search(ctx, q.Text, s.SearchLanguage, s.SearchResults)
 	return websearch.Found{Results: res}, err
 }
 
@@ -734,7 +734,7 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 		if s := c.Store.Get().ChatSettings(); s.SearchEngine != "" && in.SearchURL == nil {
 			start := time.Now()
 			ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
-			_, err := c.search(ctx, "OmniBox AI")
+			_, err := c.search(ctx, websearch.Query{Text: "OmniBox AI"})
 			cancel()
 			if err != nil {
 				replyError(w, err)
