@@ -207,7 +207,7 @@ func TestAccount(t *testing.T) {
 	// Missing fields are zero; a limit is a pointer.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/key" {
-			io.WriteString(w, `{"data":{"limit":5,"limit_remaining":1.5}}`)
+			io.WriteString(w, `{"data":{"limit":5,"limit_remaining":1.5,"limit_reset":"monthly","expires_at":"2027-01-12T09:30:00Z"}}`)
 		} else {
 			io.WriteString(w, `{"data":{}}`)
 		}
@@ -216,6 +216,10 @@ func TestAccount(t *testing.T) {
 	acc, err = (&Client{Key: testKey, BaseURL: srv.URL}).Account(context.Background())
 	if err != nil || acc.Limit == nil || *acc.Limit != 5 || *acc.LimitRemaining != 1.5 || acc.Balance != 0 {
 		t.Errorf("partial account: %+v %v", acc, err)
+	}
+	// The key's limit period and expiry, for the panel to show what is left of the key.
+	if acc.LimitReset != "monthly" || acc.ExpiresAt == nil || !acc.ExpiresAt.Equal(time.Date(2027, 1, 12, 9, 30, 0, 0, time.UTC)) {
+		t.Errorf("limit reset and expiry: %+v", acc)
 	}
 }
 

@@ -40,7 +40,8 @@ const fmtN=n=>n===null||n===undefined||Number.isNaN(n)?'—':Number(n).toLocaleS
 const gb=x=>x.toFixed(1).replace('.',',');
 const bytesGb=b=>gb((b||0)/1073741824)+' ГБ';
 const fsize=n=>n<1048576?Math.max(1,Math.round(n/1024))+' КБ':(n/1048576).toFixed(1).replace('.',',')+' МБ';
-const money=x=>x<0.01?'$'+x.toFixed(4).replace('.',','):'$'+x.toFixed(2).replace('.',',');
+// Spending keeps the fractions of a cent cheap models cost, so a real charge never reads as $0,00.
+const money=x=>!(x>0)?'$0,00':x<0.0001?'<$0,0001':x<0.01?'$'+x.toFixed(4).replace('.',','):'$'+x.toFixed(2).replace('.',',');
 const usd2=x=>'$'+(x||0).toFixed(2).replace('.',',');
 const price=x=>x<0?'—':'$'+(Math.round(x*100)/100).toString().replace('.',',');
 // Local contexts are powers of two (65536 is 64K); cloud limits are round decimals (1000000 is 1M).
@@ -159,12 +160,15 @@ function ask(box,text,yes){const t=box.querySelector('span');t.textContent=text;
     const done=v=>{box.hidden=true;y.removeEventListener('click',ok);n.removeEventListener('click',no);resolve(v);};const ok=()=>done(true),no=()=>done(false);
     if(yes)y.textContent=yes;y.addEventListener('click',ok);n.addEventListener('click',no);});}
 
+const hostOf=u=>{try{return new URL(u).hostname.replace(/^www\./,'');}catch(e){return '';}};
 // ── markdown: escaped first, then a small safe subset ──
 function inlineMd(s,sources){
   const codes=[];s=s.replace(/`([^`\n]+)`/g,(_,c)=>{codes.push(c);return `\u0000${codes.length-1}\u0000`;});
   s=s.replace(/\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]{1,800})\)/g,(_,t,u)=>`<a href="${u}" target="_blank" rel="noopener noreferrer">${t}</a>`);
   s=s.replace(/\*\*([^*\n]+)\*\*/g,'<b>$1</b>').replace(/(^|[^*\w])\*([^*\n]+)\*(?=[^*\w]|$)/g,'$1<i>$2</i>');
-  if(sources?.length)s=s.replace(/\[(\d{1,2})\](?!\()/g,(m,n)=>{const src=sources[+n-1];return src?`<a class="cite" href="${esc(src.url)}" target="_blank" rel="noopener noreferrer"><sup class="c">${n}</sup></a>`:m;});
+  // Citations read as the source's site; a run of them ([2][3]) is one chip with "+1", the rest in its tip.
+  if(sources?.length)s=s.replace(/(?:\[\d{1,2}\](?!\())+/g,m=>{const list=[...m.matchAll(/\d+/g)].map(x=>sources[+x[0]-1]).filter(Boolean);if(!list.length)return m;
+    const tip=list.map(x=>x.title||x.url).join(' · ');return `<a class="cite" href="${esc(list[0].url)}" target="_blank" rel="noopener noreferrer" title="${esc(tip)}"><span class="c">${esc(hostOf(list[0].url)||'источник')}${list.length>1?` +${list.length-1}`:''}</span></a>`;});
   return s.replace(/\u0000(\d+)\u0000/g,(_,i)=>`<code>${codes[+i]}</code>`);}
 function md(text,sources){
   const lines=esc(text).split('\n');let out=[],i=0;
@@ -206,13 +210,21 @@ document.addEventListener('click',e=>{
   const t=e.target.closest('[data-theme-set]');if(t){applyTheme(t.dataset.themeSet);return;}
 });
 
+// ── the navigation folds to a rail of icons on wide screens; remembered in this browser ──
+function setRail(on){byId('app').classList.toggle('rail',on);const b=byId('nav-fold');b.setAttribute('aria-expanded',String(!on));
+  const t=on?'Развернуть меню':'Свернуть меню';b.title=t;b.setAttribute('aria-label',t);try{localStorage.setItem('omnibox-rail',on?'1':'');}catch(e){}}
+try{if(localStorage.getItem('omnibox-rail')==='1')setRail(true);}catch(e){}
+byId('nav-fold').addEventListener('click',()=>setRail(!byId('app').classList.contains('rail')));
+
 // ── the box under the navigation: what runs now ──
 function renderNow(){const m=runningModel();const b=(S.status?.backends||[]).find(x=>x.service==='Running'||x.service==='StartPending');
   byId('now-dot').className='dot'+(m||b?'':' off');byId('now-model').textContent=m?.name||b?.selected_model||'Модель не запущена';
   byId('now-sub').textContent=b?`${engineLabel(b.name)} · ${b.service==='StartPending'?'запускается':b.api==='Ready'?'готов':'запускается'}`:'Облачные модели работают без запуска';
   const g=S.sample?.gpu?.[0];byId('now-meter').hidden=byId('now-vram').hidden=!g;
   if(g){const i=byId('now-meter').firstElementChild;i.style.width=Math.round(g.used/g.total*100)+'%';byId('now-vram').textContent=`Видеопамять ${gb(g.used/1024)} / ${gb(g.total/1024)} ГБ`;}
-  const a=S.account;byId('now-balance').hidden=!a;if(a)byId('now-balance-v').textContent=usd2(a.balance);}
+  const a=S.account;byId('now-balance').hidden=!a;if(a)byId('now-balance-v').textContent=usd2(a.balance);
+  // Folded to a rail, the box is a dot and a cloud: their tips say what the full box says.
+  byId('now').title=`${byId('now-model').textContent}${byId('now-sub').textContent?' · '+byId('now-sub').textContent:''}`;}
 on('status',renderNow);on('library',renderNow);
 
 // OpenRouter's balance is asked on login and when the owner opens its settings.
@@ -237,7 +249,8 @@ byId('login-form').addEventListener('submit',async e=>{e.preventDefault();byId('
 // ── phones: the on-screen keyboard ──
 // Safari on iPhone shrinks only the visual viewport for the keyboard: the page keeps its height, so the
 // tab bar stayed where it was with empty space under it. While the keyboard is open the panel takes the
-// visible height and hides the tab bar, as apps do; closed, the tab bar sits on the bottom edge.
+// visible height, the tab bar right above the keyboard so the sections stay one tap away; closed, the
+// tab bar sits on the bottom edge.
 // Driven by the viewport's own events, no timers.
 let fullHeight=0;
 function fitViewport(){const vv=window.visualViewport;if(!vv)return;const root=document.documentElement;

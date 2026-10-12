@@ -43,7 +43,7 @@ const document={documentElement:new Node('html'),body:new Node('body'),hidden:fa
   querySelector:()=>new Node(),querySelectorAll:()=>[],createElement:t=>new Node('',t),addEventListener:()=>{},removeEventListener:()=>{},execCommand:()=>true};
 const winListeners={};
 const context=vm.createContext({document,window:{addEventListener:(t,fn)=>(winListeners[t]??=[]).push(fn),isSecureContext:false},location:{hash:'',protocol:'http:',host:'omnibox:8800'},history:{replaceState:()=>{}},
-  localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,String(v))},navigator:{hardwareConcurrency:16},innerWidth:1280,
+  localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,String(v))},navigator:{hardwareConcurrency:16},innerWidth:1280,innerHeight:800,
   matchMedia:()=>({matches:false,addEventListener:()=>{}}),requestAnimationFrame:fn=>{fn();return 1;},
   fetch:async(path)=>{requests.push(path);return {ok:false,status:401,json:async()=>({error:'Войди в панель.'})};},
   setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,clearInterval:()=>{},console,URL,TextDecoder,AbortController,FileReader:function(){},Promise,Map,Set,Date,Number,JSON,Math,Object,Array,String,Error});
@@ -61,7 +61,10 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   const out=run("md('<script>x</script> **жирный** [ссылка](javascript:alert(1)) [сайт](https://example.com) [1]\\n\\n```go\\nfmt.Println(\"<b>\")\\n```\\n\\n- раз\\n- два\\n\\n| a | b |\\n|---|---|\\n| 1 | 2 |',[{title:'S',url:'https://src.example/'}])");
   assert.ok(out.includes('&lt;script&gt;')&&!out.includes('<script>'),'html is escaped');
   assert.ok(out.includes('<b>жирный</b>'));assert.ok(!out.includes('href="javascript'),'no javascript links');assert.ok(out.includes('<a href="https://example.com"'));
-  assert.ok(out.includes('<sup class="c">1</sup>')&&out.includes('href="https://src.example/"'));
+  assert.ok(out.includes('<span class="c">src.example</span>')&&out.includes('href="https://src.example/"')&&out.includes('title="S"'),'a citation names its site');
+  // A run of citations is one chip: the first site, "+N" and every title in the tip; unknown numbers stay text.
+  const run2=run("md('Факт [1][2] и [9].',[{title:'Один',url:'https://www.one.example/a'},{title:'Два',url:'https://two.example/b'}])");
+  assert.ok(run2.includes('<span class="c">one.example +1</span>')&&run2.includes('title="Один · Два"')&&run2.includes('[9]'),run2);
   assert.ok(out.includes('<pre><button type="button" class="copycode">')&&out.includes('fmt.Println(&quot;&lt;b&gt;&quot;)'));
   assert.ok(out.includes('<ul><li>раз</li><li>два</li></ul>'));assert.ok(out.includes('<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>'));
 
@@ -161,8 +164,11 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
 
   // Assistants: none by default shows an empty slot; one with an emoji shows it.
   run("S.assistants={assistants:[{id:'a1',emoji:'🏠',name:'Домашний админ',description:'Сеть',instructions:'x',model:'',style:'',web_search:true}],default:'a1'};C.chat=null;C.asst='';renderAssist()");
-  assert.ok(nodes['asst-btn'].innerHTML.includes('Без ассистента')&&nodes['asst-btn'].innerHTML.includes('av none slot'));
-  run("C.asst='a1';renderAssist()");assert.ok(nodes['asst-btn'].innerHTML.includes('🏠')&&nodes['asst-btn'].innerHTML.includes('Домашний админ'));
+  // The composer shows only the icon; the name is in its tip and in the menu.
+  assert.ok(nodes['asst-btn'].innerHTML.includes('av none slot')&&!nodes['asst-btn'].innerHTML.includes('Без ассистента')&&nodes['asst-btn'].title.includes('Без ассистента'));
+  run("C.asst='a1';renderAssist()");const ab=nodes['asst-btn'];
+  assert.ok(ab.innerHTML.includes('<span class="em">🏠</span>')&&!ab.innerHTML.includes('Домашний админ')&&ab.title==='Ассистент: Домашний админ'&&ab.attributes['aria-label']===ab.title);
+  assert.ok(nodes['asst-menu'].innerHTML.includes('<b>Домашний админ</b>')&&nodes['asst-menu'].innerHTML.includes('По умолчанию'));
   assert.equal(run("webDefault('a1')"),true);
 
   // A message's footer: time, tokens and speed; the cost only for a paid answer.
@@ -195,7 +201,8 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run("M.advOn=false");nodes.adv.hidden=true;nodes['adv-on'].checked=true;run("syncAdv()");assert.equal(nodes.adv.hidden,false);
   nodes['adv-on'].checked=false;run("syncAdv()");assert.equal(nodes.adv.hidden,true);
 
-  // Phones: with the keyboard open the panel takes the visible height and the tab bar steps aside.
+  // Phones: with the keyboard open the panel takes the visible height; the tab bar stays above the keyboard.
+  assert.ok(!/\.kb \.nav\{display:none/.test(css),'the tab bar is not hidden with the keyboard');
   const rootEl=document.documentElement;rootEl.style={setProperty(k,v){this[k]=v;},removeProperty(k){delete this[k];}};
   Object.assign(context.window,{innerHeight:800,scrollY:0,scrollTo(){},visualViewport:{height:800,offsetTop:0}});
   run('fitViewport()');assert.equal(rootEl.classList.contains('kb'),false);
@@ -220,11 +227,70 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
 
   // Favourite chats have a star; deleting a chat asks in a window first.
   run(`C.threads=[{id:'f',title:'Избранный',created:'${iso(-5)}',updated:'${iso(-1)}',pinned:true,expires:null}];renderThreads()`);
-  const fl=nodes['thread-list'].innerHTML;assert.ok(fl.includes('Избранные')&&fl.includes('#i-star')&&fl.includes('Убрать из избранного')&&!fl.includes('#i-pin'));
+  const fl=nodes['thread-list'].innerHTML;assert.ok(fl.includes('Избранные')&&fl.includes('<span class="tt">Избранный</span>')&&fl.includes('data-tmenu="f"')&&!fl.includes('#i-pin'));
+  // The row has only the "⋯" button: rename, favourite and delete are in its menu, so nothing covers the title.
+  assert.ok(!fl.includes('data-pin=')&&!fl.includes('data-del-thread='),'no action buttons over the title');
+  run("openThreadMenu({dataset:{tmenu:'f'},getBoundingClientRect:()=>({right:300,bottom:100,top:80}),setAttribute(){},classList:{add(){}}})");
+  const tmenu=nodes['thread-menu'];assert.equal(tmenu.hidden,false);
+  assert.ok(tmenu.innerHTML.includes('data-rename="f"')&&tmenu.innerHTML.includes('Убрать из избранного')&&tmenu.innerHTML.includes('#i-star')&&tmenu.innerHTML.includes('data-del-thread="f"'));
+  assert.equal(tmenu.style.left,'200px');assert.equal(tmenu.style.top,'104px');
+  run('closeThreadMenu()');assert.equal(tmenu.hidden,true);
+  // Renaming: the row becomes a field; Enter saves through the API, Escape keeps the old title.
+  run("startRename('f')");assert.ok(nodes['thread-list'].innerHTML.includes('id="thread-rename"')&&nodes['thread-list'].innerHTML.includes('value="Избранный"'));
+  const sent=[];context.fetch=async(path,opts)=>{sent.push(JSON.parse(opts.body));return {ok:true,json:async()=>({id:'f',title:'Отпуск',pinned:true,created:iso(-5),updated:iso(0)})};};
+  nodes['thread-rename'].value='  Отпуск ';await run('commitRename(true)');
+  assert.deepEqual(sent,[{action:'rename',id:'f',title:'Отпуск'}]);assert.equal(run("C.threads[0].title"),'Отпуск');assert.equal(run('C.renaming'),null);
+  run("startRename('f')");nodes['thread-rename'].value='Другое';await run('commitRename(false)');assert.equal(sent.length,1,'Escape does not save');assert.equal(run("C.threads[0].title"),'Отпуск');
+  context.fetch=oldFetch;
   const asked=run("confirmDialog({title:'Удалить чат?',text:'«Избранный» сразу сотрётся с диска.'})");
   assert.equal(nodes.confirm.hidden,false);assert.equal(nodes['confirm-title'].textContent,'Удалить чат?');
   nodes['confirm-no'].listeners.click.at(-1)();assert.equal(await asked,false);assert.equal(nodes.confirm.hidden,true);
   const asked2=run("confirmDialog({title:'Удалить чат?',text:'x'})");nodes['confirm-yes'].listeners.click.at(-1)();assert.equal(await asked2,true);
+
+  // Enter sends; Ctrl+Enter and Shift+Enter start a new line (Shift by the browser itself).
+  let submitted=0;nodes.composer.requestSubmit=()=>{submitted++;};const key=(o)=>{const e={key:'Enter',target:nodes.prompt,prevented:false,preventDefault(){this.prevented=true;},...o};run('promptKey')(e);return e;};
+  nodes.prompt.value='первая';nodes.prompt.selectionStart=nodes.prompt.selectionEnd=6;
+  assert.equal(key({ctrlKey:true}).prevented,true);assert.equal(nodes.prompt.value,'первая\n');assert.equal(submitted,0);
+  assert.equal(key({shiftKey:true}).prevented,false);assert.equal(submitted,0);
+  assert.equal(key({}).prevented,true);assert.equal(submitted,1);
+  key({isComposing:true});assert.equal(submitted,1,'an IME composition is not sent');
+  // On a touch screen Enter starts a new line: a phone keyboard has no Ctrl.
+  context.matchMedia=q=>({matches:q.includes('pointer:coarse'),addEventListener:()=>{}});assert.equal(key({}).prevented,false);assert.equal(submitted,1);
+  context.matchMedia=()=>({matches:false,addEventListener:()=>{}});
+  // The composer's reasoning and web search are icons; their state is in the tip.
+  assert.ok(!html.includes('<span class="lbl">Размышления</span>')&&!html.includes('<span class="lbl">Веб-поиск</span>'));
+  run("S.chatSettings={search_url:'https://search.example'};C.web=false;renderWeb()");assert.equal(nodes.web.title,'Веб-поиск: выключен');
+  run("C.web=true;renderWeb()");assert.equal(nodes.web.title,'Веб-поиск: включён');
+
+  // Sources: one chip with up to three sites' badges; the list under it. Letters unless site icons are on.
+  const srcs=run("sourcesHTML([{title:'A',url:'https://www.yandex.ru/pogoda'},{title:'B',url:'https://yandex.ru/x'},{title:'C',url:'https://gismeteo.ru/'},{title:'D',url:'https://rp5.ru/'},{title:'E',url:'https://inkazan.ru/'}])");
+  assert.ok(srcs.includes('5 источников')&&srcs.includes('<span class="n">5</span>')&&!srcs.includes('<img'),srcs);
+  assert.equal((srcs.split('<ol')[0].match(/class="fav /g)||[]).length,3,'three distinct sites in the chip');
+  assert.ok(/class="fav t[012]" aria-hidden="true">Y</.test(srcs));
+  run("S.chatSettings.site_icons=true");const withIcons=run("favHTML('https://www.yandex.ru/pogoda')");
+  assert.ok(withIcons.includes('<img src="https://www.yandex.ru/favicon.ico"')&&withIcons.includes('referrerpolicy="no-referrer"'));
+  assert.ok(!run("favHTML('javascript:alert(1)')").includes('<img'),'no icon for a link without a site');run("S.chatSettings.site_icons=false");
+  // The search trace and the reasoning are the same kind of chip.
+  const bot=run("botHTML({id:'m',text:'ok',reasoning:'думаю',reasoning_seconds:12,meta:{searches:['погода'],sources:[{title:'A',url:'https://a.example/'}]}})");
+  assert.ok(bot.includes('<details class="step"><summary>')&&bot.includes('<details class="step think"><summary>'));
+
+  // Spending: fractions of a cent stay visible, nothing spent reads $0,00.
+  assert.equal(run('money(0.00042)'),'$0,0004');assert.equal(run('money(0.00001)'),'<$0,0001');assert.equal(run('money(0)'),'$0,00');assert.equal(run('money(1.5)'),'$1,50');assert.equal(run('money(undefined)'),'$0,00');
+  // The key's limit, its period, what is left, and when it expires.
+  const day=86400000,t0=Date.parse('2026-10-12T00:00:00Z');
+  const k=J(`keyLimits({limit:5,limit_remaining:0.4,limit_reset:'monthly',usage:4.6,weekly:0.002,monthly:1.2,expires_at:'${new Date(t0+92*day+3600000).toISOString()}'},${t0})`);
+  assert.equal(k.limit,'$5,00 в месяц');assert.equal(k.left,'осталось $0,40');assert.equal(k.pct,92);assert.equal(k.low,true);
+  assert.ok(k.until.startsWith('до 12 янв')&&k.until.includes('2027'),k.until);assert.equal(k.ttl,'осталось 92 дня');assert.equal(k.soon,false);
+  assert.equal(k.spent,'всего $4,60');assert.equal(k.period,'за неделю $0,0020 · за месяц $1,20');
+  const k2=J(`keyLimits({limit:null,usage:0,expires_at:null},${t0})`);assert.equal(k2.limit,'без лимита');assert.equal(k2.until,'бессрочный');
+  assert.equal(J(`keyLimits({limit:1,limit_remaining:1,usage:0,expires_at:'${new Date(t0-day).toISOString()}'},${t0})`).ttl,'срок истёк — создайте новый ключ');
+  assert.equal(J(`keyLimits({limit:1,limit_remaining:1,usage:0,expires_at:'${new Date(t0+5*3600000).toISOString()}'},${t0})`).ttl,'осталось 5 часов');
+  run("renderKeyLimits({limit:5,limit_remaining:4,limit_reset:'weekly',usage:1})");assert.equal(nodes['or-keylim'].hidden,false);assert.ok(nodes['or-keylim'].innerHTML.includes('$5,00 в неделю')&&nodes['or-keylim'].innerHTML.includes('data-w="20%"'));
+
+  // The navigation folds to icons and remembers it in this browser.
+  run('setRail(true)');assert.equal(nodes.app.classList.contains('rail'),true);assert.equal(store.get('omnibox-rail'),'1');assert.equal(nodes['nav-fold'].title,'Развернуть меню');
+  run('setRail(false)');assert.equal(nodes.app.classList.contains('rail'),false);assert.equal(store.get('omnibox-rail'),'');
+  assert.ok(['Чат','Модели','Сервер','Настройки'].every(n=>html.includes(`title="${n}"><svg`)||html.includes(`title="${n}">`)),'rail icons have tips');
 
   // Logged out: the API answers 401 and the login form is shown.
   winListeners.DOMContentLoaded.forEach(fn=>fn());await new Promise(r=>setTimeout(r,10));

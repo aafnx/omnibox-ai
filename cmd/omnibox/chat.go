@@ -377,6 +377,7 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 		SearchResults  *int    `json:"search_results"`
 		SearchLanguage *string `json:"search_language"`
 		SearchDefault  *bool   `json:"search_default"`
+		SiteIcons      *bool   `json:"site_icons"`
 	}
 	if err := body(r, &in); err != nil {
 		replyError(w, err)
@@ -401,6 +402,9 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			if in.SearchDefault != nil {
 				s.SearchDefault = *in.SearchDefault
+			}
+			if in.SiteIcons != nil {
+				s.SiteIcons = *in.SiteIcons
 			}
 			cfg.Chat = &s
 			return nil
@@ -458,7 +462,7 @@ func (c *chatSide) settingsView() map[string]any {
 		}
 	}
 	return map[string]any{"retention_hours": s.RetentionHours, "search_url": s.SearchURL, "search_results": s.SearchResults,
-		"search_language": s.SearchLanguage, "search_default": s.SearchDefault, "chats": len(list), "chats_bytes": size}
+		"search_language": s.SearchLanguage, "search_default": s.SearchDefault, "site_icons": s.SiteIcons, "chats": len(list), "chats_bytes": size}
 }
 
 // cloudRoute shows the favourite OpenRouter models to /v1 clients when the owner allowed it.

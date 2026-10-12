@@ -307,7 +307,11 @@ type Account struct {
 	// Limit is the key's spending limit, nil when unlimited; LimitRemaining is what is left of it.
 	Limit          *float64 `json:"limit"`
 	LimitRemaining *float64 `json:"limit_remaining"`
-	FreeTier       bool     `json:"free_tier"`
+	// LimitReset is how often the limit starts over (daily, weekly, monthly), empty when never.
+	LimitReset string `json:"limit_reset,omitempty"`
+	// ExpiresAt is when the key stops working, nil when it does not expire.
+	ExpiresAt *time.Time `json:"expires_at,omitempty"`
+	FreeTier  bool       `json:"free_tier"`
 }
 
 // Account reads the key (GET /key) and the account credits (GET /credits).
@@ -318,6 +322,8 @@ func (c *Client) Account(ctx context.Context) (Account, error) {
 			Usage          float64  `json:"usage"`
 			Limit          *float64 `json:"limit"`
 			LimitRemaining *float64 `json:"limit_remaining"`
+			LimitReset     *string  `json:"limit_reset"`
+			ExpiresAt      *string  `json:"expires_at"`
 			Daily          float64  `json:"usage_daily"`
 			Weekly         float64  `json:"usage_weekly"`
 			Monthly        float64  `json:"usage_monthly"`
@@ -337,11 +343,21 @@ func (c *Client) Account(ctx context.Context) (Account, error) {
 		return Account{}, err
 	}
 	k := key.Data
-	return Account{
+	acc := Account{
 		Label: k.Label, Usage: k.Usage, Daily: k.Daily, Weekly: k.Weekly, Monthly: k.Monthly,
 		Limit: k.Limit, LimitRemaining: k.LimitRemaining, FreeTier: k.FreeTier,
 		TotalCredits: credits.Data.Total, TotalUsage: credits.Data.Usage, Balance: credits.Data.Total - credits.Data.Usage,
-	}, nil
+	}
+	if k.LimitReset != nil {
+		acc.LimitReset = *k.LimitReset
+	}
+	// An expiry OpenRouter writes in a form we cannot read is left out rather than guessed.
+	if k.ExpiresAt != nil {
+		if t, err := time.Parse(time.RFC3339, *k.ExpiresAt); err == nil {
+			acc.ExpiresAt = &t
+		}
+	}
+	return acc, nil
 }
 
 // Chat sends a chat completion request (POST /chat/completions) as is, streaming or not, and

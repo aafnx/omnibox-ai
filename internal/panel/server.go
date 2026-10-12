@@ -593,7 +593,18 @@ func (s *Server) headers(h http.Header, contentType, cache string) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("X-Frame-Options", "DENY")
 	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+	h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self'; img-src "+s.images()+"; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+}
+
+// images is the CSP source list for images: the panel's own, and the web search sources' icons
+// over https only when the owner turned them on (the browser then asks each source site).
+func (s *Server) images() string {
+	if s.opt.Config != nil {
+		if cfg := s.opt.Config(); cfg != nil && cfg.ChatSettings().SiteIcons {
+			return "'self' data: https:"
+		}
+	}
+	return "'self' data:"
 }
 
 // changePassword replaces the panel password after checking the current one, and ends every

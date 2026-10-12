@@ -18,6 +18,9 @@ type Chat struct {
 	SearchLanguage string `json:"search_language,omitempty"` // "", ru or en
 	// SearchDefault turns web search on in new chats.
 	SearchDefault bool `json:"search_default"`
+	// SiteIcons shows the sources' own icons, which the browser loads from each site; off, the
+	// sources get letter badges and the panel loads nothing from outside.
+	SiteIcons bool `json:"site_icons,omitempty"`
 }
 
 // DefaultChat keeps chats for 30 days and searches with five sources.

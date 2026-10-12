@@ -15,7 +15,7 @@ async function saveGateway(body){const d=await api('/api/gateway',body);ST.gatew
 // ── web search and chat data ──
 function renderChatSettings(){const s=S.chatSettings;if(!s)return;byId('searx').value=s.search_url||'';byId('search-n').value=String(s.search_results);
   if(!['3','5','8'].includes(String(s.search_results)))byId('search-n').insertAdjacentHTML('beforeend',`<option value="${s.search_results}" selected>${s.search_results}</option>`);
-  byId('search-lang').value=s.search_language||'';byId('search-default').checked=!!s.search_default;
+  byId('search-lang').value=s.search_language||'';byId('search-default').checked=!!s.search_default;byId('site-icons').checked=!!s.site_icons;
   byId('keep-chats').value=String(s.retention_hours);if(byId('keep-chats').value!==String(s.retention_hours))byId('keep-chats').insertAdjacentHTML('beforeend',`<option value="${s.retention_hours}" selected>${Math.round(s.retention_hours/24)} дн.</option>`);
   byId('keep-chats-hint').textContent=`Сейчас ${s.chats} ${plural(s.chats,'чат','чата','чатов')}, ${fsize(s.chats_bytes||0)}. Избранные не удаляются по сроку; новый срок действует для новых чатов.`;
   byId('search-state').textContent=s.search_url?'Задан':'Не задан';byId('search-state').className='pill';}
@@ -24,7 +24,7 @@ async function saveChatSettings(body){S.chatSettings=await api('/api/chat-settin
 // ── OpenRouter ──
 function renderCloud(){const c=S.cloud||{};const on=!!c.connected;byId('or-off').hidden=on;byId('or-on').hidden=!on;byId('or-state').textContent=on?'Подключено':'Не подключено';byId('or-state').className='pill'+(on?' ok':'');if(!on)return;
   const a=S.account;byId('or-balance').textContent=a?usd2(a.balance):'—';byId('or-credits').textContent=a?`из ${usd2(a.total_credits)} пополненных`:'баланс не получен';
-  byId('or-today').textContent=usd2(a?a.daily:c.today);byId('or-month').textContent=usd2(c.month);
+  byId('or-today').textContent=money(a?a.daily:c.today);byId('or-month').textContent=money(c.month);renderKeyLimits(a);
   const low=c.low_balance_usd;byId('or-low').value=String(low);if(byId('or-low').value!==String(low))byId('or-low').insertAdjacentHTML('beforeend',`<option value="${low}" selected>$${low}</option>`);
   byId('or-low-warn').hidden=!(a&&low>0&&a.balance<low);byId('or-low-warn').textContent=`На счёте ${a?usd2(a.balance):''} — меньше ${usd2(low)}. Пополните баланс, иначе облачные модели перестанут отвечать.`;
   byId('or-expose').checked=!!c.expose_api;const favs=models().filter(m=>m.source==='cloud'&&m.favorite).length;
@@ -32,13 +32,29 @@ function renderCloud(){const c=S.cloud||{};const on=!!c.connected;byId('or-off')
   byId('or-fetched').textContent=c.fetched?`Обновлён ${new Date(c.fetched).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}. Обновляется при открытии раздела «Модели», не чаще раза в час.`:'Ещё не загружен.';
   byId('or-keyinfo').textContent=`Ключ: sk-or-…${(c.hint||'').replace(/^…/,'')}${c.saved?' · сохранён '+dateShort(c.saved):''}`;
   renderSpend(c);}
-function renderSpend(c){const days=c.days||[];const vals=days.map(d=>d.usd);const max=Math.max(...vals,0),top=max>0?Math.ceil(max*2)/2||max:1;const peak=vals.indexOf(max);
-  setHTML(byId('spend-chart'),'<div class="grid g1"></div><div class="grid g2"></div>'+days.map((d,i)=>{const lab=dateShort(d.date);return `<div class="bar" tabindex="0" data-tip="${lab}: ${usd2(d.usd)}"><i data-h="${d.usd/top*100}%"></i>${(i===peak&&max>0)||i===days.length-1?`<span class="vlab top" data-b="calc(${d.usd/top*100}% + 2px)">${usd2(d.usd)}</span>`:''}</div>`;}).join(''));
+// The key's own bounds, as OpenRouter reports them: its spending limit and what is left of it, and
+// when it stops working. Nothing is shown for a key without a limit or an expiry but the word.
+const RESET={daily:'в день',weekly:'в неделю',monthly:'в месяц'};
+function keyLimits(a,now=Date.now()){if(!a)return null;const out={};
+  if(a.limit!=null){const left=Math.max(0,a.limit_remaining??a.limit-a.usage);out.limit=`${money(a.limit)} ${RESET[a.limit_reset]||'всего'}`;out.left=`осталось ${money(left)}`;
+    out.pct=a.limit>0?Math.min(100,Math.round(100*(a.limit-left)/a.limit)):100;out.low=a.limit>0&&left/a.limit<0.1;}
+  else{out.limit='без лимита';out.left='тратит баланс аккаунта';}
+  if(a.expires_at){const t=Date.parse(a.expires_at),d=Math.floor((t-now)/86400000),h=Math.floor((t-now)/3600000);
+    out.until=`до ${new Date(t).toLocaleDateString('ru-RU',{day:'numeric',month:'short',year:'numeric'}).replace(' г.','')}`;
+    out.ttl=t<=now?'срок истёк — создайте новый ключ':d>=1?`осталось ${d} ${plural(d,'день','дня','дней')}`:`осталось ${Math.max(h,0)} ${plural(Math.max(h,0),'час','часа','часов')}`;out.soon=t-now<7*86400000;}
+  else{out.until='бессрочный';out.ttl='не истекает';}
+  out.spent=`всего ${money(a.usage)}`;out.period=`за неделю ${money(a.weekly)} · за месяц ${money(a.monthly)}`;return out;}
+function renderKeyLimits(a){const k=keyLimits(a),el=byId('or-keylim');el.hidden=!k;if(!k)return;
+  setHTML(el,`<div><span class="label">Лимит ключа</span><b>${esc(k.limit)}</b><span class="small ${k.low?'warn-text':'faint'}">${esc(k.left)}</span>${k.pct!==undefined?`<div class="meter${k.low?' warn':''}"><i data-w="${k.pct}%"></i></div>`:''}</div>`+
+    `<div><span class="label">Срок ключа</span><b>${esc(k.until)}</b><span class="small ${k.soon?'warn-text':'faint'}">${esc(k.ttl)}</span></div>`+
+    `<div><span class="label">Потрачено ключом</span><b>${esc(k.spent)}</b><span class="small faint">${esc(k.period)}</span></div>`);}
+function renderSpend(c){const days=c.days||[];const vals=days.map(d=>d.usd);const max=Math.max(...vals,0),top=max>=1?Math.ceil(max*2)/2:max>0?max*1.1:1;const peak=vals.indexOf(max);
+  setHTML(byId('spend-chart'),'<div class="grid g1"></div><div class="grid g2"></div>'+days.map((d,i)=>{const lab=dateShort(d.date);return `<div class="bar" tabindex="0" data-tip="${lab}: ${money(d.usd)}"><i data-h="${d.usd/top*100}%"></i>${(i===peak&&max>0)||i===days.length-1?`<span class="vlab top" data-b="calc(${d.usd/top*100}% + 2px)">${money(d.usd)}</span>`:''}</div>`;}).join(''));
   setHTML(byId('spend-x'),days.map((d,i)=>`<span>${i%2?'':dateShort(d.date)}</span>`).join(''));
-  byId('spend-table').innerHTML='<tr><th>День</th><th class="num">Расход</th></tr>'+days.map(d=>`<tr><td>${dateShort(d.date)}</td><td class="num">${usd2(d.usd)}</td></tr>`).join('');
+  byId('spend-table').innerHTML='<tr><th>День</th><th class="num">Расход</th></tr>'+days.map(d=>`<tr><td>${dateShort(d.date)}</td><td class="num">${money(d.usd)}</td></tr>`).join('');
   const by=c.by_model||[],bm=by[0]?.usd||1;const name=id=>modelByKey('cloud:'+id)?.name||id;
-  setHTML(byId('by-model'),by.map(x=>`<div class="row"><span>${esc(name(x.model))}</span><b>${usd2(x.usd)}</b><div class="meter"><i data-w="${x.usd/bm*100}%"></i></div></div>`).join('')||'<span class="muted small">Расходов пока нет.</span>');
-  const src=c.by_source||{};byId('by-source').textContent=`чат OmniBox ${usd2(src.chat||0)} · API ${usd2(src.api||0)}`;}
+  setHTML(byId('by-model'),by.map(x=>`<div class="row"><span>${esc(name(x.model))}</span><b>${money(x.usd)}</b><div class="meter"><i data-w="${x.usd/bm*100}%"></i></div></div>`).join('')||'<span class="muted small">Расходов пока нет.</span>');
+  const src=c.by_source||{};byId('by-source').textContent=`чат OmniBox ${money(src.chat)} · API ${money(src.api)}`;}
 async function cloudAction(body){S.cloud=await api('/api/cloud',body);renderCloud();return S.cloud;}
 
 // ── assistants ──
@@ -108,7 +124,7 @@ byId('api-save').addEventListener('click',()=>saveGateway({action:'save',base_ur
   public_origin:byId('public-origin').value.trim(),trusted_proxies:byId('trusted').value.split(',').map(s=>s.trim()).filter(Boolean)}).then(()=>notice('Настройки API сохранены.')).catch(fail));
 byId('searx-check').addEventListener('click',async()=>{const st=byId('search-state');st.textContent='Проверяем…';st.className='pill';
   try{const d=await api('/api/chat-settings',{action:'check-search',search_url:byId('searx').value.trim()});st.textContent=`Работает · ${d.search_ms} мс`;st.className='pill ok';}catch(e){st.textContent='Ошибка';st.className='pill warn';fail(e);}});
-byId('search-save').addEventListener('click',()=>saveChatSettings({search_url:byId('searx').value.trim(),search_results:Number(byId('search-n').value),search_language:byId('search-lang').value,search_default:byId('search-default').checked}).then(()=>notice('Настройки веб-поиска сохранены.')).catch(fail));
+byId('search-save').addEventListener('click',()=>saveChatSettings({search_url:byId('searx').value.trim(),search_results:Number(byId('search-n').value),search_language:byId('search-lang').value,search_default:byId('search-default').checked,site_icons:byId('site-icons').checked}).then(()=>notice('Настройки веб-поиска сохранены.')).catch(fail));
 byId('or-connect').addEventListener('click',async()=>{const key=byId('or-key').value.trim();byId('or-key').value='';if(!key){notice('Вставьте ключ OpenRouter.',true);return;}
   try{await cloudAction({action:'key-save',key});notice('OpenRouter подключён: список моделей загружен.');await Promise.all([refreshAccount(),refreshLibrary()]);renderCloud();}catch(e){fail(e);}});
 byId('or-disconnect').addEventListener('click',()=>cloudAction({action:'key-forget'}).then(()=>{S.account=null;renderNow();notice('Ключ OpenRouter удалён с ПК.');return refreshLibrary();}).catch(fail));
