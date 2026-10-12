@@ -347,6 +347,15 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run(`emojiPos.clear();var realCreate=document.createElement;document.createElement=t=>t==='canvas'?{getContext:()=>({measureText:()=>({actualBoundingBoxLeft:40,actualBoundingBoxRight:44,actualBoundingBoxAscent:70,actualBoundingBoxDescent:20})})}:realCreate(t)`);
   assert.ok(run("emojiSVG('🤖')").includes('x="9.68" y="14" text-anchor="middle" dominant-baseline="alphabetic"'),run("emojiSVG('🤖')"));
   run("document.createElement=realCreate;emojiPos.clear()");
+  // The chat follows the answer while the reader is at its end, however much it grew since the
+  // last frame (a reasoning block is taller than any margin); scrolled up, it stays put and the arrow shows.
+  const msgs=nodes.messages;Object.assign(msgs,{scrollHeight:1000,clientHeight:500,scrollTop:500});
+  run("scrollDown(true)");assert.equal(msgs.scrollTop,1000);assert.equal(nodes['to-end'].hidden,true);
+  msgs.scrollHeight=1000+900;run("scrollDown()");assert.equal(msgs.scrollTop,1900,'a big step of the answer is followed');
+  msgs.scrollTop=200;msgs.listeners.scroll.forEach(f=>f());assert.equal(nodes['to-end'].hidden,false,'scrolled up: the arrow shows');
+  msgs.scrollHeight=2500;run("scrollDown()");assert.equal(msgs.scrollTop,200,'the reader above is not pulled down');
+  nodes['to-end'].listeners.click.forEach(f=>f());assert.equal(msgs.scrollTop,2500);assert.equal(nodes['to-end'].hidden,true);
+  msgs.scrollHeight=3000;run("scrollDown()");assert.equal(msgs.scrollTop,3000,'back at the end, it follows again');
   // Dictation: a browser without speech recognition shows no microphone.
   run('renderMic()');assert.equal(nodes['mic-btn'].hidden,true);
   // On an iPhone (Safari inside every browser) a connected OpenRouter writes the voice down.

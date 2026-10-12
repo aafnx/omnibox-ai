@@ -40,6 +40,7 @@
     <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></symbol>
     <symbol id="i-dots" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"/></symbol>
@@ -112,6 +113,7 @@
         </div>
         <div class="messages" id="messages"><div id="message-list"></div></div>
         <div class="composer">
+          <button type="button" class="to-end" id="to-end" hidden aria-label="К последнему сообщению" title="К последнему сообщению"><svg class="i i15"><use href="#i-arrow-down"/></svg></button>
           <form id="composer">
             <div class="busy" id="model-busy" hidden><span id="model-busy-text">Модель запускается…</span><div class="load" data-load></div></div>
             <div class="attach-warn" id="attach-warn" role="alert" hidden></div><div class="attached" id="attached" hidden></div>

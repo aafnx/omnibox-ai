@@ -163,7 +163,11 @@ details.step summary::-webkit-details-marker{display:none}
 details.step[open] summary{border-bottom:1px solid var(--line)}
 details.step .in{padding:8px 12px;color:var(--muted);display:grid;gap:4px}
 .meta{font-size:12px;color:var(--faint);display:flex;gap:12px;flex-wrap:wrap}
-.composer{padding:0 24px 20px}
+.composer{padding:0 24px 20px;position:relative}
+/* Back to the end of the chat: over the composer, centred, while the last messages are out of view. */
+.to-end{position:absolute;left:50%;top:-46px;transform:translateX(-50%);z-index:5;width:36px;height:36px;padding:0;border-radius:50%;display:grid;place-items:center;background:var(--surface);color:var(--text);border:1px solid var(--line-strong);box-shadow:var(--shadow)}
+.to-end[hidden]{display:none}
+.to-end:hover{border-color:var(--iris-line);color:var(--iris-text)}
 .conv{position:relative}
 .drop{position:absolute;inset:8px;z-index:35;border:2px dashed var(--iris-line);border-radius:18px;background:color-mix(in srgb,var(--bg) 88%,transparent);display:grid;place-content:center;justify-items:center;gap:6px;text-align:center;pointer-events:none}
 .drop svg.i{width:28px;height:28px;color:var(--iris-text)}
