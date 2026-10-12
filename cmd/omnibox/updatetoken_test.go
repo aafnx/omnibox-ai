@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -21,6 +22,10 @@ func TestUpdateTokenIsCheckedSavedAndUsed(t *testing.T) {
 			return
 		}
 		w.Header().Set("GitHub-Authentication-Token-Expiration", "2027-10-08 10:00:00 UTC")
+		if strings.HasSuffix(r.URL.Path, "/releases") {
+			io.WriteString(w, `[{"tag_name":"v0.21.0","body":"- Новое"},{"tag_name":"v0.20.2"},{"tag_name":"v0.19.0"}]`)
+			return
+		}
 		json.NewEncoder(w).Encode(map[string]any{"tag_name": "v0.21.0", "body": "- Новое", "published_at": "2026-10-09T08:00:00Z",
 			"html_url": "https://github.com/aafnx/omnibox-ai/releases/tag/v0.21.0", "assets": []any{}})
 	}))
@@ -49,6 +54,12 @@ func TestUpdateTokenIsCheckedSavedAndUsed(t *testing.T) {
 	check, err := p.Action(ctx, map[string]any{"action": "check"})
 	if r := check.(map[string]any); err != nil || r["latest"] != "0.21.0" || r["newer"] != true || r["notes"] != "- Новое" {
 		t.Fatalf("%v %v", check, err)
+	}
+	// The versions to choose from: the installed one, newer and older ones.
+	list, err := p.Action(ctx, map[string]any{"action": "list"})
+	rel, _ := list.(map[string]any)["releases"].([]map[string]any)
+	if err != nil || len(rel) != 3 || rel[0]["newer"] != true || rel[1]["current"] != true || rel[2]["newer"] != false || rel[2]["current"] != false {
+		t.Fatalf("list: %v %v", list, err)
 	}
 	// The update button uses the saved token: the release has no files here, so the download
 	// fails after GitHub accepted the token.

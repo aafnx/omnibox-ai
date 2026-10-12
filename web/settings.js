@@ -113,6 +113,19 @@ async function checkUpdate(){byId('update-title').textContent='Спрашива�
     byId('update-title').textContent=r.newer?`Доступна версия ${r.latest}`:`Установлена последняя версия ${r.current}`;byId('update-sub').textContent=r.newer?(r.notes||'').split('\n').find(l=>l.trim())||`Опубликована ${r.published?new Date(r.published).toLocaleDateString('ru-RU'):''}`:'';
     byId('update-install').hidden=!r.newer;byId('update-install').dataset.version=r.latest||'';byId('update-install').textContent=`Обновить до ${r.latest}`;}
   catch(e){byId('update-title').textContent='Проверка не удалась';byId('update-sub').textContent=e.message;}}
+// ── other versions: the list is asked from GitHub only when the owner opens it ──
+async function loadVersions(){setHTML(byId('versions'),'<span class="small muted">Спрашиваем GitHub…</span>');
+  try{ST.versions=await api('/api/update',{action:'list'});renderVersions();}catch(e){setHTML(byId('versions'),`<span class="small danger-text">${esc(e.message)}</span> <button class="btn sm" type="button" id="versions-retry" data-versions-retry>Повторить</button>`);throw e;}}
+function versionRow(r){const kind=r.current?'<span class="pill ok">Установлена</span>':r.newer?'<span class="pill iris">Новее</span>':'<span class="pill">Старше</span>';
+  return `<div class="vrow"><div class="vt"><b>${esc(r.version)}</b>${kind}${r.prerelease?'<span class="pill warn">Предварительная</span>':''}<span class="small faint">${r.published?dateShort(r.published)+' '+new Date(r.published).getFullYear():''}</span></div>`+
+    `<span class="small muted">${esc(r.summary||'')}</span>${r.current?'':`<button class="btn sm${r.newer?' primary':''}" type="button" data-install-version="${esc(r.version)}">${r.newer?'Обновить':'Откатить'}</button>`}</div>`;}
+function renderVersions(){const v=ST.versions;if(!v)return;setHTML(byId('versions'),(v.releases||[]).map(versionRow).join('')||'<span class="small muted">Выпусков нет.</span>');}
+// Installing another version asks first: it restarts the panel, and a rollback drops what is newer.
+async function installVersion(version){const cur=S.status?.version||ST.update?.current||'',older=cur&&newerThan(cur,version);
+  const ok=await confirmDialog({title:older?`Откатить на ${version}?`:`Установить ${version}?`,yes:older?'Откатить':'Установить',
+    text:older?`Сейчас установлена ${cur}. Настройки, пароль, ключи, чаты и модели останутся; возможности, которых нет в ${version}, пропадут. Панель перезапустится примерно через минуту. Если установка не пройдёт, вернётся ${cur}.`:`Панель перезапустится примерно через минуту. Если установка не пройдёт, вернётся ${cur||'текущая версия'}.`});
+  if(ok)await operation({action:'self-update',version});}
+const newerThan=(a,b)=>{const x=a.split('.').map(Number),y=b.split('.').map(Number);for(let i=0;i<3;i++)if((x[i]||0)!==(y[i]||0))return (x[i]||0)>(y[i]||0);return false;};
 function renderEngineManager(list){setHTML(byId('engine-manager'),(list||[]).map(e=>{const rel=SV.releases[e.name]||[];
   return `<div class="stack8"><div class="line"><b>${esc(e.label)}</b><span class="pill">${!e.installed?'Не установлен':e.version?'Версия '+esc(e.version):'Установлен вне OmniBox'}</span></div>
     <span class="small muted">${e.installed?(e.managed?`Скачанные версии: ${esc((e.versions||[]).join(', ')||'—')}.${e.pending?' Новая версия применится при следующем запуске.':''}`:'Движок установлен вне OmniBox; обновление перенесёт его в каталог OmniBox.'):'Будут скачаны файлы с GitHub и создана служба с ручным запуском.'}</span>
@@ -154,7 +167,9 @@ byId('start-model').addEventListener('change',e=>api('/api/library',{action:'sta
 byId('update-check').addEventListener('click',()=>checkUpdate());
 byId('shutdown-omnibox').addEventListener('click',()=>ask(byId('shutdown-confirm'),'Выключить OmniBox? Панель закроется через несколько секунд и откроется снова только после ai on или перезагрузки ПК.').then(yes=>yes&&operation({action:'shutdown'})).catch(fail));
 byId('update-install').addEventListener('click',()=>operation({action:'self-update',version:byId('update-install').dataset.version}).catch(fail));
-byId('update-other').addEventListener('click',()=>{const v=byId('update-target').value.trim();if(!/^\d+\.\d+\.\d+$/.test(v)){notice('Версия — три числа через точку, например 0.20.5.',true);return;}operation({action:'self-update',version:v}).catch(fail);});
+byId('update-other').addEventListener('click',()=>{const v=byId('update-target').value.trim();if(!/^\d+\.\d+\.\d+$/.test(v)){notice('Версия — три числа через точку, например 0.20.5.',true);return;}installVersion(v).catch(fail);});
+byId('versions-load').addEventListener('click',()=>loadVersions().catch(fail));
+byId('versions').addEventListener('click',e=>{const b=e.target.closest('[data-install-version]');if(b){installVersion(b.dataset.installVersion).catch(fail);return;}if(e.target.closest('[data-versions-retry]'))loadVersions().catch(()=>{});});
 byId('token-save').addEventListener('click',async()=>{const token=byId('token').value.trim();byId('token').value='';if(!token){notice('Вставьте GitHub token.',true);return;}
   try{ST.update=await api('/api/update',{action:'save-token',token});renderUpdate();notice('Токен проверен на GitHub и сохранён.');}catch(e){fail(e);}});
 byId('token-forget').addEventListener('click',async()=>{try{ST.update=await api('/api/update',{action:'forget-token'});renderUpdate();notice('Токен удалён с ПК.');}catch(e){fail(e);}});

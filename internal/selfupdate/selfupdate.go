@@ -86,7 +86,10 @@ func (u *Updater) client() *http.Client {
 	return &c
 }
 
-var versionPattern = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
+var (
+	versionPattern = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
+	versionHeading = regexp.MustCompile(`^v?\d+\.\d+\.\d+( |$)`)
+)
 
 // Find returns the release with version ("0.19.0"), or the latest one when version is empty.
 func (u *Updater) Find(ctx context.Context, version string) (Release, error) {
@@ -143,6 +146,73 @@ func (u *Updater) Find(ctx context.Context, version string) (Release, error) {
 		r.Assets[a.Name] = a.URL
 	}
 	return r, nil
+}
+
+// Listed is a release in the list of versions: what the owner needs to pick one to install.
+type Listed struct {
+	Version    string    `json:"version"`
+	Published  time.Time `json:"published"`
+	Summary    string    `json:"summary"`
+	Prerelease bool      `json:"prerelease,omitempty"`
+	URL        string    `json:"url"`
+}
+
+// List returns the published releases, newest first (as GitHub orders them); drafts and tags
+// that are not x.y.z are left out.
+func (u *Updater) List(ctx context.Context) ([]Listed, error) {
+	req, err := u.request(ctx, u.api()+"/repos/"+Repo+"/releases?per_page=50", "application/vnd.github+json", true)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := u.client().Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("GitHub недоступен: %v", err)
+	}
+	defer resp.Body.Close()
+	u.Expires = resp.Header.Get("GitHub-Authentication-Token-Expiration")
+	switch resp.StatusCode {
+	case http.StatusOK:
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return nil, errors.New("GitHub отклонил token: нужен token с правом чтения репозитория aafnx/omnibox-ai (Contents: Read).")
+	default:
+		return nil, fmt.Errorf("GitHub ответил %d.", resp.StatusCode)
+	}
+	var body []struct {
+		Tag        string    `json:"tag_name"`
+		Body       string    `json:"body"`
+		Published  time.Time `json:"published_at"`
+		HTMLURL    string    `json:"html_url"`
+		Draft      bool      `json:"draft"`
+		Prerelease bool      `json:"prerelease"`
+	}
+	if err := json.NewDecoder(io.LimitReader(resp.Body, 8<<20)).Decode(&body); err != nil {
+		return nil, fmt.Errorf("Ответ GitHub не прочитан: %v", err)
+	}
+	var out []Listed
+	for _, r := range body {
+		if r.Draft || !versionPattern.MatchString(r.Tag) {
+			continue
+		}
+		out = append(out, Listed{Version: strings.TrimPrefix(r.Tag, "v"), Published: r.Published, Summary: summary(r.Body), Prerelease: r.Prerelease, URL: r.HTMLURL})
+	}
+	return out, nil
+}
+
+// summary is the first line of release notes that says something, without Markdown marks.
+func summary(notes string) string {
+	for _, line := range strings.Split(notes, "\n") {
+		line = strings.TrimSpace(strings.TrimLeft(strings.TrimSpace(line), "#-*> "))
+		line = strings.ReplaceAll(line, "**", "")
+		// The version heading and the note about merged versions say nothing new.
+		if line == "" || versionHeading.MatchString(line) || strings.HasPrefix(line, "Выпуск включает") {
+			continue
+		}
+		if r := []rune(line); len(r) > 160 {
+			line = string(r[:159]) + "…"
+		}
+		return line
+	}
+	return ""
 }
 
 func (u *Updater) request(ctx context.Context, url, accept string, auth bool) (*http.Request, error) {

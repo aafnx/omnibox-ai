@@ -73,12 +73,16 @@ func githubToken() (string, error) {
 }
 
 // runUpdate is "ai update [версия]": it downloads the release, checks it and runs its installer,
-// which updates the program with rollback and keeps every setting. "ai update --check" only
-// tells whether a newer release exists.
+// which updates the program with rollback and keeps every setting; an older version is a
+// rollback. "ai update --check" only tells whether a newer release exists, "ai update --list"
+// lists the versions to choose from.
 func runUpdate(args []string, u updater, stdout, stderr io.Writer) int {
-	version, check := "", false
+	version, check, list := "", false, false
 	if len(args) == 1 && args[0] == "--check" {
 		check, args = true, nil
+	}
+	if len(args) == 1 && args[0] == "--list" {
+		list, args = true, nil
 	}
 	switch len(args) {
 	case 0:
@@ -95,6 +99,9 @@ func runUpdate(args []string, u updater, stdout, stderr io.Writer) int {
 	}
 	up := u.New(token)
 	ctx := context.Background()
+	if list {
+		return listVersions(ctx, up, u.Current, stdout, stderr)
+	}
 	release, err := up.Find(ctx, version)
 	if err != nil {
 		fmt.Fprintln(stderr, err)
@@ -127,6 +134,41 @@ func runUpdate(args []string, u updater, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
+	if newer(u.Current, release.Version()) {
+		fmt.Fprintf(stdout, "Откат с %s на %s: настройки, чаты и модели остаются; новые настройки, которых нет в %s, не применяются.\n", u.Current, release.Version(), release.Version())
+	}
 	fmt.Fprintf(stdout, "Выпуск проверен по SHA256. Установка %s (при сбое возвращается %s)…\n", release.Version(), u.Current)
 	return u.Install(exe, stdout, stderr)
+}
+
+// listVersions prints the releases, the installed one marked, and how to install one.
+func listVersions(ctx context.Context, up *selfupdate.Updater, current string, stdout, stderr io.Writer) int {
+	list, err := up.List(ctx)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	if len(list) == 0 {
+		fmt.Fprintln(stdout, "Выпусков нет.")
+		return 0
+	}
+	for _, r := range list {
+		mark := "  "
+		if r.Version == current {
+			mark = "* "
+		}
+		line := mark + r.Version
+		if !r.Published.IsZero() {
+			line += "  " + r.Published.Local().Format("2006-01-02")
+		}
+		if r.Prerelease {
+			line += "  (предварительный)"
+		}
+		if r.Summary != "" {
+			line += "  " + r.Summary
+		}
+		fmt.Fprintln(stdout, line)
+	}
+	fmt.Fprintf(stdout, "\n* — установлена (%s). Установить или откатиться: ai update <версия>\n", current)
+	return 0
 }

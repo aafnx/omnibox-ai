@@ -123,6 +123,25 @@ func (p *panelUpdate) Check(ctx context.Context) (map[string]any, error) {
 		"published": r.Published, "url": r.URL, "token_expires": t.Expires}, nil
 }
 
+// Versions lists the published releases for the "other version or rollback" list: each marked
+// as the installed one, newer or older.
+func (p *panelUpdate) Versions(ctx context.Context) (map[string]any, error) {
+	t, ok := loadToken(p.Data)
+	if !ok {
+		return nil, tokenMissing
+	}
+	list, err := p.NewUpdater(t.Token).List(ctx)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]map[string]any, 0, len(list))
+	for _, r := range list {
+		out = append(out, map[string]any{"version": r.Version, "published": r.Published, "summary": r.Summary, "prerelease": r.Prerelease, "url": r.URL,
+			"current": r.Version == p.Current, "newer": newer(r.Version, p.Current)})
+	}
+	return map[string]any{"current": p.Current, "releases": out}, nil
+}
+
 // SaveToken keeps a token after GitHub accepted it for the repository's releases.
 func (p *panelUpdate) SaveToken(ctx context.Context, token string) (map[string]any, error) {
 	token = strings.TrimSpace(token)
@@ -150,6 +169,8 @@ func (p *panelUpdate) Action(ctx context.Context, body map[string]any) (any, err
 	switch action {
 	case "check":
 		return p.Check(ctx)
+	case "list":
+		return p.Versions(ctx)
 	case "save-token":
 		token, _ := body["token"].(string)
 		return p.SaveToken(ctx, token)

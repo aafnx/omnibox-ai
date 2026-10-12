@@ -285,7 +285,10 @@
                 <div class="stack8"><span class="hint">Репозиторий приватный: нужен fine-grained token с доступом Contents: Read к aafnx/omnibox-ai. Хранится на ПК в зашифрованном виде. <a class="ink" id="token-link" href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener noreferrer">Создать на GitHub ↗</a></span>
                   <div class="copy"><input type="password" id="token" autocomplete="off" placeholder="github_pat_…" aria-label="GitHub token"><button class="btn" type="button" id="token-save">Сохранить</button></div>
                   <div><button class="btn ghost sm danger-text" type="button" id="token-forget" hidden>Удалить токен</button></div></div></details>
-              <details class="more"><summary>Другая версия или откат</summary><div class="copy"><input type="text" id="update-target" placeholder="например, 0.20.5" aria-label="Версия"><button class="btn" type="button" id="update-other">Установить</button></div></details>
+              <details class="more" id="versions-box"><summary>Другая версия или откат</summary><div class="stack8">
+                <span class="hint">Любую опубликованную версию можно поставить поверх текущей: настройки, пароль, ключи, чаты и модели остаются, при сбое автоматически возвращается текущая. Откат на версии до 0.23.0 удастся, только если в настройках нет полей, которых они не знают.</span>
+                <div class="vlist" id="versions"><button class="btn sm" type="button" id="versions-load">Показать версии</button></div>
+                <div class="copy"><input type="text" id="update-target" placeholder="или номер версии, например 0.20.5" aria-label="Версия"><button class="btn" type="button" id="update-other">Установить</button></div></div></details>
               <details class="more"><summary>ИИ-движки: версии</summary><div class="stack12" id="engine-manager"></div></details>
             </div></div>
           <div class="panel" id="s-panel"><header><h2>Панель</h2></header>

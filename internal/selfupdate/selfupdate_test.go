@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -50,6 +51,11 @@ func newGitHub(t *testing.T) *fakeGitHub {
 		}
 		if r.Header.Get("Authorization") != "Bearer secret-token" {
 			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if r.URL.Path == "/repos/aafnx/omnibox-ai/releases" {
+			io.WriteString(w, `[{"tag_name":"v0.24.0","body":"## 0.24.0 — 2026-10-13\n\n- **Откат** на любую версию","published_at":"2026-10-13T10:00:00Z","prerelease":true},
+				{"tag_name":"v0.23.0","body":"","draft":true},{"tag_name":"nightly"},{"tag_name":"v0.22.0","body":"Выпуск включает 0.21.4.\n- Контекст в чате","published_at":"2026-10-11T10:00:00Z"}]`)
 			return
 		}
 		switch r.URL.Path {
@@ -109,5 +115,22 @@ func TestWrongChecksumTokenOrVersionIsRefused(t *testing.T) {
 	g.sums = strings.Repeat("a", 64) + "  omnibox-windows-amd64.zip\n"
 	if _, err := u.Fetch(context.Background(), r, t.TempDir()); err == nil || !strings.Contains(err.Error(), "Контрольная сумма") {
 		t.Fatalf("%v", err)
+	}
+}
+
+// The versions to choose from: drafts and odd tags left out, a short summary of each.
+func TestList(t *testing.T) {
+	g := newGitHub(t)
+	defer g.Close()
+	u := &Updater{Token: "secret-token", API: g.URL, HTTP: g.Client()}
+	list, err := u.List(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 2 || list[0].Version != "0.24.0" || !list[0].Prerelease || list[0].Summary != "Откат на любую версию" || list[1].Version != "0.22.0" || list[1].Summary != "Контекст в чате" {
+		t.Fatalf("%+v", list)
+	}
+	if _, err := (&Updater{Token: "wrong", API: g.URL, HTTP: g.Client()}).List(context.Background()); err == nil {
+		t.Fatal("a refused token gave a list")
 	}
 }

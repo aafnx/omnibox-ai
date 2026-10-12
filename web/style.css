@@ -746,3 +746,10 @@ details.srcs summary:hover{border-color:var(--iris-line);color:var(--text)}
 .follow button span{min-width:0;overflow-wrap:anywhere}
 .tmenu .tick{margin-left:auto;font-size:12px;color:var(--faint)}
 .tmenu button.on2 .tick{color:var(--iris-text)}
+/* Other versions: one row per release, the installed one marked. */
+.vlist{display:grid;gap:0;justify-items:start}
+.vrow{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:2px 12px;align-items:center;width:100%;padding:10px 0;border-top:1px solid var(--line)}
+.vrow:first-child{border-top:0}
+.vrow .vt{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.vrow>.small{grid-column:1;min-width:0}
+.vrow>.btn{grid-row:1/3;grid-column:2}

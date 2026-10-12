@@ -317,6 +317,17 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run('setRail(false)');assert.equal(nodes.app.classList.contains('rail'),false);assert.equal(store.get('omnibox-rail'),'');
   assert.ok(['Чат','Модели','Сервер','Настройки'].every(n=>html.includes(`title="${n}"><svg`)||html.includes(`title="${n}">`)),'rail icons have tips');
 
+  // Other versions: newer ones update, older ones roll back; the installed one has no button.
+  run("ST.versions={current:'0.23.0',releases:[{version:'0.24.0',newer:true,summary:'Новое',published:'2026-10-13T10:00:00Z'},{version:'0.23.0',current:true},{version:'0.22.0',summary:'<b>x</b>'}]};renderVersions()");
+  const vl=nodes.versions.innerHTML;assert.ok(vl.includes('data-install-version="0.24.0">Обновить')&&vl.includes('data-install-version="0.22.0">Откатить')&&!vl.includes('data-install-version="0.23.0"')&&vl.includes('&lt;b&gt;x'),vl);
+  assert.equal(run("newerThan('0.23.0','0.9.9')"),true);assert.equal(run("newerThan('0.9.9','0.23.0')"),false);
+  // A rollback asks first and names what stays; cancelling installs nothing.
+  run("S.status={version:'0.23.0'}");const ops=[];context.fetch=async(p,o)=>{ops.push(JSON.parse(o.body));return {ok:true,json:async()=>({id:'u'})};};
+  const roll=run("installVersion('0.22.0')");assert.equal(nodes['confirm-title'].textContent,'Откатить на 0.22.0?');assert.ok(nodes['confirm-text'].textContent.includes('чаты и модели останутся'));
+  nodes['confirm-no'].listeners.click.at(-1)();await roll;assert.equal(ops.length,0);
+  const roll2=run("installVersion('0.22.0')");nodes['confirm-yes'].listeners.click.at(-1)();await new Promise(r=>setImmediate(r));
+  assert.deepEqual(ops[0],{action:'self-update',version:'0.22.0'});run('waiting.clear()');context.fetch=oldFetch;
+
   // Logged out: the API answers 401 and the login form is shown.
   winListeners.DOMContentLoaded.forEach(fn=>fn());await new Promise(r=>setTimeout(r,10));
   assert.ok(requests.includes('/api/session'));assert.equal(nodes.login.hidden,false);assert.equal(nodes.app.hidden,true);
