@@ -129,7 +129,9 @@ func (r Reader) read(ctx context.Context, raw string) (Page, error) {
 	if err != nil {
 		return Page{}, err
 	}
-	req.Header.Set("User-Agent", "Mozilla/5.0 (compatible; OmniBoxAI/1.0; +https://github.com/aafnx/omnibox-ai)")
+	// A browser's agent string, still naming OmniBox: weather and news sites refuse the bot-like
+	// "compatible; …" one with 403 or a captcha, and the page the owner asked about is not read.
+	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 OmniBoxAI/1.0")
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,text/plain;q=0.9")
 	req.Header.Set("Accept-Language", "ru,en;q=0.8")
 	resp, err := r.client().Do(req)

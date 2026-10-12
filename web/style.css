@@ -549,6 +549,9 @@ input[type=password],input[type=number],input[type=email]{width:100%;background:
 .md td,.md th{border:1px solid var(--line);padding:6px 10px}
 .md hr{border:0;border-top:1px solid var(--line);margin:4px 0}
 .msg.user .bubble{white-space:pre-wrap;overflow-wrap:anywhere}
+/* A link in the user's own text: the site badge and the address, wrapped anywhere. */
+.ulink{color:var(--iris-text);text-decoration:none;overflow-wrap:anywhere}.ulink:hover span{text-decoration:underline}
+.ulink .fav{width:16px;height:16px;font-size:9px;vertical-align:-3px;margin-right:4px}
 .msg.user .files{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
 details.think .in{white-space:pre-wrap;max-height:320px;overflow:auto;display:block}
 .msg.bot .err{color:var(--err);font-size:13px}
@@ -785,10 +788,19 @@ details.srcs summary:hover{border-color:var(--iris-line);color:var(--text)}
 .edit-ta{width:100%;border:1px solid var(--iris-line);border-radius:var(--r);background:var(--surface);padding:10px 12px;resize:vertical;min-height:72px;line-height:1.45}
 .ebtns{display:flex;justify-content:flex-end;gap:8px}
 /* Dictation sits before the paperclip; while it listens it is filled. */
-.composer .mic{margin-left:auto;min-width:0;width:34px;height:34px;padding:0;border-radius:50%}
-.composer .ctxwrap:not([hidden])~.mic{margin-left:0}
-.composer .mic:not([hidden])~.attach-r{margin-left:0}
+.composer .mic{margin-left:0;min-width:0;width:34px;height:34px;padding:0;border-radius:50%}
 .composer .mic.rec{background:var(--iris);border-color:var(--iris);color:#fff}
+/* Dictation, as in Claude: the row turns into cancel, the voice's waveform and stop; send stays. */
+.composer .dict{flex:1;display:flex;align-items:center;gap:8px;min-width:0}
+.composer .dict[hidden]{display:none}
+#composer.dictating .row>:not(.dict):not(.send){display:none}
+.composer .dict .tog{min-width:0;width:34px;height:34px;padding:0;border-radius:50%;flex:none}
+.composer .dict-stop svg.i{fill:currentColor;stroke:none}
+.wave{flex:1;display:flex;align-items:center;justify-content:center;gap:3px;height:28px;min-width:0;overflow:hidden}
+.wave i{flex:none;width:3px;height:3px;border-radius:2px;background:var(--muted);transition:height .08s linear}
+.wave i.on{background:var(--iris-text)}
+.dict-st{font-size:12px;color:var(--muted);white-space:nowrap}
+.dict-st:empty{display:none}
 .mact button.speak[aria-pressed="true"]{color:var(--iris-text);opacity:1}
 .tmenu .msep{height:1px;background:var(--line);margin:3px 6px}
 /* Formulas: KaTeX writes MathML, which the browser lays out; display formulas get their own line. */

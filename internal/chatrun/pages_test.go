@@ -3,7 +3,9 @@ package chatrun
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -17,7 +19,7 @@ func pageReader(read *[]string, mu *sync.Mutex) func(ctx context.Context, url st
 		mu.Lock()
 		*read = append(*read, url)
 		mu.Unlock()
-		return websearch.Page{URL: url, Title: "Страница " + websearch.Host(url), Text: "Полный текст: включите WoL в BIOS."}, nil
+		return websearch.Page{URL: url, Title: "Страница " + websearch.Host(url), Text: "Полный текст: включите WoL в BIOS. " + strings.Repeat("Подробная инструкция по настройке. ", 8)}, nil
 	}
 }
 
@@ -109,3 +111,50 @@ func TestLinksIn(t *testing.T) {
 }
 
 func strconvQuote(s string) string { b, _ := json.Marshal(s); return string(b) }
+
+// The owner's case: the best weather sites refuse the reader or are built by scripts; the next
+// results are read instead, so the answer has the numbers and not "see Gismeteo".
+func TestUnreadablePagesGiveWayToTheNextResults(t *testing.T) {
+	g := newRig(t)
+	var read []string
+	var mu sync.Mutex
+	g.r.Search = func(_ context.Context, q string) (websearch.Found, error) {
+		var res []websearch.Result
+		for _, h := range []string{"refused", "shell", "first", "second", "third"} {
+			res = append(res, websearch.Result{Title: h, URL: "https://" + h + ".example/kazan", Snippet: "Погода в Казани"})
+		}
+		return websearch.Found{Results: res}, nil
+	}
+	g.r.Read = func(_ context.Context, url string) (websearch.Page, error) {
+		mu.Lock()
+		read = append(read, url)
+		mu.Unlock()
+		switch websearch.Host(url) {
+		case "refused.example":
+			return websearch.Page{}, errors.New("Страница refused.example ответила 403.")
+		case "shell.example":
+			return websearch.Page{URL: url, Title: "Погода", Text: "Включите JavaScript."}, nil
+		}
+		return websearch.Page{URL: url, Title: websearch.Host(url), Text: "Казань: +8 °C, ветер 3 м/с. " + strings.Repeat("Прогноз по часам. ", 20)}, nil
+	}
+	g.replies = []string{sse(`{"choices":[{"delta":{"content":"В Казани +8 °C [3]."}}]}`)}
+	if code, _ := g.send(Request{ChatID: g.chat.ID, Model: local.Key, Text: "Какая погода в Казани", Web: true, Effort: "off"}); code != 200 {
+		t.Fatal(code)
+	}
+	mu.Lock()
+	got := append([]string{}, read...)
+	mu.Unlock()
+	slices.Sort(got)
+	want := []string{"https://first.example/kazan", "https://refused.example/kazan", "https://second.example/kazan", "https://shell.example/kazan"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("read %v", got)
+	}
+	sys := g.bodies[0]["messages"].([]any)[0].(map[string]any)["content"].(string)
+	if !strings.Contains(sys, "first.example — https://first.example/kazan\nКазань: +8 °C") || !strings.Contains(sys, "— https://second.example/kazan") || strings.Contains(sys, "Включите JavaScript") {
+		t.Fatalf("system prompt: %s", sys)
+	}
+	c, _ := g.r.Chats.Get(g.chat.ID)
+	if pages := c.Messages[1].Meta.Pages; len(pages) != 2 {
+		t.Fatalf("pages %v", pages)
+	}
+}

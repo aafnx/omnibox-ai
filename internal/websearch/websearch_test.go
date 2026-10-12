@@ -11,7 +11,7 @@ import (
 func TestSearchParsesSearXNG(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if r.URL.Path != "/search" || q.Get("format") != "json" || q.Get("q") != "wake on lan" || q.Get("language") != "ru" {
+		if r.URL.Path != "/search" || q.Get("format") != "json" || q.Get("q") != "wake on lan" || q.Get("language") != "ru-RU" {
 			t.Errorf("request: %s", r.URL)
 		}
 		w.Write([]byte(`{"results":[{"title":"A","url":"https://www.example.com/a","content":"one\n two"},
@@ -67,5 +67,17 @@ func TestRelevancePreservesUnmatchedForeignLanguageResults(t *testing.T) {
 	input := []Result{{Title: "Weather in Kazan", URL: "https://example.com", Snippet: "8 degrees"}}
 	if got := Relevant(input, "Погода в Казани"); len(got) != 1 {
 		t.Fatalf("a foreign-language result was discarded: %+v", got)
+	}
+}
+
+// Russian asks SearXNG for Russia's sites: plain "ru" brought sinoptik.ua for the weather in Kazan.
+func TestRegion(t *testing.T) {
+	for _, c := range []struct{ lang, query, want string }{
+		{"ru", "погода Казань", "ru-RU"}, {"", "погода Казань", "ru-RU"}, {"", "weather Kazan", ""},
+		{"", "погода у Києві", ""}, {"en", "погода", "en"},
+	} {
+		if got := region(c.lang, c.query); got != c.want {
+			t.Errorf("%q %q: %q", c.lang, c.query, got)
+		}
 	}
 }

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/aafnx/omnibox-ai/internal/chats"
 	"github.com/aafnx/omnibox-ai/internal/websearch"
@@ -57,12 +58,13 @@ func pageBudget(context int) (pages, chars int) {
 	return 1, 1500
 }
 
-// topUnread are the best results not read yet, as many as the context allows.
+// topUnread are the best results not read yet, in order: more than the context takes, so a page
+// that does not open (a site refusing robots, one built by scripts) gives way to the next one.
 func (r *Runner) topUnread(a *answer, t *turn) []string {
 	n, _ := pageBudget(t.context)
 	var out []string
 	for _, s := range a.sources {
-		if len(out) == n {
+		if len(out) == n+spareReads {
 			break
 		}
 		if !contains(a.pages, s.URL) {
@@ -72,38 +74,54 @@ func (r *Runner) topUnread(a *answer, t *turn) []string {
 	return out
 }
 
-// readInto reads pages at once and puts their text into the system prompt, numbered as sources.
-func (r *Runner) readInto(ctx context.Context, messages []map[string]any, a *answer, t *turn, urls []string, out *stream) []map[string]any {
-	if len(urls) == 0 {
-		return messages
-	}
+// pageWant is how many pages the context takes after a search.
+func (r *Runner) pageWant(t *turn) int {
+	n, _ := pageBudget(t.context)
+	return n
+}
+
+// spareReads are the extra results tried after pages that did not open; minPageText is the text
+// a page needs to be worth the model's context — less is a shell filled in by scripts.
+const (
+	spareReads  = 3
+	minPageText = 200
+)
+
+// readInto reads up to want of the pages, in order, a few at once, and puts their text into the
+// system prompt, numbered as sources.
+func (r *Runner) readInto(ctx context.Context, messages []map[string]any, a *answer, t *turn, urls []string, want int, out *stream) []map[string]any {
 	_, chars := pageBudget(t.context)
-	pages := make([]*websearch.Page, len(urls))
-	var wg sync.WaitGroup
-	for i, u := range urls {
-		if len(a.pages)+i >= maxPageReads {
-			break
-		}
-		out.send("read", map[string]string{"url": u})
-		wg.Add(1)
-		go func(i int, u string) {
-			defer wg.Done()
-			c, cancel := context.WithTimeout(ctx, pageTimeout)
-			defer cancel()
-			if p, err := r.Read(c, u); err == nil {
-				pages[i] = &p
-			}
-		}(i, u)
-	}
-	wg.Wait()
 	var b strings.Builder
-	for i, p := range pages {
-		if p == nil {
-			continue
+	got := 0
+	for len(urls) > 0 && got < want && len(a.pages) < maxPageReads && ctx.Err() == nil {
+		batch := urls[:min(want-got, maxPageReads-len(a.pages), len(urls))]
+		urls = urls[len(batch):]
+		pages := make([]*websearch.Page, len(batch))
+		var wg sync.WaitGroup
+		for i, u := range batch {
+			out.send("read", map[string]string{"url": u})
+			wg.Add(1)
+			go func(i int, u string) {
+				defer wg.Done()
+				c, cancel := context.WithTimeout(ctx, pageTimeout)
+				defer cancel()
+				if p, err := r.Read(c, u); err == nil && utf8.RuneCountInString(strings.TrimSpace(p.Text)) >= minPageText {
+					pages[i] = &p
+				} else if err != nil {
+					r.logf("chat: page %s: %v", websearch.Host(u), err)
+				}
+			}(i, u)
 		}
-		n := a.source(urls[i], p.Title)
-		a.pages = append(a.pages, urls[i])
-		fmt.Fprintf(&b, "[%d] %s — %s\n%s\n\n", n, p.Title, urls[i], websearch.ClipText(p.Text, chars))
+		wg.Wait()
+		for i, p := range pages {
+			if p == nil {
+				continue
+			}
+			got++
+			n := a.source(batch[i], p.Title)
+			a.pages = append(a.pages, batch[i])
+			fmt.Fprintf(&b, "[%d] %s — %s\n%s\n\n", n, p.Title, batch[i], websearch.ClipText(p.Text, chars))
+		}
 	}
 	if b.Len() == 0 {
 		return messages

@@ -344,6 +344,21 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.equal(run(`fileName(${JSON.stringify(ec)},'md')`),'Погода Казань сегодня 2026-10-12.md');
   // Dictation: a browser without speech recognition shows no microphone.
   run('renderMic()');assert.equal(nodes['mic-btn'].hidden,true);
+  // On an iPhone (Safari inside every browser) a connected OpenRouter writes the voice down.
+  run("navigator.userAgent='Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1';window.webkitSpeechRecognition=function(){}");
+  assert.equal(run('webkitOnly()'),true);run("S.cloud={connected:true};window.MediaRecorder=function(){};navigator.mediaDevices={getUserMedia:async()=>({getTracks:()=>[]})}");
+  assert.equal(run('voiceServer()'),true,'Safari with OpenRouter records');
+  run("navigator.userAgent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36'");assert.equal(run('webkitOnly()'),false);
+  // While dictating the row shows cancel, the waveform and stop; send finishes the text first, then sends.
+  run("dict={mode:'rec',stop(){this.stopped=true;},cancel(){},after:false};renderMic()");assert.equal(nodes.dict.hidden,false);assert.equal(nodes.composer.classList.contains('dictating'),true);
+  assert.equal(run('dictateThenSend()'),true);assert.equal(run('dict.after&&dict.stopped'),true);
+  run("dict=null;transcribing=true;renderMic()");assert.equal(nodes['dict-state'].textContent,'Распознаём…');assert.equal(run('dictateThenSend()'),true,'no send while the text is written down');
+  run("transcribing=false;renderMic()");assert.equal(nodes.dict.hidden,true);assert.equal(nodes.composer.classList.contains('dictating'),false);assert.equal(run('dictateThenSend()'),false);
+  run("startWave(null)");assert.equal((nodes['dict-wave'].innerHTML.match(/<i><\/i>/g)||[]).length,36);
+  run("navigator.userAgent='';delete window.webkitSpeechRecognition;S.cloud=null;delete window.MediaRecorder;delete navigator.mediaDevices");
+  // A link the user wrote is a link with the site's badge; anything else stays escaped text.
+  const lk=run(`linkify('Глянь https://www.gismeteo.ru/weather-kazan-4364/. И <b>это</b> javascript:alert(1)')`);
+  assert.ok(lk.includes('<a class="ulink" href="https://www.gismeteo.ru/weather-kazan-4364/" target="_blank" rel="noopener noreferrer"><span class="fav')&&lk.includes('<span>gismeteo.ru/weather-kazan-4364/</span></a>. И &lt;b&gt;')&&!lk.includes('href="javascript'),lk);
 
   // Background answers: "busy" is the open chat's answer; the stop button asks the service to stop.
   run("C.streams={};C.chat={id:'bg',messages:[]}");assert.equal(run('C.busy'),null);

@@ -61,8 +61,8 @@ func (c Client) Search(ctx context.Context, query, lang string, n int) ([]Result
 		query = string([]rune(query)[:400])
 	}
 	q := url.Values{"q": {query}, "format": {"json"}, "safesearch": {"0"}}
-	if lang != "" {
-		q.Set("language", lang)
+	if l := region(lang, query); l != "" {
+		q.Set("language", l)
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(c.URL, "/")+"/search?"+q.Encode(), nil)
 	if err != nil {
@@ -121,6 +121,27 @@ func (c Client) Search(ctx context.Context, query, lang string, n int) ([]Result
 		out = out[:n]
 	}
 	return out, nil
+}
+
+// region is SearXNG's language with a country: plain "ru" lets Google and Bing answer with
+// Ukrainian and Kazakh sites first (sinoptik.ua for the weather in Kazan), ru-RU asks for Russia's.
+// With no language chosen a Russian query gets ru-RU too; Ukrainian letters leave it to SearXNG.
+func region(lang, query string) string {
+	switch lang {
+	case "ru":
+		return "ru-RU"
+	case "":
+		if strings.ContainsAny(strings.ToLower(query), "іїєґў") {
+			return ""
+		}
+		for _, r := range query {
+			if unicode.Is(unicode.Cyrillic, r) {
+				return "ru-RU"
+			}
+		}
+		return ""
+	}
+	return lang
 }
 
 // Relevant prefers identifiable subjects (cities, products, names) to generic question words.
