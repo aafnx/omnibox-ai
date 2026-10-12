@@ -299,6 +299,25 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run("C.threads=[{id:'t1',title:'T'}];C.chat=null;S.chatSettings.follow_ups=true");await run("toggleChatFollow('t1')");assert.equal(tsent[0].mode,'off');
   await run("toggleChatFollow('t1')");assert.equal(tsent[1].mode,'auto');context.fetch=oldFetch;run("S.chatSettings.follow_ups=false;C.chat=null");
 
+  // Versions: "‹ 2/3 ›" under an answer whose question has earlier versions; the ends are disabled.
+  const vq={id:'q1',role:'user',text:'?',branches:[[{id:'q1',role:'user',text:'old'}],[{id:'q1',role:'user',text:'old2'}]],branch:2};
+  const vh=run(`versHTML(${JSON.stringify(vq)})`);assert.ok(vh.includes('<span>3/3</span>')&&vh.includes('data-to="1"')&&/data-to="3" disabled/.test(vh),vh);
+  assert.equal(run("versHTML({id:'q',role:'user'})"),'');
+  run(`C.chat={id:'vc',messages:[${JSON.stringify(vq)},{id:'a1',role:'assistant',text:'ok'}]};renderChat()`);assert.ok(nodes['message-list'].innerHTML.includes('class="vers"'));
+  const bsent=[];context.fetch=async(p,o)=>{bsent.push(JSON.parse(o.body));return {ok:true,json:async()=>({id:'vc',messages:[{id:'q1',role:'user',text:'old2',branches:[[],[]],branch:1}]})};};
+  await run("switchBranch({dataset:{branch:'q1',to:'1'}})");assert.deepEqual(bsent[0],{action:'branch',id:'vc',message_id:'q1',index:1});assert.equal(run('C.chat.messages[0].text'),'old2');
+  // The title is asked once, after the first answer of a chat the owner did not name.
+  run("S.chatSettings.auto_title=true;C.chat={id:'tc',messages:[{role:'user',text:'q'},{role:'assistant',text:'a'}]}");assert.equal(run('titleWanted()'),true);
+  run("C.chat.title_set=true");assert.equal(run('titleWanted()'),false);run("C.chat.title_set=false;C.chat.messages.push({role:'assistant',text:'b'})");assert.equal(run('titleWanted()'),false);
+  context.fetch=async(p,o)=>{bsent.push([p,JSON.parse(o.body)]);return {ok:true,json:async()=>({id:'tc',title:'Погода в Казани'})};};
+  run("C.threads=[{id:'tc',title:'найди погоду'}]");await run("requestTitle('tc')");assert.equal(run('C.chat.title'),'Погода в Казани');assert.equal(run('C.threads[0].title'),'Погода в Казани');
+  // Editing a question sends it as an edit; the composer is not touched.
+  const esent=[];context.fetch=async(p,o)=>{esent.push(JSON.parse(o.body));return {ok:false,status:500,json:async()=>({error:'x'})};};
+  run("C.busy=null;C.starting=false;C.chosen='cloud:o/m';C.chat={id:'ec',messages:[{id:'u1',role:'user',text:'старый'},{id:'a1',role:'assistant',text:'ответ'}]}");nodes.prompt.value='черновик';
+  const em={dataset:{id:'u1'},nextElementSibling:null,classList:{add(){},remove(){}},querySelector:s=>s==='.edit-ta'?{value:' новый '}:s==='.bubble'?{}:null,closest:()=>null,insertAdjacentHTML(){}};
+  await run('sendEdit')(em);assert.equal(esent[0].edit,'u1');assert.equal(esent[0].text,'новый');assert.equal(nodes.prompt.value,'черновик');
+  context.fetch=oldFetch;run('C.chat=null;C.busy=null');
+
   // Spending: fractions of a cent stay visible, nothing spent reads $0,00.
   assert.equal(run('money(0.00042)'),'$0,0004');assert.equal(run('money(0.00001)'),'<$0,0001');assert.equal(run('money(0)'),'$0,00');assert.equal(run('money(1.5)'),'$1,50');assert.equal(run('money(undefined)'),'$0,00');
   // The key's limit, its period, what is left, and when it expires.

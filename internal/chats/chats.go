@@ -33,6 +33,8 @@ const (
 	MaxChatBytes = 8 << 20
 	// MaxTitle is the longest chat title in characters.
 	MaxTitle = 120
+	// MaxBranches bounds the versions kept from one question on; the oldest goes first.
+	MaxBranches = 10
 	// MaxFollowUps and MaxFollowUp bound the suggested questions under an answer.
 	MaxFollowUps = 5
 	MaxFollowUp  = 200
@@ -118,6 +120,10 @@ type Chat struct {
 	Model       string    `json:"model"`
 	// CostUSD is the sum of the messages' cost; the store recomputes it on every write.
 	CostUSD float64 `json:"cost_usd"`
+	// TitleSet means the owner named the chat; TitleAuto that the model did. Either way the
+	// model does not rename it again.
+	TitleSet  bool `json:"title_set,omitempty"`
+	TitleAuto bool `json:"title_auto,omitempty"`
 	// FollowUps turns the suggested questions on or off for this chat; nil follows the setting.
 	FollowUps *bool     `json:"follow_ups,omitempty"`
 	Messages  []Message `json:"messages"`
@@ -135,6 +141,11 @@ type Message struct {
 	Created          time.Time    `json:"created"`
 	Meta             *Meta        `json:"meta,omitempty"`
 	Error            string       `json:"error,omitempty"`
+	// Branches are the other versions of the conversation from this user message on — an
+	// earlier wording of the question or an earlier answer, each with what followed it. Branch
+	// is the place of the shown version among all of them.
+	Branches [][]Message `json:"branches,omitempty"`
+	Branch   int         `json:"branch,omitempty"`
 }
 
 // Attachment describes a file sent with a message; the file itself is not stored.
@@ -316,6 +327,36 @@ func (s *Store) update(id string, fn func(*Chat) error) (*Chat, error) {
 	return c, nil
 }
 
+// SetAutoTitle gives the chat the title its model wrote, unless the owner named it meanwhile.
+func (s *Store) SetAutoTitle(id, title string) (*Chat, error) {
+	title = cleanTitle(title)
+	if title == "" {
+		return nil, errorf("Пустое название.")
+	}
+	return s.Update(id, func(c *Chat) error {
+		if !c.TitleSet {
+			c.Title = title
+		}
+		c.TitleAuto = true
+		return nil
+	})
+}
+
+// AddCost adds what a side request for an answer cost (its title, say) to that answer.
+func (s *Store) AddCost(id, messageID string, cost float64) (*Chat, error) {
+	return s.Update(id, func(c *Chat) error {
+		i := slices.IndexFunc(c.Messages, func(m Message) bool { return m.ID == messageID })
+		if i < 0 {
+			return errMessageNotFound
+		}
+		if c.Messages[i].Meta == nil {
+			c.Messages[i].Meta = &Meta{}
+		}
+		c.Messages[i].Meta.CostUSD += cost
+		return nil
+	})
+}
+
 // SetFollowUps turns the suggested questions on or off for a chat; nil follows the setting.
 func (s *Store) SetFollowUps(id string, on *bool) (*Chat, error) {
 	return s.Update(id, func(c *Chat) error { c.FollowUps = on; return nil })
@@ -347,7 +388,7 @@ func (s *Store) Rename(id, title string) (*Chat, error) {
 	if err := checkTitle(title); err != nil {
 		return nil, err
 	}
-	return s.Update(id, func(c *Chat) error { c.Title = title; return nil })
+	return s.Update(id, func(c *Chat) error { c.Title, c.TitleSet = title, true; return nil })
 }
 
 // SetPinned pins or unpins a chat. Unpinning restarts the retention timer from now with the
@@ -608,26 +649,9 @@ func (s *Store) write(c *Chat, now time.Time) error {
 	if err := checkModel(c.Model); err != nil {
 		return err
 	}
-	cost := 0.0
-	seen := map[string]bool{}
-	for i := range c.Messages {
-		m := &c.Messages[i]
-		if m.ID == "" {
-			m.ID = NewMessageID()
-		}
-		if m.Created.IsZero() {
-			m.Created = now
-		}
-		if err := checkMessage(m); err != nil {
-			return err
-		}
-		if seen[m.ID] {
-			return errorf("Повторяется идентификатор сообщения %s.", m.ID)
-		}
-		seen[m.ID] = true
-		if m.Meta != nil {
-			cost += m.Meta.CostUSD
-		}
+	cost, err := checkMessages(c.Messages, now, 0)
+	if err != nil {
+		return err
 	}
 	c.CostUSD = cost
 	c.Updated = now
@@ -639,6 +663,89 @@ func (s *Store) write(c *Chat, now time.Time) error {
 		return errorf("Чат больше %d МБ и не сохранён. Начните новый чат или удалите часть сообщений.", MaxChatBytes>>20)
 	}
 	return platform.WriteAtomic(s.path(c.ID), data, 0o600)
+}
+
+// checkMessages completes and checks a list of messages and the branches they keep, and returns
+// what they cost: the versions not shown were paid for too.
+func checkMessages(list []Message, now time.Time, depth int) (float64, error) {
+	if depth > 50 {
+		return 0, errorf("Слишком глубокое ветвление чата.")
+	}
+	cost := 0.0
+	seen := map[string]bool{}
+	for i := range list {
+		m := &list[i]
+		if m.ID == "" {
+			m.ID = NewMessageID()
+		}
+		if m.Created.IsZero() {
+			m.Created = now
+		}
+		if err := checkMessage(m); err != nil {
+			return 0, err
+		}
+		if seen[m.ID] {
+			return 0, errorf("Повторяется идентификатор сообщения %s.", m.ID)
+		}
+		seen[m.ID] = true
+		if m.Meta != nil {
+			cost += m.Meta.CostUSD
+		}
+		if len(m.Branches) > 0 && (m.Role != "user" || len(m.Branches) >= MaxBranches || m.Branch < 0 || m.Branch > len(m.Branches)) {
+			return 0, errorf("Некорректные версии сообщения %s.", m.ID)
+		}
+		for _, b := range m.Branches {
+			if len(b) == 0 || b[0].Role != "user" {
+				return 0, errorf("Некорректные версии сообщения %s.", m.ID)
+			}
+			c, err := checkMessages(b, now, depth+1)
+			if err != nil {
+				return 0, err
+			}
+			cost += c
+		}
+	}
+	return cost, nil
+}
+
+// Fork starts a new version of the conversation at user message i: what was from i on is kept
+// among its branches, and next takes its place (the same question to answer again, or an edited
+// one). The oldest version goes when there are too many.
+func Fork(c *Chat, i int, next Message) {
+	tail := slices.Clone(c.Messages[i:])
+	all := slices.Clone(tail[0].Branches)
+	pos := min(max(tail[0].Branch, 0), len(all))
+	tail[0].Branches, tail[0].Branch = nil, 0
+	all = slices.Insert(all, pos, tail)
+	if len(all) >= MaxBranches {
+		all = all[len(all)-MaxBranches+1:]
+	}
+	next.Branches, next.Branch = all, len(all)
+	c.Messages = append(c.Messages[:i:i], next)
+}
+
+// SwitchBranch shows version j of the conversation from user message msgID on.
+func (s *Store) SwitchBranch(chatID, msgID string, j int) (*Chat, error) {
+	return s.Update(chatID, func(c *Chat) error {
+		i := slices.IndexFunc(c.Messages, func(m Message) bool { return m.ID == msgID && m.Role == "user" })
+		if i < 0 {
+			return errMessageNotFound
+		}
+		first := c.Messages[i]
+		if j < 0 || j > len(first.Branches) {
+			return errorf("Такой версии нет.")
+		}
+		if j == first.Branch {
+			return nil
+		}
+		tail := slices.Clone(c.Messages[i:])
+		tail[0].Branches, tail[0].Branch = nil, 0
+		all := slices.Insert(slices.Clone(first.Branches), min(max(first.Branch, 0), len(first.Branches)), tail)
+		chosen := slices.Clone(all[j])
+		chosen[0].Branches, chosen[0].Branch = slices.Delete(all, j, j+1), j
+		c.Messages = append(c.Messages[:i:i], chosen...)
+		return nil
+	})
 }
 
 var attachmentKinds = []string{"image", "video", "audio", "text", "word", "excel"}

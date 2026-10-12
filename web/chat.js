@@ -3,7 +3,7 @@
 const C={threads:[],hits:null,chat:null,chosen:'',web:false,attached:[],busy:null,starting:false,pickerQ:'',renaming:null,follow:null};
 try{C.chosen=localStorage.getItem('omnibox-model')||'';}catch(e){}
 let efforts={};try{efforts=JSON.parse(localStorage.getItem('omnibox-effort')||'{}')||{};}catch(e){efforts={};}
-const ACT_USER='<div class="mact"><button type="button" data-act="copy" title="Копировать" aria-label="Копировать"><svg class="i"><use href="#i-copy"/></svg></button><button type="button" data-act="resend" title="Отправить ещё раз" aria-label="Отправить ещё раз"><svg class="i"><use href="#i-retry"/></svg></button><button type="button" class="del" data-act="delete" title="Удалить сообщение" aria-label="Удалить сообщение"><svg class="i"><use href="#i-trash"/></svg></button></div>';
+const ACT_USER='<div class="mact"><button type="button" data-act="copy" title="Копировать" aria-label="Копировать"><svg class="i"><use href="#i-copy"/></svg></button><button type="button" data-act="edit" title="Изменить и отправить заново" aria-label="Изменить сообщение"><svg class="i"><use href="#i-edit"/></svg></button><button type="button" data-act="resend" title="Отправить ещё раз" aria-label="Отправить ещё раз"><svg class="i"><use href="#i-retry"/></svg></button><button type="button" class="del" data-act="delete" title="Удалить сообщение" aria-label="Удалить сообщение"><svg class="i"><use href="#i-trash"/></svg></button></div>';
 const ACT_BOT='<div class="mact"><button type="button" data-act="copy" title="Копировать" aria-label="Копировать"><svg class="i"><use href="#i-copy"/></svg></button><button type="button" data-act="retry" title="Ответить заново" aria-label="Ответить заново"><svg class="i"><use href="#i-retry"/></svg></button><button type="button" class="del" data-act="delete" title="Удалить сообщение" aria-label="Удалить сообщение"><svg class="i"><use href="#i-trash"/></svg></button></div>';
 
 // ── threads ──
@@ -67,7 +67,10 @@ function sourcesHTML(list){if(!list?.length)return '';const n=list.length,seen=n
 // A favicon that loaded covers the letter; one that failed is removed, the letter stays.
 document.addEventListener('load',e=>{const t=e.target;if(t?.tagName==='IMG'&&t.parentElement?.classList?.contains('fav'))t.parentElement.classList.add('img');},true);
 document.addEventListener('error',e=>{const t=e.target;if(t?.tagName==='IMG'&&t.parentElement?.classList?.contains('fav'))t.remove();},true);
-function botHTML(m,last){return `<div class="msg bot" data-id="${esc(m.id||'')}">${traceHTML(m)}${thinkHTML(m)}${m.text?`<div class="md">${md(m.text,m.meta?.sources)}</div>`:''}${sourcesHTML(m.meta?.sources)}${m.error?`<div class="err">${esc(m.error)}</div>`:''}<div class="botfoot">${ACT_BOT}<div class="meta">${metaHTML(m)}</div></div>${last?followHTML(m):''}</div>`;}
+// The versions of the conversation from the question before this answer: "‹ 2/3 ›".
+function versHTML(q){if(q?.role!=='user'||!q.branches?.length)return '';const n=q.branches.length+1,i=q.branch||0;
+  return `<span class="vers" role="group" aria-label="Версии ответа"><button type="button" data-branch="${esc(q.id)}" data-to="${i-1}"${i<=0?' disabled':''} aria-label="Предыдущая версия"><svg class="i"><use href="#i-down"/></svg></button><span>${i+1}/${n}</span><button type="button" data-branch="${esc(q.id)}" data-to="${i+1}"${i>=n-1?' disabled':''} aria-label="Следующая версия"><svg class="i"><use href="#i-down"/></svg></button></span>`;}
+function botHTML(m,last,q){return `<div class="msg bot" data-id="${esc(m.id||'')}">${traceHTML(m)}${thinkHTML(m)}${m.text?`<div class="md">${md(m.text,m.meta?.sources)}</div>`:''}${sourcesHTML(m.meta?.sources)}${m.error?`<div class="err">${esc(m.error)}</div>`:''}<div class="botfoot"><div class="bl">${versHTML(q)}${ACT_BOT}</div><div class="meta">${metaHTML(m)}</div></div>${last?followHTML(m):''}</div>`;}
 // ── suggested questions ("Продолжить") under the last answer ──
 // On for a chat by its own choice, else by the setting. They are asked for after the answer as a
 // separate request, which a new message or leaving the chat cancels: the model is never kept busy
@@ -75,7 +78,14 @@ function botHTML(m,last){return `<div class="msg bot" data-id="${esc(m.id||'')}"
 const followOn=c=>c?.follow_ups??!!S.chatSettings?.follow_ups;
 function followHTML(m){const q=m.meta?.follow_ups;if(!q?.length)return '';
   return `<div class="follow"><span class="fh">Продолжить</span>${q.map(x=>`<button type="button" data-follow="${esc(x)}"><svg class="i"><use href="#i-up"/></svg><span>${esc(x)}</span></button>`).join('')}</div>`;}
-function stopFollowUps(){if(C.follow){C.follow.ctrl.abort();C.follow=null;}$$('.follow.wait').forEach(el=>el.remove());}
+function stopFollowUps(){if(C.follow){C.follow.ctrl.abort();C.follow=null;}if(C.titling){C.titling.abort();C.titling=null;}$$('.follow.wait').forEach(el=>el.remove());}
+// The model names a new chat after its first answer, unless the owner named it or turned it off.
+function titleWanted(){const c=C.chat;return !!c&&S.chatSettings?.auto_title!==false&&!c.title_set&&!c.title_auto&&(c.messages||[]).filter(m=>m.role==='assistant'&&m.text&&!m.error).length===1;}
+async function requestTitle(chatId){const ctrl=new AbortController();C.titling=ctrl;
+  try{const r=await fetch('/api/chat/title',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:JSON.stringify({chat_id:chatId}),signal:ctrl.signal});
+    if(!r.ok)return;const s=await r.json();const i=C.threads.findIndex(t=>t.id===s.id);if(i>=0)C.threads[i]=s;
+    if(C.chat?.id===chatId){C.chat.title=s.title;C.chat.title_auto=true;}renderThreads();}
+  catch(e){}finally{if(C.titling===ctrl)C.titling=null;}}
 async function requestFollowUps(chatId,msgId){stopFollowUps();const ctrl=new AbortController();C.follow={ctrl,chat:chatId,msg:msgId};
   const el=()=>C.chat?.id===chatId?byId('message-list').querySelector(`.msg.bot[data-id="${msgId}"]`):null;
   el()?.insertAdjacentHTML('beforeend','<div class="follow wait"><span class="fh">Подбираю вопросы…</span></div>');
@@ -94,7 +104,7 @@ async function requestFollowUps(chatId,msgId){stopFollowUps();const ctrl=new Abo
 function followTarget(){const msgs=C.chat?.messages||[],m=msgs[msgs.length-1];return followOn(C.chat)&&m?.role==='assistant'&&m.id&&m.text&&!m.error&&!m.meta?.follow_ups?.length?m:null;}
 function renderChat(){const box=byId('message-list');const c=C.chat;
   if(!c||!c.messages?.length){setHTML(box,`<div class="empty"><b>${c?esc(c.title):'Новый чат'}</b><span>Спросите что-нибудь. Можно приложить файлы и включить поиск в интернете.</span></div>`);}
-  else setHTML(box,c.messages.map((m,i)=>m.role==='user'?userHTML(m):botHTML(m,i===c.messages.length-1&&followOn(c))).join(''));
+  else setHTML(box,c.messages.map((m,i)=>m.role==='user'?userHTML(m):botHTML(m,i===c.messages.length-1&&followOn(c),c.messages[i-1])).join(''));
   showChatCost();renderKeep();scrollDown(true);}
 function scrollDown(force){const el=byId('messages');if(force||el.scrollHeight-el.scrollTop-el.clientHeight<160)el.scrollTop=el.scrollHeight;}
 function showChatCost(){const c=byId('chat-cost');const paid=(C.chat?.messages||[]).filter(m=>m.meta?.cost_usd>0);c.hidden=!paid.length;if(!paid.length)return;
@@ -222,7 +232,7 @@ const readB64=f=>new Promise((resolve,reject)=>{const r=new FileReader();r.onloa
 async function send(opts={}){if(C.busy)return;stopFollowUps();const m=curModel();
   if(!m){notice('Выберите модель в списке над чатом.',true);byId('picker-btn').click();return;}
   if(C.starting){notice('Модель ещё запускается — подождите несколько секунд.');return;}
-  const text=opts.retry?'':(opts.text??byId('prompt').value).trim();const files=opts.retry||opts.text!==undefined?[]:C.attached;
+  const text=opts.retry?'':(opts.text??byId('prompt').value).trim();const files=opts.retry||opts.text!==undefined?[]:C.attached;const again=opts.retry||opts.edit;
   if(!text&&!files.length&&!opts.retry)return;
   if(m.source==='local'&&!m.running){await startLocal(m);if(!modelByKey(m.key)?.running)return;}
   if(!C.chat){C.chat=await api('/api/chats',{action:'create',model:m.key,assistant_id:chatAsst()||''});C.chat.messages=[];C.threads.unshift(C.chat);renderThreads();}
@@ -230,11 +240,11 @@ async function send(opts={}){if(C.busy)return;stopFollowUps();const m=curModel()
   let data;try{data=await Promise.all(files.map(async a=>({name:a.name,data:await readB64(a.file)})));}catch(e){fail(e);return;}
   if(C.chat?.id!==chat.id)return;
   const box=byId('message-list');if(!C.chat.messages.length)box.innerHTML='';box.querySelectorAll('.follow').forEach(el=>el.remove());
-  if(!opts.retry){box.insertAdjacentHTML('beforeend',userHTML({text,attachments:files.map(a=>({name:a.name,kind:a.kind,size:a.size}))}));if(opts.text===undefined){byId('prompt').value='';C.attached=[];renderAttached();byId('attach-warn').hidden=true;}}
+  if(!again){box.insertAdjacentHTML('beforeend',userHTML({text,attachments:files.map(a=>({name:a.name,kind:a.kind,size:a.size}))}));if(opts.text===undefined){byId('prompt').value='';C.attached=[];renderAttached();byId('attach-warn').hidden=true;}}
   box.insertAdjacentHTML('beforeend','<div class="msg bot live"><div class="trace"></div><details class="step think" hidden><summary><svg class="i i15"><use href="#i-brain"/></svg><span>Размышляет…</span></summary><div class="in"></div></details><div class="md caret"></div><div class="sources-slot"></div><div class="status-line" hidden></div></div>');
   const live=box.lastElementChild;scrollDown(true);
   const ctrl=new AbortController();C.busy=ctrl;renderSend();
-  const body={chat_id:chat.id,model:m.key,text,files:data,web:!!(C.web&&S.chatSettings?.search_url),effort:C.effort||'',assistant_id:chatAsst()||''};if(opts.retry)body.retry=opts.retry;
+  const body={chat_id:chat.id,model:m.key,text,files:data,web:!!(C.web&&S.chatSettings?.search_url),effort:C.effort||'',assistant_id:chatAsst()||''};if(opts.retry)body.retry=opts.retry;if(opts.edit)body.edit=opts.edit;
   let answer='',thinking='',sources=[],done=null,userMessage=null;
   try{const r=await fetch('/api/chat/send',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:JSON.stringify(body),signal:ctrl.signal});
     if(!r.ok){let msg=`Ошибка ${r.status}`;try{msg=(await r.json()).error||msg;}catch(e){}if(r.status===401)showLogin();throw new Error(msg);}
@@ -243,7 +253,7 @@ async function send(opts={}){if(C.busy)return;stopFollowUps();const m=curModel()
     for(;;){const {value,done:end}=await reader.read();if(end)break;buf+=dec.decode(value,{stream:true});let i;
       while((i=buf.indexOf('\n\n'))>=0){const block=buf.slice(0,i);buf=buf.slice(i+2);let ev='',dt='';block.split('\n').forEach(l=>{if(l.startsWith('event: '))ev=l.slice(7);else if(l.startsWith('data: '))dt+=l.slice(6);});
         let v;try{v=JSON.parse(dt);}catch(e){continue;}
-        if(ev==='user'){userMessage=v;const u=box.querySelector('.msg.user:not([data-id]),.msg.user[data-id=""]');if(u&&!opts.retry)u.dataset.id=v.id;}
+        if(ev==='user'){userMessage=v;const u=box.querySelector('.msg.user:not([data-id]),.msg.user[data-id=""]');if(u&&!again)u.dataset.id=v.id;}
         else if(ev==='delta'){answer+=v.t;if(!pending)pending=requestAnimationFrame(paintAnswer);}
         else if(ev==='reasoning'){thinking+=v.t;const d=live.querySelector('details.think');d.hidden=false;d.querySelector('.in').textContent=thinking;}
         else if(ev==='search'){live.querySelector('.trace').insertAdjacentHTML('beforeend',`<span class="status-line"><svg class="i i15"><use href="#i-globe"/></svg>Ищу: «${esc(v.query)}»</span>`);scrollDown();}
@@ -254,11 +264,12 @@ async function send(opts={}){if(C.busy)return;stopFollowUps();const m=curModel()
   }catch(e){if(e.name!=='AbortError'){live.querySelector('.md').classList.remove('caret');live.insertAdjacentHTML('beforeend',`<div class="err">${esc(e.message)}</div>`);}}
   finally{C.busy=null;renderSend();}
   if(done?.message){const msg=done.message,target=C.chat?.id===chat.id?C.chat:chat;target.messages=target.messages||[];
-    if(opts.retry){const i=target.messages.findIndex(x=>x.id===opts.retry);if(i>=0)target.messages=target.messages.slice(0,i+1);}
+    // Answered again or edited: the question now carries the earlier versions, as stored.
+    if(again){const i=target.messages.findIndex(x=>x.id===again);const u=userMessage||target.messages[i];target.messages=(i>=0?target.messages.slice(0,i):target.messages).concat(u?[u]:[]);}
     else if((text||files.length)&&!target.messages.some(x=>userMessage?.id&&x.id===userMessage.id)){target.messages.push(userMessage||{role:'user',text,attachments:files.map(a=>({name:a.name,kind:a.kind,size:a.size}))});}
     if(!target.messages.some(x=>x.id===msg.id))target.messages.push(msg);
     if(done.chat){const i=C.threads.findIndex(t=>t.id===done.chat.id);if(i>=0)C.threads[i]=done.chat;else C.threads.unshift(done.chat);target.title=done.chat.title;}
-    renderThreads();if(C.chat?.id===chat.id){renderChat();showChatCost();renderFoot();const f=followTarget();if(f)requestFollowUps(chat.id,f.id);}if(msg.meta?.cost_usd)refreshAccount();
+    renderThreads();if(C.chat?.id===chat.id){renderChat();showChatCost();renderFoot();const f=followTarget();if(f)requestFollowUps(chat.id,f.id);if(titleWanted())requestTitle(chat.id);}if(msg.meta?.cost_usd)refreshAccount();
   }else if(C.chat?.id===chat.id){setTimeout(()=>{if(C.chat?.id===chat.id)openChat(chat.id).catch(()=>{});},400);}
   if(C.chat?.id===chat.id)scrollDown();}
 function renderSend(){const b=byId('send');b.classList.toggle('stop',!!C.busy);b.setAttribute('aria-label',C.busy?'Остановить ответ':'Отправить');b.title=C.busy?'Остановить ответ':'';
@@ -270,6 +281,7 @@ async function messageAction(act,el){const msg=el.closest('.msg');const id=msg.d
   if(act==='delete'){if(!id||!C.chat)return msg.remove();const s=await api('/api/chats',{action:'delete-message',id:C.chat.id,message_id:id});C.chat.messages=C.chat.messages.filter(m=>m.id!==id);msg.remove();
     const i=C.threads.findIndex(t=>t.id===s.id);if(i>=0)C.threads[i]=s;showChatCost();return;}
   if(act==='resend'){send({text:stored?.text||msg.querySelector('.bubble')?.textContent||''});return;}
+  if(act==='edit'){if(C.busy||!id)return;startEdit(msg,stored?.text??msg.querySelector('.bubble')?.textContent??'');return;}
   if(act==='retry'){const all=C.chat?.messages||[];const i=all.findIndex(m=>m.id===id);const user=[...all.slice(0,i)].reverse().find(m=>m.role==='user');if(!user)return;
     C.chat.messages=all.slice(0,all.indexOf(user)+1);let n=msg;while(n){const next=n.nextElementSibling;n.remove();n=next;}send({retry:user.id});}}
 
@@ -278,6 +290,18 @@ async function toggleChatFollow(id){const t=C.threads.find(x=>x.id===id);if(!t)r
   const s=await api('/api/chats',{action:'follow-ups',id,mode:next===glob?'auto':next?'on':'off'});const i=C.threads.findIndex(x=>x.id===id);if(i>=0)C.threads[i]=s;
   notice(next?'В этом чате под ответами будут вопросы для продолжения.':'В этом чате вопросы после ответов выключены.');
   if(C.chat?.id===id){C.chat.follow_ups=s.follow_ups;if(!next){stopFollowUps();renderChat();}else{const f=followTarget();if(f)requestFollowUps(id,f.id);}}}
+
+// ── editing a question: the earlier version stays, switchable under the answer ──
+function startEdit(msg,text){if(msg.querySelector('.editbox'))return;msg.classList.add('editing');
+  msg.insertAdjacentHTML('beforeend',`<div class="editbox"><textarea class="edit-ta" rows="3" aria-label="Изменённое сообщение">${esc(text)}</textarea><div class="ebtns"><button type="button" class="btn ghost sm" data-edit-cancel>Отмена</button><button type="button" class="btn primary sm" data-edit-send>Отправить</button></div></div>`);
+  const ta=msg.querySelector('.edit-ta');ta?.focus?.();}
+function endEdit(msg){msg.querySelector('.editbox')?.remove();msg.classList.remove('editing');}
+function sendEdit(msg){const id=msg.dataset.id,text=(msg.querySelector('.edit-ta')?.value||'').trim();if(!text||!id||C.busy)return;
+  const all=C.chat?.messages||[],i=all.findIndex(m=>m.id===id);if(i<0)return;
+  endEdit(msg);msg.querySelector('.bubble').textContent=text;let n=msg.nextElementSibling;while(n){const next=n.nextElementSibling;n.remove();n=next;}
+  C.chat.messages=all.slice(0,i+1);return send({edit:id,text}).catch(fail);}
+async function switchBranch(btn){if(C.busy||!C.chat)return;stopFollowUps();
+  C.chat=await api('/api/chats',{action:'branch',id:C.chat.id,message_id:btn.dataset.branch,index:+btn.dataset.to});renderChat();showChatCost();}
 
 // ── deleting chats ──
 function askDelAll(step){const pins=C.threads.filter(t=>t.pinned).length,rest=C.threads.length-pins;byId('del-all').hidden=false;
@@ -297,6 +321,10 @@ function promptKey(e){if(e.key!=='Enter'||e.isComposing)return;
   if(!e.shiftKey&&!e.altKey&&!touchOnly()){e.preventDefault();byId('composer').requestSubmit();}}
 byId('prompt').addEventListener('keydown',promptKey);
 byId('prompt').addEventListener('input',()=>{if(curModel()?.source==='cloud')renderFoot();});
+// In the edit box Enter sends and Escape cancels, as in the composer.
+byId('message-list').addEventListener('keydown',e=>{if(!e.target.classList?.contains('edit-ta'))return;const msg=e.target.closest('.msg');
+  if(e.key==='Escape'){e.preventDefault();endEdit(msg);return;}
+  if(e.key==='Enter'&&!e.isComposing){if(e.ctrlKey||e.metaKey){e.preventDefault();newLine(e.target);}else if(!e.shiftKey&&!touchOnly()){e.preventDefault();sendEdit(msg);}}});
 byId('thread-list').addEventListener('keydown',e=>{if(e.target.id!=='thread-rename')return;if(e.key==='Enter'){e.preventDefault();commitRename(true);}else if(e.key==='Escape'){e.preventDefault();e.stopPropagation();commitRename(false);}});
 byId('thread-list').addEventListener('focusout',e=>{if(e.target.id==='thread-rename')commitRename(true);});
 byId('thread-list').addEventListener('dblclick',e=>{const a=e.target.closest('[data-thread]');if(a&&!C.hits){e.preventDefault();startRename(a.dataset.thread);}});
@@ -335,6 +363,9 @@ document.addEventListener('click',e=>{
   const pm=e.target.closest('[data-pick-model]');if(pm){byId('picker-menu').hidden=true;setChosen(pm.dataset.pickModel);return;}
   const gb2=e.target.closest('[data-grp]');if(gb2&&(gb2.dataset.grp[0]==='t'||gb2.dataset.grp[0]==='p')){toggleGroup(gb2.dataset.grp);gb2.dataset.grp[0]==='t'?renderThreads():renderPicker();return;}
   const act=e.target.closest('[data-act]');if(act){messageAction(act.dataset.act,act).catch(fail);return;}
+  const es=e.target.closest('[data-edit-send]');if(es){sendEdit(es.closest('.msg'));return;}
+  const ec=e.target.closest('[data-edit-cancel]');if(ec){endEdit(ec.closest('.msg'));return;}
+  const br=e.target.closest('[data-branch]');if(br){switchBranch(br).catch(fail);return;}
   if(e.target.closest('#threads-btn')){$('.threads').classList.add('open');return;}
   if(e.target.closest('[data-close-threads]')){$('.threads').classList.remove('open');return;}
   const ta=e.target.closest('[data-thread]');if(ta){e.preventDefault();$('.threads').classList.remove('open');openChat(ta.dataset.thread).catch(fail);return;}

@@ -96,21 +96,38 @@ func (r *Runner) followUps(ctx context.Context, in FollowUpRequest) ([]string, f
 	if last.Role != "assistant" || last.Error != "" || strings.TrimSpace(last.Text) == "" {
 		return nil, 0, refuse(http.StatusConflict, "К этому ответу вопросы не предлагаются.")
 	}
-	key := settings.FollowUpModel
+	text, cost, err := r.aside(ctx, chat, settings.FollowUpModel, last.Model, followUpPrompt(chat.Messages, r.now()))
+	if err != nil {
+		return nil, cost, err
+	}
+	a := &answer{text: text, cost: cost}
+	questions := parseFollowUps(a.text)
+	if len(questions) > 0 || a.cost > 0 {
+		if _, err := r.Chats.SetSuggestions(chat.ID, last.ID, questions, a.cost); err != nil {
+			return nil, a.cost, err
+		}
+	}
+	return questions, a.cost, nil
+}
+
+// aside runs a short side task for the chat — suggestions, a title — and returns the model's
+// text and cost. The model is the one chosen for side tasks, else the answer's own; a stopped
+// local model is not started for it, and its thinking is the shortest the model allows.
+func (r *Runner) aside(ctx context.Context, chat *chats.Chat, chosen, answered string, messages []map[string]any) (string, float64, error) {
+	key := chosen
 	if key == "" {
-		key = last.Model
+		key = answered
 	}
 	if key == "" {
 		key = chat.Model
 	}
 	model, ctxLen, err := r.Model(ctx, key)
 	if err != nil {
-		return nil, 0, refuse(http.StatusConflict, "%s", err.Error())
+		return "", 0, refuse(http.StatusConflict, "%s", err.Error())
 	}
 	if model.Source == "local" && !model.Running {
-		return nil, 0, refuse(http.StatusConflict, "Модель %s не запущена: вопросы не предлагаются, чтобы не запускать её.", model.Name)
+		return "", 0, refuse(http.StatusConflict, "Модель %s не запущена: служебный запрос не выполняется, чтобы не запускать её.", model.Name)
 	}
-	// The shortest thinking the model allows: the suggestions are a small side task.
 	effort := ""
 	if steps := reasoning.Steps(model.Reasoning); len(steps) > 0 {
 		effort = steps[0]
@@ -119,25 +136,16 @@ func (r *Runner) followUps(ctx context.Context, in FollowUpRequest) ([]string, f
 	ctx, cancel := context.WithTimeout(ctx, followUpTimeout)
 	defer cancel()
 	a := &answer{}
-	_, err = r.generate(ctx, t, r.request(t, followUpPrompt(chat.Messages, r.now()), false), a, &stream{gone: true})
+	_, err = r.generate(ctx, t, r.request(t, messages, false), a, &stream{gone: true})
 	if model.Source == "cloud" && a.cost > 0 && r.Spend != nil {
 		if err := r.Spend.Add(model.ID, a.cost, openrouter.SourceChat); err != nil {
 			r.logf("chat: spend ledger: %v", err)
 		}
 	}
-	if err != nil {
-		return nil, a.cost, err
+	if err == nil {
+		err = ctx.Err()
 	}
-	if ctx.Err() != nil {
-		return nil, a.cost, ctx.Err()
-	}
-	questions := parseFollowUps(a.text)
-	if len(questions) > 0 || a.cost > 0 {
-		if _, err := r.Chats.SetSuggestions(chat.ID, last.ID, questions, a.cost); err != nil {
-			return nil, a.cost, err
-		}
-	}
-	return questions, a.cost, nil
+	return a.text, a.cost, err
 }
 
 // followUpPrompt asks for the questions from the end of the conversation.

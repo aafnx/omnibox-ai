@@ -34,6 +34,7 @@ var (
 		"delete-all":     {"keep_pinned"},
 		"delete-message": {"id", "message_id"},
 		"follow-ups":     {"id", "mode"},
+		"branch":         {"id", "message_id", "index"},
 	}
 	assistantActions = map[string][]string{
 		"save":    {"id", "emoji", "name", "description", "instructions", "model", "style", "web_search"},
@@ -98,8 +99,9 @@ func (h *Handler) postChats(w http.ResponseWriter, r *http.Request) {
 	}
 	var id, title, assistant, model, msg, mode string
 	var keepPinned bool
+	var index int
 	if err := f.get("id", &id, "title", &title, "assistant_id", &assistant, "model", &model,
-		"message_id", &msg, "keep_pinned", &keepPinned, "mode", &mode); err != nil {
+		"message_id", &msg, "keep_pinned", &keepPinned, "mode", &mode, "index", &index); err != nil {
 		h.fail(w, err)
 		return
 	}
@@ -131,6 +133,10 @@ func (h *Handler) postChats(w http.ResponseWriter, r *http.Request) {
 	case "delete-all":
 		n, err := h.Chats.DeleteAll(keepPinned)
 		h.reply(w, map[string]any{"deleted": n}, err)
+	case "branch":
+		// Another version of the conversation: the whole chat, since its messages change.
+		c, err := h.Chats.SwitchBranch(id, msg, index)
+		h.reply(w, c, err)
 	default:
 		// The remaining actions change one chat and answer with its new summary.
 		var c *Chat

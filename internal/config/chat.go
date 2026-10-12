@@ -26,7 +26,9 @@ type Chat struct {
 	// FollowUps suggests a few questions to ask next under the last answer; a chat may turn
 	// them on or off for itself.
 	FollowUps bool `json:"follow_ups,omitempty"`
-	// FollowUpModel writes the suggestions: empty is the chat's own model, otherwise an
+	// NoAutoTitle keeps a new chat's title from its first message: the model does not name it.
+	NoAutoTitle bool `json:"no_auto_title,omitempty"`
+	// FollowUpModel writes the suggestions and titles: empty is the chat's own model, otherwise an
 	// OpenRouter model (cloud:<id>) — never another local model, which would have to be started.
 	FollowUpModel string `json:"follow_up_model,omitempty"`
 }

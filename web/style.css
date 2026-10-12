@@ -753,3 +753,14 @@ details.srcs summary:hover{border-color:var(--iris-line);color:var(--text)}
 .vrow .vt{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .vrow>.small{grid-column:1;min-width:0}
 .vrow>.btn{grid-row:1/3;grid-column:2}
+/* Versions of an answer ("‹ 2/3 ›") and editing a question in place. */
+.vers{display:inline-flex;align-items:center;gap:2px;font-size:12px;color:var(--muted);font-variant-numeric:tabular-nums;margin-right:4px}
+.vers button{width:24px;height:24px;padding:0;display:grid;place-items:center;border:0;border-radius:6px;background:none;color:var(--muted)}
+.vers button:hover:not(:disabled){background:var(--surface2);color:var(--text)}
+.vers button:disabled{opacity:.35;cursor:default}
+.vers button svg.i{width:14px;height:14px;transform:rotate(90deg)} .vers button:last-child svg.i{transform:rotate(-90deg)}
+.botfoot .bl{display:flex;align-items:center;gap:4px}
+.msg.user.editing .bubble,.msg.user.editing .mact{display:none}
+.editbox{display:grid;gap:8px;width:min(100%,640px);justify-self:end}
+.edit-ta{width:100%;border:1px solid var(--iris-line);border-radius:var(--r);background:var(--surface);padding:10px 12px;resize:vertical;min-height:72px;line-height:1.45}
+.ebtns{display:flex;justify-content:flex-end;gap:8px}

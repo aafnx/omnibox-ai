@@ -212,7 +212,8 @@
           <div class="panel" id="s-chat"><header><h2>Чат</h2></header>
             <div class="body">
               <div class="line"><div><b>Предлагать вопросы после ответа</b><div class="small muted">Под последним ответом — 3–5 вопросов, которые можно задать дальше, как «Продолжить» в Open WebUI; нажатие отправляет вопрос. Это отдельный короткий запрос к модели после ответа. В каждом чате можно включить или выключить отдельно: меню «⋯» в списке чатов.</div></div><label class="switch"><input type="checkbox" id="follow-on" aria-label="Предлагать вопросы после ответа"><span></span></label></div>
-              <div class="line"><div><b>Кто пишет вопросы</b><div class="small muted" id="follow-model-hint">Та же модель, что отвечала: локальная — бесплатно, но несколько секунд занимает видеокарту; облачная — по цене её токенов.</div></div><select id="follow-model" class="sel-auto"></select></div>
+              <div class="line"><div><b>Название чата пишет модель</b><div class="small muted">После первого ответа модель даёт чату короткое название по сути разговора, как в Open WebUI. До этого и при выключенной опции название — начало первого вопроса. Чат, который вы переименовали, модель не трогает.</div></div><label class="switch"><input type="checkbox" id="auto-title" aria-label="Название чата пишет модель"><span></span></label></div>
+              <div class="line"><div><b>Кто пишет вопросы и названия</b><div class="small muted" id="follow-model-hint">Та же модель, что отвечала: локальная — бесплатно, но несколько секунд занимает видеокарту; облачная — по цене её токенов.</div></div><select id="follow-model" class="sel-auto"></select></div>
             </div></div>
           <div class="panel" id="s-search"><header><h2>Веб-поиск</h2><span class="pill" id="search-state">Не проверен</span></header>
             <div class="body">

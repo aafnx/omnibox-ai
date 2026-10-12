@@ -78,8 +78,10 @@ type Request struct {
 	Effort string `json:"effort"`
 	// Assistant switches the chat's assistant; nil keeps it, "" means none.
 	Assistant *string `json:"assistant_id"`
-	// Retry answers an earlier user message again: what followed it is replaced.
+	// Retry answers an earlier user message again; Edit replaces its text with Text and answers
+	// that. What followed it is kept as another version of the conversation.
 	Retry string `json:"retry"`
+	Edit  string `json:"edit"`
 }
 
 func (r *Runner) now() time.Time {
@@ -199,6 +201,9 @@ func (r *Runner) prepare(ctx context.Context, in Request) (*turn, error) {
 	if text == "" && len(in.Files) == 0 && in.Retry == "" {
 		return nil, refuse(400, "Пустое сообщение.")
 	}
+	if in.Edit != "" && (in.Retry != "" || len(in.Files) > 0) {
+		return nil, refuse(400, "Изменённое сообщение отправляется без новых файлов.")
+	}
 	chat, err := r.Chats.Get(in.ChatID)
 	if err != nil {
 		return nil, err
@@ -272,13 +277,18 @@ func (r *Runner) prepare(ctx context.Context, in Request) (*turn, error) {
 	}
 	// Store the question first: it stays in the chat even if the answer fails.
 	var stored *chats.Chat
-	if in.Retry != "" {
+	if in.Retry != "" || in.Edit != "" {
 		stored, err = r.Chats.Update(chat.ID, func(c *chats.Chat) error {
-			i := slices.IndexFunc(c.Messages, func(m chats.Message) bool { return m.ID == in.Retry && m.Role == "user" })
+			id := in.Retry + in.Edit
+			i := slices.IndexFunc(c.Messages, func(m chats.Message) bool { return m.ID == id && m.Role == "user" })
 			if i < 0 {
 				return refuse(404, "Сообщение не найдено: возможно, оно удалено.")
 			}
-			c.Messages = c.Messages[:i+1]
+			next := c.Messages[i]
+			if in.Edit != "" {
+				next.Text, next.Created = text, r.now().UTC()
+			}
+			chats.Fork(c, i, next)
 			c.Model, c.AssistantID = in.Model, assistantID
 			return nil
 		})

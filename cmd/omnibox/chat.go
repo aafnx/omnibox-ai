@@ -166,6 +166,7 @@ func (c *chatSide) handlers(local func(ctx context.Context, session string, body
 		"/api/assistants":     history,
 		"/api/chat/send":      run,
 		"/api/chat/followups": http.HandlerFunc(run.FollowUps),
+		"/api/chat/title":     http.HandlerFunc(run.Title),
 		"/api/library":        http.HandlerFunc(c.serveLibrary),
 		"/api/cloud":          http.HandlerFunc(c.serveCloud),
 		"/api/chat-settings":  http.HandlerFunc(c.serveSettings),
@@ -383,6 +384,7 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 		SiteIcons      *bool   `json:"site_icons"`
 		FollowUps      *bool   `json:"follow_ups"`
 		ReadPages      *bool   `json:"read_pages"`
+		AutoTitle      *bool   `json:"auto_title"`
 		FollowUpModel  *string `json:"follow_up_model"`
 	}
 	if err := body(r, &in); err != nil {
@@ -411,6 +413,9 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			if in.SiteIcons != nil {
 				s.SiteIcons = *in.SiteIcons
+			}
+			if in.AutoTitle != nil {
+				s.NoAutoTitle = !*in.AutoTitle
 			}
 			if in.ReadPages != nil {
 				s.NoReadPages = !*in.ReadPages
@@ -477,7 +482,7 @@ func (c *chatSide) settingsView() map[string]any {
 		}
 	}
 	return map[string]any{"retention_hours": s.RetentionHours, "search_url": s.SearchURL, "search_results": s.SearchResults,
-		"search_language": s.SearchLanguage, "search_default": s.SearchDefault, "site_icons": s.SiteIcons, "read_pages": !s.NoReadPages,
+		"search_language": s.SearchLanguage, "search_default": s.SearchDefault, "site_icons": s.SiteIcons, "read_pages": !s.NoReadPages, "auto_title": !s.NoAutoTitle,
 		"follow_ups": s.FollowUps, "follow_up_model": s.FollowUpModel, "chats": len(list), "chats_bytes": size}
 }
 
