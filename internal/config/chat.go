@@ -29,7 +29,8 @@ type Chat struct {
 	// NoAutoTitle keeps a new chat's title from its first message: the model does not name it.
 	NoAutoTitle bool `json:"no_auto_title,omitempty"`
 	// FollowUpModel writes the suggestions and titles: empty is the chat's own model, otherwise an
-	// OpenRouter model (cloud:<id>) — never another local model, which would have to be started.
+	// OpenRouter (cloud:<id>) or ChatGPT (chatgpt:<id>) model — never another local model, which
+	// would have to be started.
 	FollowUpModel string `json:"follow_up_model,omitempty"`
 }
 
@@ -67,6 +68,22 @@ func (c *Config) CloudSettings() Cloud {
 	return *c.Cloud
 }
 
+// ChatGPT holds the settings of the ChatGPT subscription; the sign-in itself is Codex's, kept
+// in its home inside the data directory.
+type ChatGPT struct {
+	// ExposeAPI shows the subscription's models to the /v1 clients (chatgpt/<id>); off by
+	// default, since their requests are counted against the owner's limits.
+	ExposeAPI bool `json:"expose_api"`
+}
+
+// ChatGPTSettings returns the ChatGPT settings, defaults filled in.
+func (c *Config) ChatGPTSettings() ChatGPT {
+	if c.ChatGPT == nil {
+		return ChatGPT{}
+	}
+	return *c.ChatGPT
+}
+
 // ModelPrefs are the owner's settings of one local model, applied whenever it starts.
 type ModelPrefs struct {
 	// Settings are launch settings in the panel's form (see Apply), without the model itself.
@@ -81,7 +98,8 @@ const (
 	MaxFavorites  = 200
 )
 
-// Model keys name a model across engines and OpenRouter: prismml:<file>, ollama:<name>, cloud:<id>.
+// Model keys name a model across engines and clouds: prismml:<file>, ollama:<name>, cloud:<id>
+// (OpenRouter) and chatgpt:<id> (the ChatGPT subscription).
 func LocalKey(engine, model string) string {
 	if engine == PrismML {
 		model = modelStem(model) + ".gguf"
@@ -89,7 +107,7 @@ func LocalKey(engine, model string) string {
 	return engine + ":" + model
 }
 
-// SplitKey returns the engine (prismml, ollama or cloud) and the model of a key.
+// SplitKey returns the engine (prismml, ollama, cloud or chatgpt) and the model of a key.
 func SplitKey(key string) (string, string, bool) {
 	kind, model, ok := strings.Cut(key, ":")
 	if !ok || model == "" || len(key) > 300 || strings.ContainsAny(key, "\x00\r\n\"\\") {
@@ -102,8 +120,26 @@ func SplitKey(key string) (string, string, bool) {
 		return kind, model, ValidOllamaModel(model)
 	case "cloud":
 		return kind, model, ValidCloudModel(model)
+	case "chatgpt":
+		return kind, model, ValidChatGPTModel(model)
 	}
 	return "", "", false
+}
+
+// Remote reports whether a key is a cloud model: OpenRouter's or the ChatGPT subscription's.
+func Remote(kind string) bool { return kind == "cloud" || kind == "chatgpt" }
+
+// ValidChatGPTModel accepts a model id of the ChatGPT subscription such as gpt-5.5.
+func ValidChatGPTModel(id string) bool {
+	if id == "" || len(id) > 100 || strings.Contains(id, "..") {
+		return false
+	}
+	for _, r := range id {
+		if !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("._-", r)) {
+			return false
+		}
+	}
+	return true
 }
 
 // ValidCloudModel accepts an OpenRouter model id such as anthropic/claude-sonnet-4.5 or
@@ -139,8 +175,8 @@ func (c *Chat) Validate() error {
 		return errors.New("Язык поиска: как в вопросе, ru или en.")
 	}
 	if c.FollowUpModel != "" {
-		if kind, _, ok := SplitKey(c.FollowUpModel); !ok || kind != "cloud" {
-			return errors.New("Модель для предложений: та же, что в чате, или модель OpenRouter.")
+		if kind, _, ok := SplitKey(c.FollowUpModel); !ok || !Remote(kind) {
+			return errors.New("Модель для предложений: та же, что в чате, модель OpenRouter или ChatGPT.")
 		}
 	}
 	return nil
@@ -159,7 +195,7 @@ func (c *Config) validateModels() error {
 	}
 	for key, p := range c.Models {
 		engine, _, ok := SplitKey(key)
-		if !ok || engine == "cloud" || p == nil {
+		if !ok || Remote(engine) || p == nil {
 			return errors.New("Некорректные настройки модели в config.json.")
 		}
 		for k, v := range p.Settings {
@@ -183,7 +219,7 @@ func (c *Config) validateModels() error {
 		}
 	}
 	if c.Panel.StartModel != "" {
-		if engine, _, ok := SplitKey(c.Panel.StartModel); !ok || engine == "cloud" {
+		if engine, _, ok := SplitKey(c.Panel.StartModel); !ok || Remote(engine) {
 			return errors.New("start_model: локальная модель prismml:<файл> или ollama:<имя>.")
 		}
 	}

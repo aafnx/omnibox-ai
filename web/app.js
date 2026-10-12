@@ -274,6 +274,19 @@ async function refreshAccount(){if(!S.cloud?.connected){S.account=null;renderNow
   try{S.account=await api('/api/cloud?account=1');}catch(e){S.account=null;}renderNow();return S.account;}
 async function refreshCloud(){S.cloud=await api('/api/cloud');return S.cloud;}
 
+// ── ChatGPT subscription: its limits as OpenAI reports them ──
+const GPT_PLANS={free:'Free',go:'Go',plus:'Plus',pro:'Pro',team:'Business',business:'Business',enterprise:'Enterprise',edu:'Edu'};
+const gptPlan=p=>GPT_PLANS[p]||(p&&p!=='unknown'?p:'');
+function gptWin(w){const m=w?.window_minutes||0;if(!m)return 'Лимит';if(m===300)return '5 часов';if(m===10080)return 'Неделя';
+  if(m%1440===0)return `${m/1440} ${plural(m/1440,'день','дня','дней')}`;if(m%60===0)return `${m/60} ч`;return `${m} мин`;}
+function gptReset(w,now=Date.now()){if(!w?.resets_at)return '';const t=Date.parse(w.resets_at),m=Math.round((t-now)/60000);
+  if(m<=0)return 'сбрасывается';if(m<60)return `сброс через ${m} мин`;if(m<1440)return `сброс через ${Math.floor(m/60)} ч${m%60?` ${m%60} мин`:''}`;
+  return 'сброс '+new Date(t).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});}
+const gptWindows=l=>l?[l.primary,l.secondary].filter(Boolean):[];
+function gptShort(l){return gptWindows(l).map(w=>`${gptWin(w)}: ${w.used_percent}%`).join(' · ');}
+// The status is read without starting Codex; ?account=1 asks OpenAI for the account and limits.
+async function refreshGpt(account){S.gpt=await api('/api/chatgpt'+(account?'?account=1':''));if(S.gpt.status?.limits)S.gptLimits=S.gpt.status.limits;return S.gpt;}
+
 // ── login ──
 function showLogin(){loggedIn=false;csrf='';byId('app').hidden=true;byId('login').hidden=false;hideAll();setTimeout(()=>byId('password').focus(),50);}
 async function showApp(){const s=await api('/api/session');csrf=s.csrf;loggedIn=true;byId('login').hidden=true;byId('app').hidden=false;

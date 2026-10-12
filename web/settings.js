@@ -1,5 +1,5 @@
 'use strict';
-// Settings: clients and keys, web search, OpenRouter, assistants, data, sleep, updates, panel.
+// Settings: clients and keys, web search, OpenRouter, ChatGPT, assistants, data, sleep, updates, panel.
 const ST={gateway:null,storage:null,update:null,editing:null,emoji:'',wipe:''};
 
 // ── connection ──
@@ -17,9 +17,9 @@ function renderChatSettings(){const s=S.chatSettings;if(!s)return;byId('searx').
   if(!['3','5','8'].includes(String(s.search_results)))byId('search-n').insertAdjacentHTML('beforeend',`<option value="${s.search_results}" selected>${s.search_results}</option>`);
   byId('search-lang').value=s.search_language||'';byId('search-default').checked=!!s.search_default;byId('site-icons').checked=!!s.site_icons;byId('read-pages').checked=s.read_pages!==false;
   // Suggestions: the chat's own model or a favourite OpenRouter one; another local model would have to be started.
-  byId('follow-on').checked=!!s.follow_ups;byId('auto-title').checked=s.auto_title!==false;const fm=s.follow_up_model||'',favs=models().filter(m=>m.source==='cloud'&&m.favorite);
-  byId('follow-model').innerHTML='<option value="">Та же модель, что в чате</option>'+favs.map(m=>`<option value="${esc(m.key)}">${esc(m.name)} · OpenRouter</option>`).join('')+(fm&&!favs.some(m=>m.key===fm)?`<option value="${esc(fm)}">${esc(chatModelName(fm))} · OpenRouter</option>`:'');
-  byId('follow-model').value=fm;byId('follow-model-hint').textContent=fm?'Модель OpenRouter пишет вопросы для любого чата: видеокарта не занята, каждый раз — доли цента по цене модели.':'Та же модель, что отвечала: локальная — бесплатно, но несколько секунд занимает видеокарту; облачная — по цене её токенов. В списке — избранные модели OpenRouter.';
+  byId('follow-on').checked=!!s.follow_ups;byId('auto-title').checked=s.auto_title!==false;const fm=s.follow_up_model||'',favs=models().filter(m=>(m.source==='cloud'&&m.favorite)||m.source==='chatgpt'),where=k=>k.startsWith('chatgpt:')?'ChatGPT':'OpenRouter';
+  byId('follow-model').innerHTML='<option value="">Та же модель, что в чате</option>'+favs.map(m=>`<option value="${esc(m.key)}">${esc(m.name)} · ${where(m.key)}</option>`).join('')+(fm&&!favs.some(m=>m.key===fm)?`<option value="${esc(fm)}">${esc(chatModelName(fm))} · ${where(fm)}</option>`:'');
+  byId('follow-model').value=fm;byId('follow-model-hint').textContent=fm.startsWith('chatgpt:')?'Модель ChatGPT пишет вопросы для любого чата: видеокарта не занята, расходуются лимиты подписки.':fm?'Модель OpenRouter пишет вопросы для любого чата: видеокарта не занята, каждый раз — доли цента по цене модели.':'Та же модель, что отвечала: локальная — бесплатно, но несколько секунд занимает видеокарту; облачная — по цене её токенов или из лимитов подписки. В списке — модели ChatGPT и избранные модели OpenRouter.';
   byId('keep-chats').value=String(s.retention_hours);if(byId('keep-chats').value!==String(s.retention_hours))byId('keep-chats').insertAdjacentHTML('beforeend',`<option value="${s.retention_hours}" selected>${Math.round(s.retention_hours/24)} дн.</option>`);
   byId('keep-chats-hint').textContent=`Сейчас ${s.chats} ${plural(s.chats,'чат','чата','чатов')}, ${fsize(s.chats_bytes||0)}. Избранные не удаляются по сроку; новый срок действует для новых чатов.`;
   byId('search-state').textContent=s.search_url?'Задан':'Не задан';byId('search-state').className='pill';}
@@ -61,6 +61,46 @@ function renderSpend(c){const days=c.days||[];const vals=days.map(d=>d.usd);cons
   const src=c.by_source||{};byId('by-source').textContent=`чат OmniBox ${money(src.chat)} · API ${money(src.api)}`;}
 async function cloudAction(body){S.cloud=await api('/api/cloud',body);renderCloud();return S.cloud;}
 
+// ── ChatGPT ──
+// Codex is installed and signed in from here; the page follows a download or a sign-in while it is
+// open, and stops asking once they end.
+function gptCell(label,value,sub,pct){const lv=pct>=90?' err':pct>=70?' warn':'';
+  return `<div><span class="label">${esc(label)}</span><b>${esc(value)}</b>${sub?`<span class="small faint">${esc(sub)}</span>`:''}${pct!==undefined?`<div class="meter${lv}"><i data-w="${pct}%"></i></div>`:''}</div>`;}
+function renderGpt(){const g=S.gpt;if(!g)return;const st=g.status||{},signed=!!g.signed_in,inst=st.installing,busy=!!inst?.running,l=st.limits;
+  byId('gpt-state').textContent=!st.installed?(busy?'Устанавливается':'Не установлено'):signed?'Подключено':'Вход не выполнен';byId('gpt-state').className='pill'+(signed?' ok':'');
+  byId('gpt-setup').hidden=st.installed&&!busy;byId('gpt-install').disabled=busy;
+  const pct=busy&&inst.total?Math.round(100*inst.done/inst.total):0;byId('gpt-install-meter').hidden=!busy;
+  const bar=byId('gpt-install-meter');bar.className='meter'+(inst?.total?'':' run');bar.firstElementChild.style.width=inst?.total?pct+'%':'';
+  byId('gpt-install-msg').textContent=busy?(inst.total?`Скачиваем Codex: ${pct}% из ${fsize(inst.total)}`:'Скачиваем Codex…'):inst?.error||'';
+  byId('gpt-install-msg').classList.toggle('danger-text',!busy&&!!inst?.error);
+  byId('gpt-signin').hidden=!st.installed||signed;const lg=st.login,waiting=!!lg&&!lg.done;byId('gpt-code').hidden=!waiting;byId('gpt-login').hidden=waiting;
+  if(waiting){byId('gpt-url').href=lg.url;byId('gpt-code-v').textContent=lg.code;
+    byId('gpt-code-hint').textContent=`Код действует до ${new Date(lg.expires).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'})}. После входа раздел обновится сам.`;}
+  else if(lg?.error)byId('gpt-login').title=lg.error;
+  byId('gpt-on').hidden=!signed;byId('gpt-version').hidden=!st.installed||busy;
+  byId('gpt-version-v').textContent=st.installed?`Codex ${st.version}${st.running?' · запущен':' · запускается при запросе, останавливается через 15 минут без запросов'}`:'';
+  if(signed){const a=st.account;const cells=[gptCell('Аккаунт',a?.email||'—',gptPlan(a?.plan||l?.plan)?'ChatGPT '+gptPlan(a?.plan||l?.plan):'')];
+    for(const w of gptWindows(l))cells.push(gptCell(gptWin(w),`${w.used_percent}%`,['израсходовано',gptReset(w)].filter(Boolean).join(' · '),w.used_percent));
+    if(!l)cells.push(gptCell('Лимиты','—','нажмите «Обновить»'));
+    setHTML(byId('gpt-kv'),cells.join(''));
+    const more=[];for(const b of l?.others||[])for(const w of gptWindows(b))more.push(gptCell(`${b.name||b.id} · ${gptWin(w)}`,`${w.used_percent}%`,gptReset(w),w.used_percent));
+    if(l?.credits&&(l.credits.has_credits||l.credits.unlimited))more.push(gptCell('Кредиты',l.credits.unlimited?'без ограничений':l.credits.balance||'—','сверх лимитов подписки'));
+    byId('gpt-more').hidden=!more.length;setHTML(byId('gpt-more'),more.join(''));
+    byId('gpt-warn').hidden=!(l?.reached||l?.blocked);byId('gpt-warn').textContent='Достигнут лимит подписки ChatGPT: ответы возобновятся после сброса'+(gptWindows(l).find(w=>w.used_percent>=100)?.resets_at?` (${gptReset(gptWindows(l).find(w=>w.used_percent>=100))})`:'')+'.';
+    byId('gpt-limits-when').textContent=l?.updated?`Обновлены ${new Date(l.updated).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}: после каждого ответа и при открытии этого раздела.`:'Обновляются после каждого ответа и при открытии этого раздела.';
+    byId('gpt-models').textContent=(g.models||[]).map(m=>m.name).join(', ')||'Список появится после первого обращения.';
+    byId('gpt-expose').checked=!!g.expose_api;byId('gpt-account-info').textContent=a?.email?`Вход: ${a.email}`:'';}
+  if(g.error&&signed)byId('gpt-limits-when').textContent=g.error;
+  gptFollow(busy||waiting);}
+let gptTimer=0;
+function gptFollow(on){clearTimeout(gptTimer);gptTimer=0;if(!on||S.page!=='settings')return;
+  gptTimer=setTimeout(async()=>{if(document.hidden||S.page!=='settings'){gptFollow(true);return;}
+    const was=S.gpt?.status;try{await refreshGpt(false);}catch(e){}const now=S.gpt?.status||{};
+    if(was?.login&&!was.login.done&&now.login?.done){if(now.login.error)notice('Вход в ChatGPT не завершён: '+now.login.error,true);else{notice('ChatGPT подключён.');await refreshGpt(true).catch(()=>{});await refreshLibrary();}}
+    if(was?.installing?.running&&!now.installing?.running&&now.installed){notice(`Codex ${now.version} установлен.`);}
+    renderGpt();},2000);}
+async function gptAction(body){S.gpt=await api('/api/chatgpt',body);if(S.gpt.status?.limits)S.gptLimits=S.gpt.status.limits;renderGpt();return S.gpt;}
+
 // ── assistants ──
 const EMOJIS=['🏠','💻','🌐','🧠','🔧','📝','📚','🎨','🧮','📈','🩺','⚖️','🍳','✈️','🎵','🤖','🎃'];
 const STYLE={precise:'Точно',balanced:'Баланс',creative:'Творчески'};
@@ -74,7 +114,7 @@ function countInstr(){const n=byId('ae-instr').value.length;byId('ae-count').tex
 function openAsst(id){ST.editing=id;const a=asstById(id)||{name:'',description:'',instructions:'',model:'',style:'',web_search:false,emoji:''};ST.emoji=a.emoji||'';
   byId('ae-emoji').value=EMOJIS.includes(ST.emoji)?'':ST.emoji;byId('ae-title').textContent=id?a.name:'Новый ассистент';byId('ae-name').value=a.name;byId('ae-desc').value=a.description;byId('ae-instr').value=a.instructions;
   byId('ae-style').value=a.style||'';byId('ae-web').checked=!!a.web_search;byId('ae-default').checked=!!id&&id===S.assistants.default;
-  const opts=models().filter(m=>m.source==='local'||m.favorite);byId('ae-model').innerHTML='<option value="">Как выбрано в чате</option>'+opts.map(m=>`<option value="${esc(m.key)}">${esc(m.name)} · ${m.source==='cloud'?'OpenRouter':'локальная'}</option>`).join('')+(a.model&&!opts.some(m=>m.key===a.model)?`<option value="${esc(a.model)}">${esc(chatModelName(a.model))}</option>`:'');byId('ae-model').value=a.model||'';
+  const opts=models().filter(m=>m.source==='local'||m.favorite);byId('ae-model').innerHTML='<option value="">Как выбрано в чате</option>'+opts.map(m=>`<option value="${esc(m.key)}">${esc(m.name)} · ${m.source==='cloud'?'OpenRouter':m.source==='chatgpt'?'ChatGPT':'локальная'}</option>`).join('')+(a.model&&!opts.some(m=>m.key===a.model)?`<option value="${esc(a.model)}">${esc(chatModelName(a.model))}</option>`:'');byId('ae-model').value=a.model||'';
   byId('ae-delete').hidden=!id;byId('ae-delete').dataset.sure='';byId('ae-delete').textContent='Удалить';byId('ae-name-msg').textContent='';countInstr();renderEmoji();show(byId('asst-drawer'));setTimeout(()=>byId('ae-name').focus(),50);}
 async function saveAsst(){const name=byId('ae-name').value.trim();if(!name){byId('ae-name-msg').textContent='Нужно название.';byId('ae-name').focus();return;}
   if(byId('ae-instr').value.length>20000){byId('ae-name-msg').textContent='Инструкции длиннее 20 000 символов.';return;}
@@ -148,6 +188,17 @@ byId('or-connect').addEventListener('click',async()=>{const key=byId('or-key').v
 byId('or-disconnect').addEventListener('click',()=>cloudAction({action:'key-forget'}).then(()=>{S.account=null;renderNow();notice('Ключ OpenRouter удалён с ПК.');return refreshLibrary();}).catch(fail));
 byId('or-refresh').addEventListener('click',()=>cloudAction({action:'refresh'}).then(()=>refreshLibrary()).then(()=>notice('Список моделей OpenRouter обновлён.')).catch(fail));
 byId('or-low').addEventListener('change',e=>cloudAction({action:'settings',low_balance_usd:Number(e.target.value)}).catch(fail));
+byId('gpt-install').addEventListener('click',()=>gptAction({action:'install'}).catch(fail));
+byId('gpt-update').addEventListener('click',()=>gptAction({action:'install'}).then(()=>notice('Проверяем новую версию Codex…')).catch(fail));
+byId('gpt-login').addEventListener('click',()=>gptAction({action:'login'}).catch(fail));
+byId('gpt-login-cancel').addEventListener('click',()=>gptAction({action:'login-cancel'}).catch(fail));
+byId('gpt-code-copy').addEventListener('click',()=>copyText(byId('gpt-code-v').textContent).then(()=>notice('Код скопирован.')).catch(fail));
+byId('gpt-refresh').addEventListener('click',()=>gptAction({action:'limits'}).then(()=>notice('Лимиты ChatGPT обновлены.')).catch(fail));
+byId('gpt-expose').addEventListener('change',e=>gptAction({action:'settings',expose_api:e.target.checked}).then(()=>notice(e.target.checked?'Модели ChatGPT видны клиентам API.':'Модели ChatGPT скрыты из API.')).catch(fail));
+byId('gpt-logout').addEventListener('click',e=>{const b=e.currentTarget;if(b.dataset.sure!=='1'){b.dataset.sure='1';b.textContent='Точно выйти?';return;}b.dataset.sure='';b.textContent='Выйти из аккаунта';
+  gptAction({action:'logout'}).then(()=>{S.gptLimits=null;notice('Вы вышли из ChatGPT: вход удалён с ПК.');return refreshLibrary();}).catch(fail);});
+byId('gpt-remove').addEventListener('click',e=>{const b=e.currentTarget;if(b.dataset.sure!=='1'){b.dataset.sure='1';b.textContent='Точно удалить Codex и вход?';return;}b.dataset.sure='';b.textContent='Удалить Codex и вход';
+  gptAction({action:'remove'}).then(()=>{S.gptLimits=null;notice('Codex и вход в ChatGPT удалены с ПК.');return refreshLibrary();}).catch(fail);});
 byId('or-expose').addEventListener('change',e=>cloudAction({action:'settings',expose_api:e.target.checked}).then(()=>notice(e.target.checked?'Избранные модели OpenRouter видны клиентам API.':'Модели OpenRouter скрыты из API.')).catch(fail));
 byId('asst-default').addEventListener('change',e=>api('/api/assistants',{action:'default',id:e.target.value}).then(r=>{S.assistants=r;renderAssistants();}).catch(fail));
 byId('ae-instr').addEventListener('input',countInstr);byId('ae-name').addEventListener('input',renderEmoji);
@@ -196,6 +247,7 @@ PAGES.settings={show(){renderCloud();renderAssistants();renderChatSettings();ren
   api('/api/gateway').then(g=>{ST.gateway=g;renderGateway();}).catch(fail);refreshStorage().catch(()=>{});
   api('/api/chat-settings').then(d=>{S.chatSettings=d;renderChatSettings();}).catch(()=>{});
   refreshCloud().then(()=>{renderCloud();return refreshAccount();}).then(renderCloud).catch(()=>{});
+  refreshGpt(false).then(g=>{renderGpt();if(g.signed_in)return refreshGpt(true).then(renderGpt);}).catch(()=>{});
   api('/api/update').then(u=>{ST.update=u;renderUpdate();}).catch(()=>{});
   api('/api/engines').then(d=>{SV.engines=d.engines;renderEngineManager(SV.engines);}).catch(()=>{});
   api('/api/assistants').then(d=>{S.assistants=d;renderAssistants();}).catch(()=>{});}};

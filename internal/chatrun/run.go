@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -187,9 +188,12 @@ func userContent(m chats.Message, media []map[string]any) any {
 // request is the body for the model with the reasoning depth and the assistant's style.
 func (r *Runner) request(t *turn, messages []map[string]any, tools bool) map[string]any {
 	body := map[string]any{"model": t.model.Alias, "messages": messages, "stream": true}
-	if t.model.Source == "cloud" {
+	switch t.model.Source {
+	case "cloud":
 		body["model"] = t.model.ID
 		body["usage"] = map[string]any{"include": true}
+	case "chatgpt":
+		body["model"] = t.model.ID
 	}
 	if tools {
 		body["tools"] = []any{searchTool}
@@ -216,6 +220,10 @@ func (r *Runner) request(t *turn, messages []map[string]any, tools bool) map[str
 			for _, k := range v.([]string) {
 				delete(body, k)
 			}
+		}
+	case "chatgpt":
+		if slices.Contains(p.Efforts, t.effort) {
+			body["reasoning_effort"] = t.effort
 		}
 	case "prismml":
 		reasoning.ApplyLlama(p, t.effort, body)
@@ -388,8 +396,9 @@ func (r *Runner) wrote(a *answer, text string, out *stream) {
 	out.send("delta", map[string]string{"t": text})
 }
 
-// send reaches the model: the local one through /v1, a cloud one through OpenRouter. A
-// parameter OpenRouter refuses for this model is dropped and the request sent once more.
+// send reaches the model: the local one through /v1, a cloud one through OpenRouter, a ChatGPT
+// one through the subscription. A parameter OpenRouter refuses for this model is dropped and the
+// request sent once more.
 func (r *Runner) send(ctx context.Context, t *turn, body map[string]any) (*http.Response, error) {
 	if t.model.Source == "local" {
 		data, _ := json.Marshal(body)
@@ -405,6 +414,13 @@ func (r *Runner) send(ctx context.Context, t *turn, body map[string]any) (*http.
 			return nil, localError(resp.StatusCode, e.Error.Message)
 		}
 		return resp, nil
+	}
+	if t.model.Source == "chatgpt" {
+		if r.ChatGPT == nil {
+			return nil, errors.New("ChatGPT не подключён: «Настройки → ChatGPT».")
+		}
+		data, _ := json.Marshal(body)
+		return r.ChatGPT.Chat(ctx, data)
 	}
 	if r.Cloud == nil {
 		return nil, errors.New("OpenRouter не подключён: добавьте ключ в «Настройки → OpenRouter».")
@@ -544,6 +560,11 @@ func (r *Runner) finish(t *turn, a *answer, start time.Time, out *stream) {
 	}
 	if msg.Text == "" && msg.Error == "" {
 		msg.Error = "Модель не вернула текст."
+	}
+	if t.model.Source == "chatgpt" && r.ChatGPTLimits != nil {
+		if l := r.ChatGPTLimits(); l != nil {
+			out.send("limits", l)
+		}
 	}
 	saved, err := r.Chats.Update(t.chat.ID, func(c *chats.Chat) error {
 		c.Messages = append(c.Messages, msg)

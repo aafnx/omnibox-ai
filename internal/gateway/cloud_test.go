@@ -69,6 +69,32 @@ func TestExposedCloudModelsBypassTheLocalEngine(t *testing.T) {
 	}
 }
 
+type gptCloud struct{ fakeCloud }
+
+func (c *gptCloud) Forward(ctx context.Context, model string, body map[string]any) (*http.Response, error) {
+	return nil, statusErr{http.StatusUnauthorized}
+}
+
+type statusErr struct{ status int }
+
+func (e statusErr) Error() string   { return "Войдите в ChatGPT" }
+func (e statusErr) HTTPStatus() int { return e.status }
+
+// ChatGPT models are listed as OpenAI's, and their refusals are explained in English.
+func TestChatGPTModelsInTheAPI(t *testing.T) {
+	f := newFixture(t, nil)
+	f.g.Cloud = &gptCloud{fakeCloud{models: []string{"chatgpt/gpt-5.5"}}}
+	f.g.Invalidate()
+	resp, list := f.request("/v1/models", nil, nil)
+	if resp.StatusCode != 200 || !strings.Contains(mustJSON(list), `"id":"chatgpt/gpt-5.5","object":"model","owned_by":"openai"`) {
+		t.Fatalf("%d %s", resp.StatusCode, mustJSON(list))
+	}
+	resp, out := f.request("/v1/chat/completions", chat("chatgpt/gpt-5.5"), nil)
+	if resp.StatusCode != 401 || !strings.Contains(mustJSON(out), "ChatGPT request failed: the ChatGPT account is not signed in") || strings.Contains(mustJSON(out), "Войдите") {
+		t.Fatalf("%d %s", resp.StatusCode, mustJSON(out))
+	}
+}
+
 func TestPanelChatGoesThroughTheQueueWithoutKey(t *testing.T) {
 	f := newFixture(t, nil)
 	body, _ := json.Marshal(map[string]any{"model": "ornith-27b", "stream": true, "messages": []any{map[string]any{"role": "user", "content": "привет"}}})

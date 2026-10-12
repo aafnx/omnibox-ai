@@ -1,6 +1,7 @@
 // Package library is the panel's single list of models: the local ones of PrismML and Ollama
-// (read from disk, so a stopped engine still shows its models) and OpenRouter's, with the
-// owner's favourites, saved settings and each model's capabilities and reasoning profile.
+// (read from disk, so a stopped engine still shows its models), OpenRouter's and the ChatGPT
+// subscription's, with the owner's favourites, saved settings and each model's capabilities and
+// reasoning profile.
 package library
 
 import (
@@ -10,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/aafnx/omnibox-ai/internal/chatgpt"
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/engine"
 	"github.com/aafnx/omnibox-ai/internal/openrouter"
@@ -31,10 +33,10 @@ type Caps struct {
 
 // Model is one entry of the list.
 type Model struct {
-	Key      string `json:"key"`    // prismml:<file>, ollama:<name>, cloud:<id>
-	Source   string `json:"source"` // local or cloud
-	Engine   string `json:"engine"` // prismml, ollama or openrouter
-	ID       string `json:"id"`     // file path, Ollama name or OpenRouter id
+	Key      string `json:"key"`    // prismml:<file>, ollama:<name>, cloud:<id>, chatgpt:<id>
+	Source   string `json:"source"` // local, cloud or chatgpt
+	Engine   string `json:"engine"` // prismml, ollama, openrouter or chatgpt
+	ID       string `json:"id"`     // file path, Ollama name, OpenRouter or ChatGPT id
 	Name     string `json:"name"`
 	Provider string `json:"provider,omitempty"`
 	File     string `json:"file,omitempty"`
@@ -154,6 +156,37 @@ func Cloud(cfg *config.Config, models []openrouter.Model) []Model {
 			Reasoning: c.Reasoning, Page: "https://openrouter.ai/" + c.ID})
 	}
 	sort.SliceStable(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
+	return out
+}
+
+// ChatGPT turns the subscription's models into list entries. They always reason; the depth
+// is one of the model's levels, and the chat shows the summary of the reasoning.
+func ChatGPT(cfg *config.Config, models []chatgpt.Model) []Model {
+	out := make([]Model, 0, len(models))
+	for _, c := range models {
+		if !config.ValidChatGPTModel(c.ID) {
+			continue
+		}
+		key := "chatgpt:" + c.ID
+		p := reasoning.Profile{Mode: reasoning.ModeAlways, Default: c.Default, Show: reasoning.ShowSummary}
+		for _, e := range reasoning.Efforts {
+			if slices.Contains(c.Efforts, e) {
+				p.Efforts = append(p.Efforts, e)
+			}
+		}
+		if !slices.Contains(p.Efforts, p.Default) {
+			p.Default = ""
+			if len(p.Efforts) > 0 {
+				p.Default = p.Efforts[0]
+			}
+		}
+		if len(p.Efforts) == 0 {
+			p.Default = reasoning.StepAuto
+		}
+		out = append(out, Model{Key: key, Source: "chatgpt", Engine: "chatgpt", ID: c.ID, Name: c.Name, Provider: "OpenAI",
+			Favorite: slices.Contains(cfg.Favorites, key), Caps: Caps{Vision: c.Images, Reasoning: true}, Reasoning: p,
+			Alias: chatgpt.Prefix + c.ID, Page: "https://chatgpt.com/"})
+	}
 	return out
 }
 

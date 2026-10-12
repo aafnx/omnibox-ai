@@ -134,22 +134,23 @@ const curModel=()=>modelByKey(C.chosen);
 async function startLocal(m){if(C.starting)return;C.starting=true;loadBegin(m);renderBusy(`Запускаем ${m.name}`);
   try{const op=await operation({action:'model-start',model:m.key},{quiet:true});if(op.state==='failed')return;await refreshLibrary();}finally{C.starting=false;loadEnd();renderBusy();}}
 function renderBusy(text){byId('model-busy').hidden=!text;if(text)byId('model-busy-text').textContent=text;byId('send').disabled=!!text&&!C.busy;}
-function pickerItem(m){const pill=m.source==='cloud'?`<span class="pill sky">${price(m.prompt_usd)} / ${price(m.completion_usd)}</span>`:m.running?'<span class="pill ok">Работает</span>':'<span class="pill">Локальная</span>';
+function pickerItem(m){const pill=m.source==='cloud'?`<span class="pill sky">${price(m.prompt_usd)} / ${price(m.completion_usd)}</span>`:m.source==='chatgpt'?'<span class="pill iris">Подписка</span>':m.running?'<span class="pill ok">Работает</span>':'<span class="pill">Локальная</span>';
   return `<button type="button" data-pick-model="${esc(m.key)}"${m.key===C.chosen?' aria-current="true"':''}><b>${m.favorite?'★ ':''}${esc(m.name)}</b>${pill}${capIcons(m)}</button>`;}
 function renderPicker(){const m=curModel();const btn=byId('picker-btn');
-  btn.innerHTML=`${m?.source==='cloud'?'<svg class="i i15"><use href="#i-cloud"/></svg>':`<span class="dot${m?.running?'':' off'}"></span>`}<span class="pname">${esc(m?.name||'Выберите модель')}</span><svg class="i i15"><use href="#i-down"/></svg>`;
+  btn.innerHTML=`${m?.source==='cloud'||m?.source==='chatgpt'?'<svg class="i i15"><use href="#i-cloud"/></svg>':`<span class="dot${m?.running?'':' off'}"></span>`}<span class="pname">${esc(m?.name||'Выберите модель')}</span><svg class="i i15"><use href="#i-down"/></svg>`;
   if(byId('picker-menu').hidden)return;
   const q=C.pickerQ.toLowerCase(),match=x=>!q||(x.name+' '+x.id).toLowerCase().includes(q);const all=models().filter(match);
   const grp=(title,list)=>{if(!list.length)return '';const key='p:'+title;const shut=!q&&collapsed.has(key);return `<button type="button" class="grp-btn h4" data-grp="${key}" aria-expanded="${!shut}"><span>${title}</span><span class="grp-n">${list.length}</span><svg class="i chev${shut?' shut':''}"><use href="#i-down"/></svg></button>${shut?'':list.map(pickerItem).join('')}`;};
   const cloudOff=!S.cloud?.connected?'<div class="note">OpenRouter не подключён: <a href="#settings" data-go="settings" data-jump-after="s-cloud" class="ink">добавить ключ</a>.</div>':'';
-  setHTML(byId('picker-list'),(grp('Избранные',all.filter(x=>x.favorite))+grp('Локальные модели',all.filter(x=>!x.favorite&&x.source==='local'))+grp('OpenRouter',all.filter(x=>!x.favorite&&x.source==='cloud'))||'<div class="note">Ничего не найдено</div>')+cloudOff);
-  byId('picker-note').textContent=m?.source==='cloud'?'Облачная модель: запрос уходит в OpenRouter, локальная модель продолжает работать.':'Другая локальная модель запустится вместо текущей, это займёт 10–60 секунд.';}
+  const gptOff=!S.library?.chatgpt?.connected?'<div class="note">ChatGPT не подключён: <a href="#settings" data-go="settings" data-jump-after="s-gpt" class="ink">войти по подписке</a>.</div>':'';
+  setHTML(byId('picker-list'),(grp('Избранные',all.filter(x=>x.favorite))+grp('Локальные модели',all.filter(x=>!x.favorite&&x.source==='local'))+grp('ChatGPT',all.filter(x=>!x.favorite&&x.source==='chatgpt'))+grp('OpenRouter',all.filter(x=>!x.favorite&&x.source==='cloud'))||'<div class="note">Ничего не найдено</div>')+gptOff+cloudOff);
+  byId('picker-note').textContent=m?.source==='cloud'?'Облачная модель: запрос уходит в OpenRouter, локальная модель продолжает работать.':m?.source==='chatgpt'?'Модель подписки ChatGPT: запрос уходит в OpenAI и расходует лимиты подписки; локальная модель продолжает работать.':'Другая локальная модель запустится вместо текущей, это займёт 10–60 секунд.';}
 // ── context: how much of the model's window the chat fills ──
 // The window is the context the local model runs with (or will start with), or the cloud model's limit.
 // The fill is what the last answer's request held, as the engine counted it; chats from before 0.22
 // have no such count and get an estimate from the text.
 const tk=(n,k=1024)=>{const f=(v,u)=>v.toFixed(1).replace(/\.0$/,'').replace('.',',')+u;return n>=k*k?f(n/(k*k),'M'):n>=k?f(n/k,'K'):String(n);};
-function ctxWindow(m){if(!m)return 0;if(m.source==='cloud')return m.context||0;
+function ctxWindow(m){if(!m)return 0;if(m.source==='cloud')return m.context||0;if(m.source==='chatgpt')return 0;
   const b=(S.status?.backends||[]).find(x=>x.name===m.engine);if(m.running&&b?.active_context)return b.active_context;return curCtx(m)||m.context||0;}
 function ctxUsed(){const msgs=C.chat?.messages||[];
   for(let i=msgs.length-1;i>=0;i--){const n=msgs[i].meta?.context_tokens;if(n)return {n,est:false};}
@@ -166,6 +167,10 @@ function renderCtxMeter(){const i=ctxInfo(),w=byId('ctx-wrap');w.hidden=!i;if(!i
     <dl class="ctxkv"><dt>Длина контекста</dt><dd>${t(i.total)}</dd><dt>Занято</dt><dd>${i.est?'≈ ':''}${t(i.used)}</dd><dt>Осталось</dt><dd>${i.est?'≈ ':''}${t(i.left)}</dd></dl>
     <span class="hint">${i.m.source==='cloud'?'Предел модели в OpenRouter.':i.m.running?'С этой длиной модель запущена; изменить — «Модели → Настроить».':'С этой длиной модель запустится; изменить — «Модели → Настроить».'} Занято — история чата, инструкции ассистента и файлы${i.est?'; это оценка по тексту — точное число появится после следующего ответа':' по последнему ответу модели'}.${i.pct>=70?' Ближе к 100% начните новый чат: длинную историю модель может не принять или забыть её начало.':''}</span>`);}
 function renderFoot(){const m=curModel();const f=byId('chat-foot');renderCtxMeter();
+  if(m?.source==='chatgpt'){const l=S.gptLimits,short=gptShort(l),hot=gptWindows(l).some(w=>w.used_percent>=90)||l?.reached;
+    f.innerHTML=`<a class="cloudnote${hot?' warn-text':''}" href="#settings" data-go="settings" data-jump-after="s-gpt" title="Лимиты подписки ChatGPT по данным OpenAI — открыть настройки"><svg class="i"><use href="#i-cloud"/></svg>ChatGPT${short?' · '+esc(short):' · лимиты подписки'}</a><span class="sep"> · </span><span class="disc">ИИ может ошибаться — проверяйте важное.</span>`;
+    if(!l&&!C.gptAsked&&S.library?.chatgpt?.connected){C.gptAsked=true;refreshGpt(true).then(()=>{if(curModel()?.source==='chatgpt')renderFoot();}).catch(()=>{});}
+    return;}
   if(m?.source!=='cloud'){f.textContent='ИИ может ошибаться — проверяйте важное.';return;}
   const hist=(C.chat?.messages||[]).reduce((n,x)=>n+(x.text||'').length,0)/3+(byId('prompt').value.length/3)+300;const est=(hist*m.prompt_usd+500*m.completion_usd)/1e6;
   f.innerHTML=`<span class="cloudnote" title="Оценка: история чата ≈${fmtN(Math.round(hist))} токенов на входе и ≈500 в ответе. Точная стоимость придёт от OpenRouter после ответа."><svg class="i"><use href="#i-cloud"/></svg>OpenRouter · ≈${money(Math.max(est,0))} за ответ</span><span class="sep"> · </span><span class="disc">ИИ может ошибаться — проверяйте важное.</span>`;}
@@ -269,6 +274,7 @@ async function consume(r,s){const reader=r.body.getReader(),dec=new TextDecoder(
       else if(ev==='read'){s.trace.push(`<span class="status-line"><svg class="i i15"><use href="#i-file"/></svg>Читаю: ${esc(hostOf(v.url)||v.url)}</span>`);}
       else if(ev==='sources'){s.sources=v||[];}
       else if(ev==='status'){s.status=v.text;}
+      else if(ev==='limits'){S.gptLimits=v;if(curModel()?.source==='chatgpt')renderFoot();}
       else if(ev==='done'){s.done=v;}
       schedulePaint(s);}}}
 function newStream(chat,opts){const s={chat,opts,again:opts.retry||opts.edit||'',answer:'',thinking:'',sources:[],trace:[],status:'',err:'',userMessage:null,done:null,ctrl:new AbortController(),el:null,pending:0};

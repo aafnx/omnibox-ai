@@ -134,11 +134,11 @@
     <!-- ── MODELS ── -->
     <section id="models" class="page" data-page hidden>
       <div class="head">
-        <div><h1>Модели</h1><p>Модели на этом ПК и в OpenRouter. Локальную можно запустить — прежняя остановится сама; облачные работают сразу.</p></div>
+        <div><h1>Модели</h1><p>Модели на этом ПК, в OpenRouter и в подписке ChatGPT. Локальную можно запустить — прежняя остановится сама; облачные работают сразу.</p></div>
         <button class="btn primary" type="button" id="add-open"><svg class="i"><use href="#i-plus"/></svg>Добавить модель</button>
       </div>
       <div class="filters">
-        <div class="seg" role="group" aria-label="Где" id="engine-filter"><button type="button" aria-pressed="true" data-engine="all">Все</button><button type="button" aria-pressed="false" data-engine="local">Локальные</button><button type="button" aria-pressed="false" data-engine="cloud">OpenRouter</button><button type="button" aria-pressed="false" data-engine="fav"><svg class="i i14 lbl-mid"><use href="#i-star"/></svg> Избранные</button></div>
+        <div class="seg" role="group" aria-label="Где" id="engine-filter"><button type="button" aria-pressed="true" data-engine="all">Все</button><button type="button" aria-pressed="false" data-engine="local">Локальные</button><button type="button" aria-pressed="false" data-engine="cloud">OpenRouter</button><button type="button" aria-pressed="false" data-engine="chatgpt">ChatGPT</button><button type="button" aria-pressed="false" data-engine="fav"><svg class="i i14 lbl-mid"><use href="#i-star"/></svg> Избранные</button></div>
         <div class="seg" role="group" aria-label="Умеет" id="cap-filter">
           <button type="button" aria-pressed="false" data-cap="vision">Изображения</button>
           <button type="button" aria-pressed="false" data-cap="reasoning">Рассуждения</button>
@@ -188,7 +188,7 @@
       <div class="head"><div><h1>Настройки</h1><p>Подключение клиентов, веб-поиск, хранение данных и обновления.</p></div></div>
       <div class="settings">
         <nav class="sub-nav" aria-label="Разделы настроек">
-          <a href="#settings" data-jump="s-api">Подключение</a><a href="#settings" data-jump="s-chat">Чат</a><a href="#settings" data-jump="s-search">Веб-поиск</a><a href="#settings" data-jump="s-cloud">OpenRouter</a><a href="#settings" data-jump="s-assist">Ассистенты</a>
+          <a href="#settings" data-jump="s-api">Подключение</a><a href="#settings" data-jump="s-chat">Чат</a><a href="#settings" data-jump="s-search">Веб-поиск</a><a href="#settings" data-jump="s-cloud">OpenRouter</a><a href="#settings" data-jump="s-gpt">ChatGPT</a><a href="#settings" data-jump="s-assist">Ассистенты</a>
           <a href="#settings" data-jump="s-data">Данные и хранение</a><a href="#settings" data-jump="s-sleep">Сон и пробуждение</a>
           <a href="#settings" data-jump="s-update">Обновления</a><a href="#settings" data-jump="s-panel">Панель</a>
         </nav>
@@ -256,6 +256,37 @@
                 <div class="line"><div><b>Список моделей</b><div class="small muted" id="or-fetched">Обновляется при открытии раздела «Модели», не чаще раза в час.</div></div><button class="btn sm" type="button" id="or-refresh">Обновить</button></div>
                 <div class="line"><span class="muted small" id="or-keyinfo"></span><button class="btn ghost sm danger-text" type="button" id="or-disconnect">Отключить и удалить ключ</button></div>
               </div>
+            </div></div>
+          <div class="panel" id="s-gpt"><header><h2>ChatGPT</h2><span class="pill" id="gpt-state">Не подключено</span></header>
+            <div class="body">
+              <div id="gpt-setup" class="stack14" hidden>
+                <p class="small muted">Подписка ChatGPT (Plus, Pro, Business и другие) подключается через официальный <a class="ink" href="https://github.com/openai/codex" target="_blank" rel="noopener noreferrer">Codex app-server</a> от OpenAI с открытым кодом. OmniBox скачивает его из выпусков OpenAI на GitHub, проверяет контрольную сумму и запускает только на время ответов. Codex здесь — только модель: он не получает ни команд, ни файлов, ни инструментов, а любая его попытка что-то выполнить останавливает ответ.</p>
+                <div class="flexrow"><button class="btn primary" type="button" id="gpt-install">Установить Codex</button><span class="small muted" id="gpt-install-msg"></span></div>
+                <div class="meter" id="gpt-install-meter" hidden><i></i></div>
+              </div>
+              <div id="gpt-signin" class="stack14" hidden>
+                <p class="small muted">Войдите в аккаунт ChatGPT по одноразовому коду: откройте страницу OpenAI на любом устройстве, войдите и введите код. Пароль от ChatGPT OmniBox не видит; вход хранится на этом ПК в каталоге данных, доступном только службе.</p>
+                <button class="btn primary self-start" type="button" id="gpt-login">Войти в ChatGPT</button>
+                <div class="gptcode" id="gpt-code" hidden>
+                  <span class="small muted">1. Откройте страницу входа</span><a class="btn sm" id="gpt-url" href="#" target="_blank" rel="noopener noreferrer">Открыть ↗</a>
+                  <span class="small muted">2. Введите код</span><span class="flexrow"><b class="mono codebig" id="gpt-code-v"></b><button class="btn ghost sm" type="button" id="gpt-code-copy" title="Скопировать код" aria-label="Скопировать код"><svg class="i"><use href="#i-copy"/></svg></button></span>
+                  <span class="hint" id="gpt-code-hint"></span><button class="btn ghost sm" type="button" id="gpt-login-cancel">Отменить</button>
+                </div>
+              </div>
+              <div id="gpt-on" class="stack14" hidden>
+                <div class="kv" id="gpt-kv"></div>
+                <div class="kv keylim" id="gpt-more" hidden></div>
+                <div class="warnbox" id="gpt-warn" hidden></div>
+                <div class="orlinks" aria-label="Быстрые ссылки ChatGPT">
+                  <a class="btn sm" href="https://chatgpt.com/codex/settings/usage" target="_blank" rel="noopener noreferrer">Использование ↗</a>
+                  <a class="btn sm" href="https://chatgpt.com/#settings/Account" target="_blank" rel="noopener noreferrer">Аккаунт и подписка ↗</a>
+                </div>
+                <div class="line"><div><b>Лимиты</b><div class="small muted" id="gpt-limits-when">Обновляются после каждого ответа и при открытии этого раздела.</div></div><button class="btn sm" type="button" id="gpt-refresh">Обновить</button></div>
+                <div class="line"><div><b>Модели подписки</b><div class="small muted" id="gpt-models"></div></div></div>
+                <div class="line"><div><b>Показывать в API OmniBox</b><div class="small muted">Jan, Pi и другие клиенты увидят модели подписки как <span class="mono">chatgpt/&lt;модель&gt;</span>. Их запросы расходуют лимиты вашей подписки — включайте, только если API пользуетесь вы сами.</div></div><label class="switch"><input type="checkbox" id="gpt-expose" aria-label="Показывать модели ChatGPT в API"><span></span></label></div>
+                <div class="line"><span class="muted small" id="gpt-account-info"></span><button class="btn ghost sm danger-text" type="button" id="gpt-logout">Выйти из аккаунта</button></div>
+              </div>
+              <div class="line" id="gpt-version" hidden><span class="muted small" id="gpt-version-v"></span><span class="flexrow"><button class="btn ghost sm" type="button" id="gpt-update">Обновить Codex</button><button class="btn ghost sm danger-text" type="button" id="gpt-remove">Удалить Codex и вход</button></span></div>
             </div></div>
           <div class="panel" id="s-assist"><header><h2>Ассистенты</h2><button class="btn sm primary" type="button" data-asst-new><svg class="i i15"><use href="#i-plus"/></svg>Новый ассистент</button></header>
             <div class="body">

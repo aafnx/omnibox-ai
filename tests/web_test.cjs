@@ -374,6 +374,26 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.equal(J(`keyLimits({limit:1,limit_remaining:1,usage:0,expires_at:'${new Date(t0+5*3600000).toISOString()}'},${t0})`).ttl,'осталось 5 часов');
   run("renderKeyLimits({limit:5,limit_remaining:4,limit_reset:'weekly',usage:1})");assert.equal(nodes['or-keylim'].hidden,false);assert.ok(nodes['or-keylim'].innerHTML.includes('$5,00 в неделю')&&nodes['or-keylim'].innerHTML.includes('data-w="20%"'));
 
+  // ChatGPT: windows are named by their length, resets counted down; the section shows the account and limits.
+  assert.equal(run("gptWin({window_minutes:300})"),'5 часов');assert.equal(run("gptWin({window_minutes:10080})"),'Неделя');assert.equal(run("gptWin({window_minutes:1440})"),'1 день');
+  assert.equal(run(`gptReset({resets_at:'${new Date(t0+130*60000).toISOString()}'},${t0})`),'сброс через 2 ч 10 мин');assert.equal(run(`gptReset({resets_at:'${new Date(t0-1000).toISOString()}'},${t0})`),'сбрасывается');
+  const gl="{plan:'plus',primary:{used_percent:42,window_minutes:300},secondary:{used_percent:95,window_minutes:10080},others:[{id:'gpt-6-astra',name:'GPT-6-Astra',primary:{used_percent:10,window_minutes:300}}],credits:{has_credits:true,unlimited:false,balance:'12.50'},updated:'2026-10-12T10:00:00Z'}";
+  assert.equal(run(`gptShort(${gl})`),'5 часов: 42% · Неделя: 95%');
+  run(`S.gpt={signed_in:true,expose_api:true,models:[{id:'gpt-5.5',name:'GPT-5.5'}],status:{installed:true,version:'rust-v0.162.1',account:{email:'o@example.com',plan:'plus'},limits:${gl}}};renderGpt()`);
+  assert.equal(nodes['gpt-on'].hidden,false);assert.equal(nodes['gpt-setup'].hidden,true);assert.equal(nodes['gpt-signin'].hidden,true);assert.equal(nodes['gpt-state'].textContent,'Подключено');
+  const kv=nodes['gpt-kv'].innerHTML;assert.ok(kv.includes('o@example.com')&&kv.includes('ChatGPT Plus')&&kv.includes('<b>42%</b>')&&kv.includes('израсходовано')&&kv.includes('data-w="95%"')&&kv.includes('meter err'),kv);
+  assert.ok(nodes['gpt-more'].innerHTML.includes('GPT-6-Astra · 5 часов')&&nodes['gpt-more'].innerHTML.includes('12.50'));assert.equal(nodes['gpt-expose'].checked,true);assert.equal(nodes['gpt-models'].textContent,'GPT-5.5');
+  // Not signed in: a code to enter on OpenAI's page; nothing is installed: the download.
+  run(`S.gpt={signed_in:false,models:[],status:{installed:true,version:'v',login:{url:'https://auth.openai.com/codex/device',code:'ABCD-1234',expires:'2026-10-12T10:15:00Z'}}};renderGpt()`);
+  assert.equal(nodes['gpt-code'].hidden,false);assert.equal(nodes['gpt-code-v'].textContent,'ABCD-1234');assert.equal(nodes['gpt-url'].href,'https://auth.openai.com/codex/device');assert.equal(nodes['gpt-on'].hidden,true);
+  run(`S.gpt={signed_in:false,models:[],status:{installed:false,installing:{running:true,done:50,total:200}}};renderGpt()`);
+  assert.equal(nodes['gpt-setup'].hidden,false);assert.equal(nodes['gpt-install'].disabled,true);assert.ok(nodes['gpt-install-msg'].textContent.includes('25%'),nodes['gpt-install-msg'].textContent);
+  // In the chat: a group of its own, a "subscription" pill and the limits under the message box.
+  run(`S.library.chatgpt={connected:true};S.library.models.push({key:'chatgpt:gpt-5.5',source:'chatgpt',engine:'chatgpt',id:'gpt-5.5',name:'GPT-5.5',caps:{vision:true,reasoning:true},reasoning:{mode:'always',efforts:['low','high'],default:'low'}});S.gptLimits=${gl}`);
+  assert.ok(run("pickerItem(modelByKey('chatgpt:gpt-5.5'))").includes('Подписка'));
+  run("C.chosen='chatgpt:gpt-5.5';renderFoot()");assert.ok(nodes['chat-foot'].innerHTML.includes('ChatGPT · 5 часов: 42% · Неделя: 95%')&&nodes['chat-foot'].innerHTML.includes('warn-text'),nodes['chat-foot'].innerHTML);
+  run("M.engineF='chatgpt';renderModels()");assert.ok(nodes['model-list'].innerHTML.includes('по подписке')&&!nodes['model-list'].innerHTML.includes('Локальные модели'));run("M.engineF='all';C.chosen=''");
+
   // The navigation folds to icons and remembers it in this browser.
   run('setRail(true)');assert.equal(nodes.app.classList.contains('rail'),true);assert.equal(store.get('omnibox-rail'),'1');assert.equal(nodes['nav-fold'].title,'Развернуть меню');
   run('setRail(false)');assert.equal(nodes.app.classList.contains('rail'),false);assert.equal(store.get('omnibox-rail'),'');

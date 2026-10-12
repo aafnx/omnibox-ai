@@ -131,3 +131,53 @@ func TestLibraryFavorites(t *testing.T) {
 		t.Fatalf("%d %s", w.Code, w.Body)
 	}
 }
+
+// ChatGPT's models reach /v1 only with the option on and an account signed in, from the list
+// Codex gave last: listing them never starts Codex.
+func TestChatGPTModelsReachV1OnlyWhenAllowed(t *testing.T) {
+	c, data := chatRig(t)
+	route := cloudRoute{c}
+	r := httptest.NewRequest(http.MethodGet, "/api/chatgpt", nil)
+	w := httptest.NewRecorder()
+	c.serveChatGPT(w, r)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"installed":false`) || !strings.Contains(w.Body.String(), `"signed_in":false`) {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if w := post(http.HandlerFunc(c.serveChatGPT), "/api/chatgpt", `{"action":"settings","expose_api":true}`); w.Code != 200 || !c.Store.Get().ChatGPTSettings().ExposeAPI {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if len(route.Models()) != 0 {
+		t.Fatal("exposed without Codex and a sign-in")
+	}
+	// Codex installed, signed in, its model list kept.
+	dir := filepath.Join(data, "chatgpt")
+	os.MkdirAll(filepath.Join(dir, "app"), 0o700)
+	os.MkdirAll(filepath.Join(dir, "home"), 0o700)
+	os.WriteFile(filepath.Join(dir, "app", "codex-app-server"), []byte("x"), 0o755)
+	os.WriteFile(filepath.Join(dir, "app", ".omnibox-codex.json"), []byte(`{"tag":"rust-v1","executable":"codex-app-server"}`), 0o600)
+	os.WriteFile(filepath.Join(dir, "home", "auth.json"), []byte("{}"), 0o600)
+	os.WriteFile(filepath.Join(dir, "models.json"), []byte(`[{"id":"gpt-5.5","name":"GPT-5.5","images":true}]`), 0o600)
+	if m := route.Models(); len(m) != 1 || m[0] != "chatgpt/gpt-5.5" {
+		t.Fatal(m)
+	}
+	models, _, _ := c.models(context.Background(), true)
+	found := false
+	for _, m := range models {
+		found = found || m.Key == "chatgpt:gpt-5.5"
+	}
+	if !found || c.GPT.Quick().Running {
+		t.Fatalf("listed %v, running %v", found, c.GPT.Quick().Running)
+	}
+	if _, err := route.Forward(context.Background(), "chatgpt/other", map[string]any{}); err == nil {
+		t.Fatal("a model outside the list is refused")
+	}
+	if w := post(http.HandlerFunc(c.serveChatGPT), "/api/chatgpt", `{"action":"settings","expose_api":false}`); w.Code != 200 || len(route.Models()) != 0 {
+		t.Fatal("still exposed")
+	}
+	if w := post(http.HandlerFunc(c.serveChatGPT), "/api/chatgpt", `{"action":"remove"}`); w.Code != 200 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "home", "auth.json")); err == nil {
+		t.Fatal("the sign-in is removed with Codex")
+	}
+}

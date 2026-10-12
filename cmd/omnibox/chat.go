@@ -14,6 +14,8 @@ import (
 	"strings"
 	"time"
 
+	omnibox "github.com/aafnx/omnibox-ai"
+	"github.com/aafnx/omnibox-ai/internal/chatgpt"
 	"github.com/aafnx/omnibox-ai/internal/chatrun"
 	"github.com/aafnx/omnibox-ai/internal/chats"
 	"github.com/aafnx/omnibox-ai/internal/config"
@@ -40,7 +42,9 @@ type chatSide struct {
 	Spend      *openrouter.Spend
 	Chats      *chats.Store
 	Assistants *chats.Assistants
-	Logf       func(format string, args ...any)
+	// GPT is the ChatGPT subscription through Codex's app-server.
+	GPT  *chatgpt.Service
+	Logf func(format string, args ...any)
 }
 
 func newChatSide(data string, store *config.Store, services platform.Services, controller *control.Controller, estimates estimator) *chatSide {
@@ -50,8 +54,25 @@ func newChatSide(data string, store *config.Store, services platform.Services, c
 		Chats:      &chats.Store{Dir: filepath.Join(data, "chats")},
 		Assistants: &chats.Assistants{Path: filepath.Join(data, "assistants.json")}}
 	c.Catalog = &openrouter.Catalog{Path: filepath.Join(data, filepath.FromSlash(openrouter.CatalogFile)), Client: c.client}
+	c.GPT = &chatgpt.Service{Dir: filepath.Join(data, chatgpt.Dir), Version: omnibox.Version, Logf: c.logf}
 	return c
 }
+
+// gptModels is the subscription's model list: kept from Codex's last run, else asked (which
+// starts Codex). Nothing without a sign-in.
+func (c *chatSide) gptModels(ctx context.Context) ([]chatgpt.Model, error) {
+	if !c.GPT.SignedIn() {
+		return nil, nil
+	}
+	if list := c.GPT.CachedModels(); list != nil {
+		return list, nil
+	}
+	return c.GPT.Models(ctx)
+}
+
+// gptContext is the history budget of a ChatGPT model: Codex does not list the window, and
+// compacts a thread that outgrows it.
+const gptContext = 200_000
 
 // client is the OpenRouter client with the saved key, or nil without one.
 func (c *chatSide) client() *openrouter.Client {
@@ -89,6 +110,13 @@ func (c *chatSide) models(ctx context.Context, cloud bool) ([]library.Model, lib
 		list, _, err = c.Catalog.Get(ctx, false)
 		out = append(out, library.Cloud(cfg, list)...)
 	}
+	if cloud {
+		list, gerr := c.gptModels(ctx)
+		if gerr != nil {
+			c.logf("chatgpt models: %v", gerr)
+		}
+		out = append(out, library.ChatGPT(cfg, list)...)
+	}
 	return out, run, err
 }
 
@@ -99,6 +127,19 @@ func (c *chatSide) modelInfo(ctx context.Context, key string) (library.Model, in
 		return library.Model{}, 0, errors.New("Выберите модель.")
 	}
 	cfg := c.Store.Get()
+	if name == "chatgpt" {
+		list, err := c.gptModels(ctx)
+		if err != nil {
+			return library.Model{}, 0, err
+		}
+		if list == nil {
+			return library.Model{}, 0, chatgpt.ErrSignedOut
+		}
+		if m, ok := library.Find(library.ChatGPT(cfg, list), key); ok {
+			return m, gptContext, nil
+		}
+		return library.Model{}, 0, errors.New("Модели " + id + " нет в подписке ChatGPT.")
+	}
 	if name == "cloud" {
 		if c.client() == nil {
 			return library.Model{}, 0, errors.New("OpenRouter не подключён: добавьте ключ в «Настройки → OpenRouter».")
@@ -149,6 +190,13 @@ func (c *chatSide) runner(local func(ctx context.Context, session string, body [
 			}
 			return nil, errors.New("OpenRouter не подключён: добавьте ключ в «Настройки → OpenRouter».")
 		},
+		ChatGPT: c.GPT,
+		ChatGPTLimits: func() any {
+			if l := c.GPT.Quick().Limits; l != nil {
+				return l
+			}
+			return nil
+		},
 		Read: websearch.Reader{}.Read,
 		Search: func(ctx context.Context, q string) ([]websearch.Result, error) {
 			s := c.Store.Get().ChatSettings()
@@ -172,6 +220,7 @@ func (c *chatSide) handlers(local func(ctx context.Context, session string, body
 		"/api/chat/stop":      http.HandlerFunc(run.Stop),
 		"/api/library":        http.HandlerFunc(c.serveLibrary),
 		"/api/cloud":          http.HandlerFunc(c.serveCloud),
+		"/api/chatgpt":        http.HandlerFunc(c.serveChatGPT),
 		"/api/chat-settings":  http.HandlerFunc(c.serveSettings),
 	}
 }
@@ -214,8 +263,9 @@ func (c *chatSide) serveLibrary(w http.ResponseWriter, r *http.Request) {
 		vram, measured := c.Estimates.vram(ctx)
 		cancel()
 		out := map[string]any{"models": models, "running": run.Key, "start_model": cfg.Panel.StartModel,
-			"system": map[string]any{"vram_bytes": vram, "vram_measured": measured, "ram_bytes": telemetry.RAMTotal(), "desktop_vram_bytes": desktopVRAM},
-			"cloud":  map[string]any{"connected": c.client() != nil}}
+			"system":  map[string]any{"vram_bytes": vram, "vram_measured": measured, "ram_bytes": telemetry.RAMTotal(), "desktop_vram_bytes": desktopVRAM},
+			"cloud":   map[string]any{"connected": c.client() != nil},
+			"chatgpt": map[string]any{"connected": c.GPT.SignedIn()}}
 		if models == nil {
 			out["models"] = []library.Model{}
 		}
@@ -344,6 +394,82 @@ func (c *chatSide) serveCloud(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	reply(w, http.StatusOK, c.cloudView())
+}
+
+// serveChatGPT is the ChatGPT section: installing Codex, the sign-in with a device code, the
+// account and its limits (asked from OpenAI only with ?account=1 or "limits") and the settings.
+func (c *chatSide) serveChatGPT(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodGet {
+		out := c.gptView(c.GPT.Quick())
+		if r.URL.Query().Get("account") == "1" && c.GPT.Quick().Installed {
+			a, err := c.GPT.Account(r.Context())
+			if err == nil && a != nil {
+				_, err = c.GPT.Limits(r.Context())
+				if err == nil {
+					_, err = c.GPT.Models(r.Context())
+				}
+			}
+			out = c.gptView(c.GPT.Quick())
+			if err != nil {
+				out["error"] = err.Error()
+			}
+		}
+		reply(w, http.StatusOK, out)
+		return
+	}
+	if r.Method != http.MethodPost {
+		reply(w, http.StatusMethodNotAllowed, map[string]string{"error": "Метод запрещён."})
+		return
+	}
+	var in struct {
+		Action    string `json:"action"`
+		ExposeAPI *bool  `json:"expose_api"`
+	}
+	if err := body(r, &in); err != nil {
+		replyError(w, err)
+		return
+	}
+	var err error
+	switch in.Action {
+	case "install":
+		err = c.GPT.StartInstall()
+	case "login":
+		_, err = c.GPT.StartLogin(r.Context())
+	case "login-cancel":
+		err = c.GPT.CancelLogin(r.Context())
+	case "logout":
+		err = c.GPT.Logout(r.Context())
+	case "remove":
+		err = c.GPT.Remove()
+	case "limits":
+		if _, err = c.GPT.Limits(r.Context()); err == nil {
+			_, err = c.GPT.Account(r.Context())
+		}
+	case "settings":
+		err = c.Store.Update(func(cfg *config.Config) error {
+			s := cfg.ChatGPTSettings()
+			if in.ExposeAPI != nil {
+				s.ExposeAPI = *in.ExposeAPI
+			}
+			cfg.ChatGPT = &s
+			return nil
+		})
+	default:
+		err = errors.New("Неизвестное действие ChatGPT.")
+	}
+	if err != nil {
+		replyError(w, err)
+		return
+	}
+	reply(w, http.StatusOK, c.gptView(c.GPT.Quick()))
+}
+
+func (c *chatSide) gptView(st chatgpt.Status) map[string]any {
+	models := c.GPT.CachedModels()
+	if !c.GPT.SignedIn() || models == nil {
+		models = []chatgpt.Model{}
+	}
+	return map[string]any{"status": st, "signed_in": c.GPT.SignedIn(), "expose_api": c.Store.Get().ChatGPTSettings().ExposeAPI, "models": models}
 }
 
 func (c *chatSide) cloudView() map[string]any {
@@ -494,19 +620,31 @@ type cloudRoute struct{ c *chatSide }
 
 func (r cloudRoute) Models() []string {
 	cfg := r.c.Store.Get()
-	if !cfg.CloudSettings().ExposeAPI || r.c.client() == nil {
-		return nil
-	}
 	var out []string
-	for _, f := range cfg.Favorites {
-		if id, ok := strings.CutPrefix(f, "cloud:"); ok {
-			out = append(out, id)
+	if cfg.CloudSettings().ExposeAPI && r.c.client() != nil {
+		for _, f := range cfg.Favorites {
+			if id, ok := strings.CutPrefix(f, "cloud:"); ok {
+				out = append(out, id)
+			}
+		}
+	}
+	// The subscription's models, from the list Codex gave last: /v1/models never starts Codex.
+	if cfg.ChatGPTSettings().ExposeAPI && r.c.GPT.SignedIn() {
+		for _, m := range r.c.GPT.CachedModels() {
+			out = append(out, chatgpt.Prefix+m.ID)
 		}
 	}
 	return out
 }
 
 func (r cloudRoute) Forward(ctx context.Context, model string, body map[string]any) (*http.Response, error) {
+	if strings.HasPrefix(model, chatgpt.Prefix) {
+		if !slices.Contains(r.Models(), model) {
+			return nil, statusError{http.StatusNotFound, errors.New("model not available")}
+		}
+		data, _ := json.Marshal(body)
+		return r.c.GPT.Chat(ctx, data)
+	}
 	cl := r.c.client()
 	if cl == nil || !slices.Contains(r.Models(), model) {
 		return nil, statusError{http.StatusNotFound, errors.New("model not available")}

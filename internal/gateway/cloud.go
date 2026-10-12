@@ -14,8 +14,8 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/today"
 )
 
-// CloudRoute serves the OpenRouter models the owner chose to show to /v1 clients. Their requests
-// do not wait in the local queue: they use no memory of this PC.
+// CloudRoute serves the OpenRouter and ChatGPT models the owner chose to show to /v1 clients.
+// Their requests do not wait in the local queue: they use no memory of this PC.
 type CloudRoute interface {
 	// Models are the exposed model ids; empty while the option is off or no key is saved.
 	Models() []string
@@ -74,6 +74,10 @@ func (g *Gateway) cloudGenerate(w http.ResponseWriter, r *http.Request, model st
 		var se interface{ HTTPStatus() int }
 		if errors.As(err, &se) {
 			status = se.HTTPStatus()
+		}
+		if strings.HasPrefix(model, ChatGPTPrefix) {
+			fail(w, status, "ChatGPT request failed: "+englishChatGPTError(status, err))
+			return
 		}
 		fail(w, status, "OpenRouter request failed: "+englishCloudError(status))
 		return
@@ -144,6 +148,23 @@ func englishCloudError(status int) string {
 	return "upstream error."
 }
 
+// ChatGPTPrefix names the ChatGPT subscription's models among the cloud ones.
+const ChatGPTPrefix = "chatgpt/"
+
+func englishChatGPTError(status int, err error) string {
+	switch status {
+	case http.StatusBadRequest:
+		return err.Error()
+	case http.StatusUnauthorized:
+		return "the ChatGPT account is not signed in on the OmniBox panel."
+	case http.StatusNotFound:
+		return "the model is not available in the ChatGPT subscription."
+	case http.StatusServiceUnavailable:
+		return "ChatGPT is not available on this server right now."
+	}
+	return "upstream error."
+}
+
 // cloudList adds the exposed cloud models to a /v1/models answer.
 func (g *Gateway) cloudList() []map[string]any {
 	if g.Cloud == nil {
@@ -151,7 +172,11 @@ func (g *Gateway) cloudList() []map[string]any {
 	}
 	var out []map[string]any
 	for _, id := range g.Cloud.Models() {
-		out = append(out, map[string]any{"id": id, "object": "model", "owned_by": "openrouter"})
+		owner := "openrouter"
+		if strings.HasPrefix(id, ChatGPTPrefix) {
+			owner = "openai"
+		}
+		out = append(out, map[string]any{"id": id, "object": "model", "owned_by": owner})
 	}
 	return out
 }
