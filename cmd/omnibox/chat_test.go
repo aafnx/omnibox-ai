@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -205,6 +206,13 @@ func TestSearchEngineSettings(t *testing.T) {
 	c.serveSettings(w, r)
 	if !strings.Contains(w.Body.String(), `"search_ready":true`) || !strings.Contains(w.Body.String(), "…WXYZ") || strings.Contains(w.Body.String(), "tvly-") {
 		t.Fatalf("%s", w.Body)
+	}
+	// The chat lists only the engines it can switch to: Tavily has its key, the others nothing.
+	var view struct {
+		Engines map[string]bool `json:"search_engines"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &view); err != nil || !view.Engines["tavily"] || view.Engines["brave"] || view.Engines["sonar"] || view.Engines[""] || len(view.Engines) != 5 {
+		t.Fatalf("%v %v", view.Engines, err)
 	}
 	if w := post(h, "/api/chat-settings", `{"action":"search-key-forget","engine":"tavily"}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"search_ready":false`) {
 		t.Fatalf("%d %s", w.Code, w.Body)

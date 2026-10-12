@@ -244,14 +244,25 @@ func sonarModel(s config.Chat) string {
 }
 
 // searchReady tells whether the chosen engine can search: an address or a key is there.
-func (c *chatSide) searchReady(s config.Chat) bool {
-	switch s.SearchEngine {
+func (c *chatSide) searchReady(s config.Chat) bool { return c.engineReady(s, s.SearchEngine) }
+
+func (c *chatSide) engineReady(s config.Chat, engine string) bool {
+	switch engine {
 	case websearch.EngineSonar:
 		return c.client() != nil
 	case websearch.EnginePerplexity, websearch.EngineTavily, websearch.EngineBrave:
-		return c.SearchKeys.Get(s.SearchEngine) != ""
+		return c.SearchKeys.Get(engine) != ""
 	}
 	return s.SearchURL != ""
+}
+
+// searchEngines tells the chat which engines it may switch to: the set-up ones.
+func (c *chatSide) searchEngines(s config.Chat) map[string]bool {
+	out := map[string]bool{}
+	for _, e := range []string{websearch.EngineSearXNG, websearch.EnginePerplexity, websearch.EngineSonar, websearch.EngineTavily, websearch.EngineBrave} {
+		out[e] = c.engineReady(s, e)
+	}
+	return out
 }
 
 // handlers are the panel's routes of this side.
@@ -783,7 +794,7 @@ func (c *chatSide) settingsView() map[string]any {
 		"search_language": s.SearchLanguage, "search_default": s.SearchDefault, "site_icons": s.SiteIcons, "read_pages": !s.NoReadPages, "auto_title": !s.NoAutoTitle,
 		"follow_ups": s.FollowUps, "follow_up_model": s.FollowUpModel, "chats": len(list), "chats_bytes": size,
 		"search_engine": s.SearchEngine, "sonar_model": sonarModel(s), "sonar_models": openrouter.SonarModels, "plan_queries": !s.NoSearchPlan,
-		"search_keys": c.SearchKeys.Info(), "search_ready": c.searchReady(s), "openrouter": c.client() != nil, "chatgpt_search": c.openaiSearch(),
+		"search_keys": c.SearchKeys.Info(), "search_ready": c.searchReady(s), "search_engines": c.searchEngines(s), "openrouter": c.client() != nil, "chatgpt_search": c.openaiSearch(),
 		"voice_server": s.VoiceServer, "voice_model": s.VoiceModel}
 }
 

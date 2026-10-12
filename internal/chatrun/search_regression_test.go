@@ -90,3 +90,42 @@ func TestToolQueryCannotReplaceTheRequestedCity(t *testing.T) {
 		t.Fatalf("model's wrong city entered sources: %+v", sources)
 	}
 }
+
+// The owner's case: a local model wrote its tool call as text after a search had already found
+// sources. The retry tells it plainly there are no tools, and the model gets no tools again.
+func TestTextToolCallAfterSearchIsRetriedWithoutToolsAndRemembered(t *testing.T) {
+	g := newRig(t)
+	g.replies = []string{
+		sse(`{"choices":[{"delta":{"content":"<tool_call>{\"name\": \"web_search\", \"arguments\": {\"query\": \"погода Казань\"}}</tool_call>"}}]}`),
+		sse(`{"choices":[{"delta":{"content":"В Казани сегодня +8 °C [1]."}}]}`),
+		sse(`{"choices":[{"delta":{"content":"Завтра +6 °C [1]."}}]}`),
+	}
+	code, _ := g.send(Request{ChatID: g.chat.ID, Model: local.Key, Text: "Какая сегодня погода в Казани?", Web: true})
+	c, _ := g.r.Chats.Get(g.chat.ID)
+	if code != 200 || c.Messages[1].Error != "" || c.Messages[1].Text != "В Казани сегодня +8 °C [1]." {
+		t.Fatalf("%d %+v", code, c.Messages[1])
+	}
+	retry := g.bodies[1]["messages"].([]any)[0].(map[string]any)["content"].(string)
+	if strings.Contains(retry, toolsNote) || !strings.Contains(retry, plainNote) || g.bodies[1]["tools"] != nil {
+		t.Fatalf("the retry still speaks of tools: %s", retry)
+	}
+	g.send(Request{ChatID: g.chat.ID, Model: local.Key, Text: "А завтра?", Web: true})
+	next := g.bodies[2]
+	if next["tools"] != nil || !strings.Contains(next["messages"].([]any)[0].(map[string]any)["content"].(string), plainNote) {
+		t.Fatalf("a model that wrote calls as text is offered tools again: %v", next["tools"])
+	}
+}
+
+// Text the model wrote before a stray command is kept when it already answers the question.
+func TestAnswerBeforeStrayCommandIsKept(t *testing.T) {
+	g := newRig(t)
+	long := strings.Repeat("Погода в Казани сегодня ясная, днём до +8 °C, ночью около 0 °C [1]. ", 4)
+	g.replies = []string{sse(`{"choices":[{"delta":{"content":"` + long + `<tool_call>{\"name\":\"web_search\"}</tool_call>"}}]}`)}
+	if code, _ := g.send(Request{ChatID: g.chat.ID, Model: local.Key, Text: "Погода в Казани", Web: true}); code != 200 {
+		t.Fatal(code)
+	}
+	c, _ := g.r.Chats.Get(g.chat.ID)
+	if len(g.bodies) != 1 || c.Messages[1].Error != "" || !strings.HasPrefix(c.Messages[1].Text, "Погода в Казани") || strings.Contains(c.Messages[1].Text, "tool_call") {
+		t.Fatalf("requests %d, %+v", len(g.bodies), c.Messages[1])
+	}
+}
