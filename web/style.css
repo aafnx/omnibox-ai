@@ -699,7 +699,7 @@ details.step summary::after{content:"";width:6px;height:6px;border-right:1.5px s
 details.step[open] summary::after{transform:rotate(-135deg) translate(-1px,-1px)}
 /* Citations in the text: the source's site in a small chip. */
 a.cite{text-decoration:none}
-.cite .c{display:inline-block;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:1px;margin:0 2px;padding:0 7px;border-radius:99px;background:var(--surface2);border:1px solid var(--line);color:var(--muted);font-size:11px;line-height:18px;font-weight:500}
+.cite .c{display:inline-block;white-space:nowrap;vertical-align:baseline;margin:0 2px;padding:0 7px;border-radius:99px;background:var(--surface2);border:1px solid var(--line);color:var(--muted);font-size:11px;line-height:18px;font-weight:500}
 a.cite:hover .c{border-color:var(--iris-line);color:var(--iris-text)}
 /* Sources: one chip with the sites' badges; the list opens under it. */
 details.srcs{justify-self:start;max-width:100%;font-size:12.5px}
