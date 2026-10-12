@@ -190,10 +190,11 @@ func Load(path string) (*Config, error) {
 	return Parse(data)
 }
 
-// Parse decodes and validates config.json content; unknown fields are rejected.
+// Parse decodes and validates config.json content. Fields this version does not know are
+// skipped: they come from a newer version, and a rollback to this one must still start (the next
+// save drops them). Every known field is still validated.
 func Parse(data []byte) (*Config, error) {
 	dec := json.NewDecoder(bytes.NewReader(bytes.TrimPrefix(data, []byte("\xef\xbb\xbf"))))
-	dec.DisallowUnknownFields()
 	var c Config
 	if err := dec.Decode(&c); err != nil {
 		return nil, fmt.Errorf("Некорректный config.json: %v", err)
