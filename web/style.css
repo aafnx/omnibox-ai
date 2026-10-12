@@ -74,6 +74,7 @@ h2{font-size:15px;font-weight:600;margin:0}
 .field label,.label{font-size:12.5px;color:var(--muted);font-weight:500}
 input[type=text],input[type=search],input[type=url],select,textarea{width:100%;background:var(--field);border:1px solid var(--line-strong);border-radius:var(--r-s);padding:9px 11px;outline:none}
 input:focus,select:focus,textarea:focus{border-color:var(--iris)}
+select:disabled{opacity:.5;cursor:not-allowed}
 .hint{font-size:12.5px;color:var(--faint)}
 .switch{position:relative;width:36px;height:20px;flex:none}
 .switch input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
@@ -622,7 +623,7 @@ details.more{border-top:1px solid var(--line);padding-top:6px}
 .panel>.body,.stack,.stack8,.stack12,.stack14,.spend,.adv-stack{grid-template-columns:minmax(0,1fr)}
 .line>select{flex:0 1 auto;min-width:0;max-width:55%}.line>div:first-child{min-width:0}
 /* On a phone a list goes under its text, full width: squeezed beside it, it shows no choice. */
-@media (max-width:560px){.line:has(>select){flex-wrap:wrap}.line>select{flex:1 1 100%;max-width:none;width:100%}}
+@media (max-width:560px){.line:has(>select){flex-wrap:wrap}.line>select{flex:1 1 100%;max-width:none;width:100%}.pop .line:has(>select){flex-wrap:nowrap}.pop .line>select{flex:0 1 auto;max-width:60%;width:auto}}
 /* No browser triangles anywhere: disclosures draw their own chevron. */
 summary{list-style:none}summary::-webkit-details-marker{display:none}
 details.mini>summary{display:inline-flex;align-items:center;gap:6px;cursor:pointer;color:var(--muted);font-size:13px;padding:2px 0}

@@ -220,12 +220,26 @@ byId('think-pop').addEventListener('input',e=>{if(e.target.id!=='think-range')re
 
 // ── web search ──
 // Search is ready when the chosen engine is set up; a ChatGPT model may search with OpenAI's own.
+// The engine is switched right in the composer; ones that are not set up are listed but greyed out.
 const ENGINE_NAMES={'':'SearXNG',perplexity:'Perplexity',sonar:'Perplexity Sonar',tavily:'Tavily',brave:'Brave Search'};
+const ENGINE_ORDER=['','perplexity','sonar','tavily','brave'];
 function webMode(){const s=S.chatSettings||{},m=curModel();if(m?.source==='chatgpt'&&s.chatgpt_search)return 'openai';return s.search_ready?'engine':'';}
+function engineChoice(){const s=S.chatSettings||{},m=curModel(),ready=s.search_engines||{[s.search_engine||'']:!!s.search_ready};
+  const cur=webMode()==='openai'?'openai':s.search_engine||'',opt=(v,name,ok)=>`<option value="${v}"${v===cur?' selected':''}${ok?'':' disabled'}>${esc(name)}${ok?'':' — не настроен'}</option>`;
+  const list=(m?.source==='chatgpt'?opt('openai','Поиск OpenAI',true):'')+ENGINE_ORDER.map(e=>opt(e,ENGINE_NAMES[e],!!ready[e])).join('');
+  return {list,cur,any:m?.source==='chatgpt'||ENGINE_ORDER.some(e=>ready[e])};}
 function renderWeb(){const s=S.chatSettings||{},mode=webMode(),ready=!!mode;byId('web').setAttribute('aria-pressed',String(C.web&&ready));
   const tip=!ready?'Веб-поиск: не настроен':C.web?'Веб-поиск: включён':'Веб-поиск: выключен';byId('web').title=tip;byId('web').setAttribute('aria-label',tip);byId('web-on').checked=C.web;byId('web-on').disabled=!ready;
-  byId('web-host').textContent=mode==='openai'?'поиск OpenAI':mode?(s.search_engine?ENGINE_NAMES[s.search_engine]:hostOf(s.search_url)||s.search_url):'не задан';
+  const ch=engineChoice(),sel=byId('web-engine');sel.innerHTML=ch.list;sel.value=ch.cur;sel.disabled=!ch.any;
+  const e=s.search_engine||'',[label,host]=e==='sonar'?['Модель',s.sonar_model||'']:ENGINE_NAMES[e]&&e?['Ключ',s.search_keys?.[e]?.hint||'не задан']:['Адрес',hostOf(s.search_url)||s.search_url||'не задан'];
+  byId('web-host-line').hidden=mode==='openai';byId('web-host-label').textContent=label;byId('web-host').textContent=host;
   byId('web-hint').innerHTML=mode==='openai'?'ChatGPT ищет сам встроенным поиском OpenAI, в рамках подписки; ссылки на источники — в тексте ответа.':ready?(curModel()&&!has(curModel(),'tools')?'Перед ответом OmniBox составляет поисковые запросы и ищет; источники появятся под ответом.':'Модель сама решает, когда искать. Источники появятся под ответом.'):'Поиск не настроен: <a href="#settings" data-go="settings" data-jump-after="s-search" class="ink">настроить</a>.';}
+// The choice is the same setting as in «Настройки → Веб-поиск»: it holds for every chat.
+byId('web-engine').addEventListener('change',async e=>{const v=e.target.value,s=S.chatSettings||{};
+  try{if(v==='openai'){await gptAction({action:'settings',openai_search:true});S.chatSettings={...S.chatSettings,chatgpt_search:true};}
+    else{if(curModel()?.source==='chatgpt'&&s.chatgpt_search)await gptAction({action:'settings',openai_search:false});
+      S.chatSettings=await api('/api/chat-settings',{action:'save',search_engine:v});}
+    if(typeof renderChatSettings==='function')renderChatSettings();}catch(x){fail(x);}renderWeb();});
 
 // ── attachments: refused before sending when the model cannot read them ──
 const KINDS={image:{name:'изображения',need:'vision',ext:['png','jpg','jpeg','webp','gif']},video:{name:'видео',need:'video',ext:['mp4','mov','webm','mkv','avi']},audio:{name:'аудио',need:'audio',ext:['mp3','wav','m4a','ogg','flac','opus']},

@@ -399,9 +399,19 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run("S.library.models.find(m=>m.key==='chatgpt:gpt-5.5').favorite=false;document.getElementById('picker-menu').hidden=true");
   const pi=run("pickerItem(modelByKey('chatgpt:gpt-5.5'))");assert.ok(pi.includes('Подписка')&&pi.includes('data-pick-star="chatgpt:gpt-5.5"')&&pi.includes('aria-pressed="false"'),pi);
   // A ChatGPT model searches with OpenAI's search when it is on, even with no engine set up; another model needs the engine.
-  run("S.chatSettings={search_ready:false,chatgpt_search:true};C.chosen='chatgpt:gpt-5.5';renderWeb()");assert.equal(run('webMode()'),'openai');assert.equal(nodes['web-host'].textContent,'поиск OpenAI');
+  run("S.chatSettings={search_ready:false,chatgpt_search:true};C.chosen='chatgpt:gpt-5.5';renderWeb()");assert.equal(run('webMode()'),'openai');assert.equal(nodes['web-engine'].value,'openai');assert.equal(nodes['web-host-line'].hidden,true);
   run("C.chosen='prismml:a.gguf';renderWeb()");assert.equal(run('webMode()'),'');assert.equal(nodes['web-on'].disabled,true);
-  run("S.chatSettings={search_ready:true,search_engine:'tavily',chatgpt_search:false};renderWeb()");assert.equal(nodes['web-host'].textContent,'Tavily');
+  run("S.chatSettings={search_ready:true,search_engine:'tavily',chatgpt_search:false};renderWeb()");assert.equal(nodes['web-engine'].value,'tavily');assert.equal(nodes['web-host-label'].textContent,'Ключ');
+  // The engine is chosen in the composer: set-up engines are offered, the rest are listed greyed out.
+  run("S.chatSettings={search_ready:true,search_engine:'',search_url:'https://search.example',search_engines:{'':true,perplexity:false,sonar:true,tavily:false,brave:false},search_keys:{}};C.chosen='prismml:a.gguf';renderWeb()");
+  const wen=nodes['web-engine'];assert.equal(wen.value,'');assert.equal(wen.disabled,false);assert.equal(nodes['web-host'].textContent,'search.example');
+  assert.ok(wen.innerHTML.includes('<option value="sonar">Perplexity Sonar</option>')&&wen.innerHTML.includes('<option value="brave" disabled>Brave Search — не настроен</option>')&&!wen.innerHTML.includes('value="openai"'),wen.innerHTML);
+  run("C.chosen='chatgpt:gpt-5.5';S.chatSettings.chatgpt_search=false;renderWeb()");assert.ok(wen.innerHTML.startsWith('<option value="openai">Поиск OpenAI</option>'),wen.innerHTML);
+  run("S.chatSettings={search_ready:false,search_engines:{'':false,perplexity:false,sonar:false,tavily:false,brave:false}};C.chosen='prismml:a.gguf';renderWeb()");assert.equal(wen.disabled,true,'nothing set up: the list is inactive');
+  // Switching saves the same setting as «Настройки → Веб-поиск».
+  let saved;const realApi=context.api;context.api=async(path,body)=>{saved=[path,body];return {search_engine:body.search_engine,search_ready:true,search_engines:{'':true,sonar:true}};};
+  run("S.chatSettings={search_ready:true,search_engine:'',search_engines:{'':true,sonar:true}};renderWeb();document.getElementById('web-engine').value='sonar'");
+  await nodes['web-engine'].listeners.change[0]({target:nodes['web-engine']});assert.deepEqual(JSON.parse(JSON.stringify(saved)),['/api/chat-settings',{action:'save',search_engine:'sonar'}]);assert.equal(run('S.chatSettings.search_engine'),'sonar');context.api=realApi;
   // The search settings show what the chosen engine needs: a key (never the key itself), a model or an address.
   run("S.chatSettings={search_engine:'tavily',search_ready:true,search_results:5,retention_hours:720,search_keys:{tavily:{hint:'…WXYZ',saved:'2026-10-12T10:00:00Z'}},plan_queries:true};renderChatSettings()");
   assert.equal(nodes['search-key-wrap'].hidden,false);assert.equal(nodes['searx-wrap'].hidden,true);assert.ok(nodes['search-key-info'].textContent.includes('…WXYZ'));assert.equal(nodes['search-state'].textContent,'Tavily');assert.equal(nodes['plan-queries'].checked,true);
