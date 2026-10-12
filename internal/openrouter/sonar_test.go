@@ -49,6 +49,14 @@ func TestVoiceModelAndTranscribe(t *testing.T) {
 	if m, _ := VoiceModel(list, "anthropic/claude"); m != "google/gemini-2.5-flash" {
 		t.Fatalf("a model that does not hear is not chosen: %q", m)
 	}
+	// The owner's case: the cheapest Gemini Flash was a ":batch" variant, which refuses chat/completions.
+	batch := append([]Model{{ID: "google/gemini-2.5-flash-lite:batch", PromptUSD: 0.05, Caps: Caps{Audio: true}}}, list...)
+	if m, _ := VoiceModel(batch, ""); m != "google/gemini-2.5-flash" {
+		t.Fatalf("a batch-only variant was chosen: %q", m)
+	}
+	if m, _ := VoiceModel(batch, "google/gemini-2.5-flash-lite:batch"); m != "google/gemini-2.5-flash" {
+		t.Fatalf("a chosen batch-only variant is not used: %q", m)
+	}
 	if _, ok := VoiceModel(list[3:], ""); ok {
 		t.Fatal("no model hears audio")
 	}
