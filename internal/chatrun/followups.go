@@ -136,7 +136,7 @@ func (r *Runner) aside(ctx context.Context, chat *chats.Chat, chosen, answered s
 	ctx, cancel := context.WithTimeout(ctx, followUpTimeout)
 	defer cancel()
 	a := &answer{}
-	_, err = r.generate(ctx, t, r.request(t, messages, false), a, &stream{gone: true})
+	_, err = r.generate(ctx, t, r.request(t, messages, false), a, &stream{})
 	if model.Source == "cloud" && a.cost > 0 && r.Spend != nil {
 		if err := r.Spend.Add(model.ID, a.cost, openrouter.SourceChat); err != nil {
 			r.logf("chat: spend ledger: %v", err)

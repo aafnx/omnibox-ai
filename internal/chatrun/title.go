@@ -13,7 +13,7 @@ import (
 )
 
 // A new chat is named from its first question at once; after the first answer the browser asks
-// the model for a short title, as Open WebUI does. A chat the owner renamed keeps its name.
+// the model for a short title. A chat the owner renamed keeps its name.
 
 // TitleRequest names the chat to title.
 type TitleRequest struct {

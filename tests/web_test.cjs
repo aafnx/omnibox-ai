@@ -72,6 +72,11 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.ok(mth.includes('цена $5 и $10')&&mth.includes('<code>echo $HOME$</code>')&&mth.includes('echo $a$</code></pre>')&&mth.includes('data-tex="x_1"'),mth);
   assert.ok(out.includes('<ul><li>раз</li><li>два</li></ul>'));assert.ok(out.includes('<table><thead><tr><th>a</th><th>b</th></tr></thead><tbody><tr><td>1</td><td>2</td></tr></tbody></table>'));
 
+  // Lists: bullets under a numbered item nest in it; a numbered list after a paragraph keeps counting.
+  const lst=run("md('1. **Реестр.** Но:\\n   - может сломать\\n   - перезапишется\\n2. **Варианты:**\\n   - поддержка\\n\\nТекст\\n\\n3. Третий\\n- маркер')");
+  assert.ok(lst.includes('<ol><li><b>Реестр.</b> Но:<ul><li>может сломать</li><li>перезапишется</li></ul></li><li><b>Варианты:</b><ul><li>поддержка</li></ul></li></ol>'),lst);
+  assert.ok(lst.includes('<ol start="3"><li>Третий</li></ol><ul><li>маркер</li></ul>'),lst);
+
   // Reasoning scale: "off" only where thinking can be switched off; tokens and cost as a small note.
   assert.deepEqual(J("steps({mode:'none'})"),[]);
   assert.deepEqual(J("steps({mode:'toggle'})"),['off','on']);
@@ -171,7 +176,7 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   // The composer shows only the icon; the name is in its tip and in the menu.
   assert.ok(nodes['asst-btn'].innerHTML.includes('av none slot')&&!nodes['asst-btn'].innerHTML.includes('Без ассистента')&&nodes['asst-btn'].title.includes('Без ассистента'));
   run("C.asst='a1';renderAssist()");const ab=nodes['asst-btn'];
-  assert.ok(ab.innerHTML.includes('<span class="em">🏠</span>')&&!ab.innerHTML.includes('Домашний админ')&&ab.title==='Ассистент: Домашний админ'&&ab.attributes['aria-label']===ab.title);
+  assert.ok(ab.innerHTML.includes('dominant-baseline="central">🏠</text>')&&!ab.innerHTML.includes('Домашний админ')&&ab.title==='Ассистент: Домашний админ'&&ab.attributes['aria-label']===ab.title);
   assert.ok(nodes['asst-menu'].innerHTML.includes('<b>Домашний админ</b>')&&nodes['asst-menu'].innerHTML.includes('По умолчанию'));
   assert.equal(run("webDefault('a1')"),true);
 
@@ -237,6 +242,8 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run("openThreadMenu({dataset:{tmenu:'f'},getBoundingClientRect:()=>({right:300,bottom:100,top:80}),setAttribute(){},classList:{add(){}}})");
   const tmenu=nodes['thread-menu'];assert.equal(tmenu.hidden,false);
   assert.ok(tmenu.innerHTML.includes('data-rename="f"')&&tmenu.innerHTML.includes('Убрать из избранного')&&tmenu.innerHTML.includes('#i-star')&&tmenu.innerHTML.includes('data-del-thread="f"'));
+  // Only the chat as a whole is in the list's menu: what happens inside it is in the composer's "+".
+  assert.ok(!tmenu.innerHTML.includes('data-export')&&!tmenu.innerHTML.includes('Предлагать'));
   assert.equal(tmenu.style.left,'200px');assert.equal(tmenu.style.top,'104px');
   run('closeThreadMenu()');assert.equal(tmenu.hidden,true);
   // Renaming: the row becomes a field; Enter saves through the API, Escape keeps the old title.
@@ -284,7 +291,9 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.ok(!run(`botHTML(${JSON.stringify(fm)},false)`).includes('Продолжить'),'only the last answer');
   run("S.chatSettings.follow_ups=false");assert.equal(run("followOn({})"),false);assert.equal(run("followOn({follow_ups:true})"),true);
   run("S.chatSettings.follow_ups=true");assert.equal(run("followOn({})"),true);assert.equal(run("followOn({follow_ups:false})"),false);
-  assert.ok(run("threadMenu({id:'t1'})").includes('aria-checked="true" data-follow-chat="t1"'));
+  run("C.chat={id:'t1',messages:[{role:'user',text:'?'}]};renderPlus()");const pl=nodes['plus-pop'].innerHTML;
+  assert.ok(pl.includes('id="plus-follow" checked')&&pl.includes('data-export="md">')&&pl.includes('data-export="copy">'),pl);
+  run("C.chat=null;renderPlus()");assert.ok(nodes['plus-pop'].innerHTML.includes('data-export="md" disabled'),'nothing to export in a new chat');
   // Asked for after an answer; the reply fills the message, its cost is added to the answer's.
   run("C.chat={id:'fc',follow_ups:null,messages:[{id:'u1',role:'user',text:'?'},{id:'a1',role:'assistant',text:'Ответ',meta:{cost_usd:0.001}}]}");
   assert.equal(run('followTarget().id'),'a1');
@@ -300,8 +309,10 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run("C.chat.messages.push({id:'a2',role:'assistant',text:'Ещё ответ'})");const pend=run("requestFollowUps('fc','a2')");run('stopFollowUps()');await pend;assert.equal(aborted,true);assert.equal(run('C.follow'),null);
   // The chat's switch: a choice equal to the setting follows the setting again.
   const tsent=[];context.fetch=async(path,opts)=>{const b=JSON.parse(opts.body);tsent.push(b);return {ok:true,json:async()=>({id:'t1',title:'T',follow_ups:b.mode==='auto'?undefined:b.mode==='on'})};};
-  run("C.threads=[{id:'t1',title:'T'}];C.chat=null;S.chatSettings.follow_ups=true");await run("toggleChatFollow('t1')");assert.equal(tsent[0].mode,'off');
-  await run("toggleChatFollow('t1')");assert.equal(tsent[1].mode,'auto');context.fetch=oldFetch;run("S.chatSettings.follow_ups=false;C.chat=null");
+  run("C.threads=[{id:'t1',title:'T'}];C.chat={id:'t1',messages:[]};S.chatSettings.follow_ups=true");await run("setChatFollow(false)");assert.equal(tsent[0].mode,'off');
+  await run("setChatFollow(true)");assert.equal(tsent[1].mode,'auto');
+  // A new chat keeps the choice until it is created.
+  run("C.chat=null");await run("setChatFollow(false)");assert.equal(run('C.followNew'),false);assert.equal(tsent.length,2);run("C.followNew=undefined");context.fetch=oldFetch;run("S.chatSettings.follow_ups=false;C.chat=null");
 
   // Versions: "‹ 2/3 ›" under an answer whose question has earlier versions; the ends are disabled.
   const vq={id:'q1',role:'user',text:'?',branches:[[{id:'q1',role:'user',text:'old'}],[{id:'q1',role:'user',text:'old2'}]],branch:2};
@@ -331,6 +342,24 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.equal(run(`fileName(${JSON.stringify(ec)},'md')`),'Погода Казань сегодня 2026-10-12.md');
   // Dictation: a browser without speech recognition shows no microphone.
   run('renderMic()');assert.equal(nodes['mic-btn'].hidden,true);
+
+  // Background answers: "busy" is the open chat's answer; the stop button asks the service to stop.
+  run("C.streams={};C.chat={id:'bg',messages:[]}");assert.equal(run('C.busy'),null);
+  run("newStream('other',{})");assert.equal(run('C.busy'),null,'an answer in another chat does not block this one');
+  run("newStream('bg',{})");assert.equal(run('C.busy.chat'),'bg');
+  const stops=[];context.fetch=async(p,o)=>{stops.push([p,JSON.parse(o.body)]);return {ok:true,json:async()=>({stopped:true})};};
+  await run('stopAnswer()');assert.deepEqual(stops,[['/api/chat/stop',{chat_id:'bg'}]]);assert.equal(run('C.busy.ctrl.signal.aborted'),false,'the page does not cut the stream itself');
+  // The chat list marks chats whose answer is being written.
+  run("C.threads=[{id:'bg',title:'Фон',created:'2026-10-12T09:00:00Z'},{id:'x',title:'X',created:'2026-10-12T09:00:00Z'}];C.hits=null;renderThreads()");
+  assert.equal((nodes['thread-list'].innerHTML.match(/отвечает…/g)||[]).length,1);run("C.streams={}");
+  // Coming back to a chat whose answer is being written follows it from the start, then reads the chat as stored.
+  const seen=[];context.fetch=async(p)=>{seen.push(p);
+    if(p==='/api/chat/active')return {ok:true,json:async()=>({chats:['bg']})};
+    if(p.startsWith('/api/chat/stream'))return {ok:true,status:200,body:{getReader:()=>{let n=0;return {read:async()=>n++?{done:true}:{done:false,value:new TextEncoder().encode('event: delta\ndata: {"t":"Пишу"}\n\nevent: done\ndata: {"message":{"id":"a9","role":"assistant","text":"Пишу"}}\n\n')}};}}};
+    return {ok:true,json:async()=>({id:'bg',title:'Фон',messages:[{id:'u9',role:'user',text:'?'},{id:'a9',role:'assistant',text:'Пишу'}]})};};
+  await run('checkActive()');await new Promise(r=>setTimeout(r,20));
+  assert.ok(seen.includes('/api/chat/stream?chat_id=bg')&&seen.includes('/api/chats?id=bg'),seen.join(' '));assert.equal(run("Object.keys(C.streams).length"),0);
+  context.fetch=oldFetch;run("C.chat=null;C.active=new Set()");
 
   // Spending: fractions of a cent stay visible, nothing spent reads $0,00.
   assert.equal(run('money(0.00042)'),'$0,0004');assert.equal(run('money(0.00001)'),'<$0,0001');assert.equal(run('money(0)'),'$0,00');assert.equal(run('money(1.5)'),'$1,50');assert.equal(run('money(undefined)'),'$0,00');

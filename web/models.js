@@ -109,8 +109,8 @@ async function saveSettings(m,settings,advanced){await api('/api/library',{actio
   if(modelByKey(m.key)?.running){M.applyKey=m.key;renderModels();}else notice(`Настройки ${m.name} сохранены: применятся при запуске.`);}
 
 // ── the model's drawer ──
-const DESC={vision:'Понимает изображения: скриншоты, фото, сканы. В чате OmniBox — вложения; в Open WebUI и Jan — тоже.',reasoning:'Думает перед ответом. Полезно для кода, логики и математики; ответ приходит позже.',
-  tools:'Вызывает инструменты, когда они нужны. В чате OmniBox это веб-поиск; в Open WebUI и Jan — их функции и MCP-серверы.',moe:'Mixture of Experts: на каждый токен работает часть весов — быстро даже частично в RAM.'};
+const DESC={vision:'Понимает изображения: скриншоты, фото, сканы. В чате OmniBox — вложения; в Jan и других клиентах — тоже.',reasoning:'Думает перед ответом. Полезно для кода, логики и математики; ответ приходит позже.',
+  tools:'Вызывает инструменты, когда они нужны. В чате OmniBox это веб-поиск; в Jan и других клиентах — их функции и MCP-серверы.',moe:'Mixture of Experts: на каждый токен работает часть весов — быстро даже частично в RAM.'};
 function openModel(key){const m=modelByKey(key);if(!m||m.source!=='local')return;M.drawer=key;M.adv=fromConfig(m.settings);M.ctx=curCtx(m);M.advOn=!!m.advanced||Object.keys(M.adv).length>0;
   byId('d-engine').textContent=engineLabel(m.engine)+(m.running?' · работает':'');byId('d-name').textContent=m.name;byId('d-file').textContent=m.file||'';
   setHTML(byId('d-caps'),['vision','reasoning','tools','moe'].filter(k=>has(m,k)).map(k=>`<div class="capx"><svg><use href="#${(CAP[k]||{icon:'i-chip'}).icon}"/></svg><b>${k==='moe'?'MoE':CAP[k].name}</b><p>${DESC[k]}</p></div>`).join('')+(m.context?`<div class="capx"><svg><use href="#i-ctx"/></svg><b>Контекст до ${kfmt(m.context)}</b><p>Сколько текста модель держит в разговоре. Длиннее контекст — больше видеопамяти.</p></div>`:''));

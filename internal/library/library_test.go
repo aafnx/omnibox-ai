@@ -14,6 +14,8 @@ func TestDisplayName(t *testing.T) {
 		"unsloth-gemma-4-12b-it-GGUF-gemma-4-12b-it-Q4_K_M.gguf": "gemma-4-12b-it",
 		"Qwen3-30B-A3B-UD-Q4_K_XL-00001-of-00002.gguf":           "Qwen3-30B-A3B",
 		"Ternary-Bonsai-2-27B-PQ2_0.gguf":                        "Ternary-Bonsai-2-27B",
+		"HauhauCS-Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced-Q4_K_M.gguf": "HauhauCS-Gemma4-12B-QAT-Uncensored-HauhauCS-Balanced",
+		"Llama-3-8B-8B.gguf": "Llama-3-8B-8B",
 	} {
 		if got := DisplayName(config.PrismML, in); got != want {
 			t.Errorf("%s: %s", in, got)

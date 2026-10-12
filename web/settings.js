@@ -32,7 +32,7 @@ function renderCloud(){const c=S.cloud||{};const on=!!c.connected;byId('or-off')
   const low=c.low_balance_usd;byId('or-low').value=String(low);if(byId('or-low').value!==String(low))byId('or-low').insertAdjacentHTML('beforeend',`<option value="${low}" selected>$${low}</option>`);
   byId('or-low-warn').hidden=!(a&&low>0&&a.balance<low);byId('or-low-warn').textContent=`На счёте ${a?usd2(a.balance):''} — меньше ${usd2(low)}. Пополните баланс, иначе облачные модели перестанут отвечать.`;
   byId('or-expose').checked=!!c.expose_api;const favs=models().filter(m=>m.source==='cloud'&&m.favorite).length;
-  byId('or-expose-hint').textContent=`Jan, Open WebUI и Pi увидят избранные модели OpenRouter (сейчас ${favs}) по адресу API OmniBox. Запросы оплачиваются с вашего ключа.`;
+  byId('or-expose-hint').textContent=`Jan, Pi и другие клиенты увидят избранные модели OpenRouter (сейчас ${favs}) по адресу API OmniBox. Запросы оплачиваются с вашего ключа.`;
   byId('or-fetched').textContent=c.fetched?`Обновлён ${new Date(c.fetched).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}. Обновляется при открытии раздела «Модели», не чаще раза в час.`:'Ещё не загружен.';
   byId('or-keyinfo').textContent=`Ключ: sk-or-…${(c.hint||'').replace(/^…/,'')}${c.saved?' · сохранён '+dateShort(c.saved):''}`;
   renderSpend(c);}
@@ -62,7 +62,7 @@ function renderSpend(c){const days=c.days||[];const vals=days.map(d=>d.usd);cons
 async function cloudAction(body){S.cloud=await api('/api/cloud',body);renderCloud();return S.cloud;}
 
 // ── assistants ──
-const EMOJIS=['🏠','💻','🌐','🧠','🔧','📝','📚','🎨','🧮','📈','🩺','⚖️','🍳','✈️','🎵','🤖'];
+const EMOJIS=['🏠','💻','🌐','🧠','🔧','📝','📚','🎨','🧮','📈','🩺','⚖️','🍳','✈️','🎵','🤖','🎃'];
 const STYLE={precise:'Точно',balanced:'Баланс',creative:'Творчески'};
 function renderAssistants(){const A=S.assistants;const d=A.default;
   byId('asst-default').innerHTML='<option value="">Без ассистента</option>'+(A.assistants||[]).map(x=>`<option value="${x.id}"${x.id===d?' selected':''}>${esc(x.name)}</option>`).join('');

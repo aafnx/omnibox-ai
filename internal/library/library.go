@@ -177,6 +177,19 @@ func DisplayName(engineName, name string) string {
 	if stem == "" {
 		return name
 	}
+	return dropRepeat(stem)
+}
+
+// dropRepeat removes a tail that repeats the words before it: a file saved as the repository's
+// name followed by the model's ("Org-Model-X-Model-X") reads "Org-Model-X".
+func dropRepeat(stem string) string {
+	words := strings.Split(stem, "-")
+	for k := len(words) / 2; k >= 2; k-- {
+		n := len(words)
+		if strings.EqualFold(strings.Join(words[n-k:], "-"), strings.Join(words[n-2*k:n-k], "-")) {
+			return strings.Join(words[:n-k], "-")
+		}
+	}
 	return stem
 }
 
