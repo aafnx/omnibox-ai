@@ -131,3 +131,29 @@ func TestAnswerBeforeStrayCommandIsKept(t *testing.T) {
 		t.Fatalf("requests %d, %+v", len(g.bodies), c.Messages[1])
 	}
 }
+
+// The owner's case after 0.27.1: the model searched once more with a proper call, then wrote its
+// next call as text. The retry without tools carried the call and its results in the history, so
+// Bonsai wrote yet another call. The retry now has the results in the system prompt only.
+func TestRetryAfterTextCallHasNoToolHistory(t *testing.T) {
+	g := newRig(t)
+	g.replies = []string{
+		sse(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"web_search","arguments":"{\"query\":\"AI news October 2026\"}"}}]}}]}`),
+		sse(`{"choices":[{"delta":{"content":"<tool_call>{\"name\": \"web_search\", \"arguments\": {\"query\": \"AI news\"}}</tool_call>"}}]}`),
+		sse(`{"choices":[{"delta":{"content":"Главное за неделю: Wake on LAN [1]."}}]}`),
+	}
+	code, _ := g.send(Request{ChatID: g.chat.ID, Model: local.Key, Text: "Напиши новости ИИ за последнюю неделю", Web: true})
+	c, _ := g.r.Chats.Get(g.chat.ID)
+	if code != 200 || len(g.bodies) != 3 || c.Messages[1].Error != "" || !strings.HasPrefix(c.Messages[1].Text, "Главное за неделю") {
+		t.Fatalf("%d, requests %d, %+v", code, len(g.bodies), c.Messages[1])
+	}
+	retry := g.bodies[2]
+	for _, m := range retry["messages"].([]any) {
+		if mm := m.(map[string]any); mm["role"] == "tool" || mm["tool_calls"] != nil {
+			t.Fatalf("the retry still shows tool calls: %v", mm)
+		}
+	}
+	if sys := retry["messages"].([]any)[0].(map[string]any)["content"].(string); !strings.Contains(sys, "Результаты дополнительного поиска") || !strings.Contains(sys, "home-assistant.io") || retry["tools"] != nil {
+		t.Fatalf("the model's own search is lost: %s", sys)
+	}
+}

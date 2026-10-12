@@ -11,7 +11,7 @@ import (
 func TestSearchParsesSearXNG(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		if r.URL.Path != "/search" || q.Get("format") != "json" || q.Get("q") != "wake on lan" || q.Get("language") != "ru-RU" {
+		if r.URL.Path != "/search" || q.Get("format") != "json" || q.Get("q") != "wake on lan" || q.Get("language") != "en" {
 			t.Errorf("request: %s", r.URL)
 		}
 		w.Write([]byte(`{"results":[{"title":"A","url":"https://www.example.com/a","content":"one\n two"},
@@ -67,6 +67,21 @@ func TestRelevancePreservesUnmatchedForeignLanguageResults(t *testing.T) {
 	input := []Result{{Title: "Weather in Kazan", URL: "https://example.com", Snippet: "8 degrees"}}
 	if got := Relevant(input, "Погода в Казани"); len(got) != 1 {
 		t.Fatalf("a foreign-language result was discarded: %+v", got)
+	}
+}
+
+// An English query is searched in English even with Russian chosen: the main sources of AI news
+// are English sites.
+func TestQueryLang(t *testing.T) {
+	for _, c := range []struct{ lang, query, want string }{
+		{"ru", "AI news this week", "en"}, {"ru", "новости ИИ OpenAI", "ru"}, {"", "AI news", ""}, {"en", "новости", "en"}, {"ru", "2026", "ru"},
+	} {
+		if got := QueryLang(c.lang, c.query); got != c.want {
+			t.Errorf("%q %q: %q", c.lang, c.query, got)
+		}
+	}
+	if got := region("ru", "AI news October 2026"); got != "en" {
+		t.Errorf("region: %q", got)
 	}
 }
 

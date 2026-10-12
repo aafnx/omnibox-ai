@@ -184,9 +184,16 @@ function renderFoot(){const m=curModel();const f=byId('chat-foot');renderCtxMete
 // ── assistants ──
 const asstById=id=>(S.assistants.assistants||[]).find(a=>a.id===id);
 const chatAsst=()=>C.chat?C.chat.assistant_id:(C.asst??S.assistants.default);
-// An emoji is drawn in an SVG, centred on the middle of its em box: as text, emoji fonts (Segoe
-// UI Emoji on Windows) sit on their own baseline and pushed it off the circle's centre.
-const emojiSVG=e=>`<svg class="emo-svg" viewBox="0 0 20 20" aria-hidden="true"><text x="10" y="10.6" text-anchor="middle" dominant-baseline="central">${esc(e)}</text></svg>`;
+// An emoji is drawn in an SVG and centred by its picture's own bounds, measured once per emoji in
+// the font the browser draws it with: each emoji font (Segoe UI Emoji, Apple Color Emoji, Noto)
+// puts the picture at its own height, so one fixed offset left it off the circle's centre somewhere.
+const EMOJI_FONT='"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",sans-serif',EMOJI_SIZE=16,emojiPos=new Map();
+function emojiAt(e){if(emojiPos.has(e))return emojiPos.get(e);let p={x:10,y:10.6,base:'central'};
+  try{const c=document.createElement('canvas').getContext('2d');c.font=`100px ${EMOJI_FONT}`;c.textAlign='center';c.textBaseline='alphabetic';
+    const m=c.measureText(e),k=EMOJI_SIZE/100,l=m.actualBoundingBoxLeft,r=m.actualBoundingBoxRight,a=m.actualBoundingBoxAscent,d=m.actualBoundingBoxDescent;
+    const x=10-(r-l)/2*k,y=10+(a-d)/2*k;if(l+r>0&&a+d>0&&Math.abs(x-10)<4&&Math.abs(y-10)<8)p={x:+x.toFixed(2),y:+y.toFixed(2),base:'alphabetic'};}catch(e2){}
+  emojiPos.set(e,p);return p;}
+const emojiSVG=e=>{const p=emojiAt(e);return `<svg class="emo-svg" viewBox="0 0 20 20" aria-hidden="true"><text x="${p.x}" y="${p.y}" text-anchor="middle" dominant-baseline="${p.base}">${esc(e)}</text></svg>`;};
 function avatar(a,cls=''){if(a)return `<span class="av ${cls}${a.emoji?' emo':''}">${a.emoji?emojiSVG(a.emoji):esc((a.name.trim()[0]||'?').toUpperCase())}</span>`;
   return cls.includes('slot')?`<span class="av none ${cls}"><svg class="i"><use href="#i-user"/></svg></span>`:`<span class="av none ${cls}"></span>`;}
 function renderAssist(){const a=asstById(chatAsst());const b=byId('asst-btn');b.className='asst-chip'+(a?' on':'');

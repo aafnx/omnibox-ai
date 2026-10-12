@@ -342,6 +342,11 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   const emd=run(`chatMarkdown(${JSON.stringify(ec)})`);
   assert.ok(emd.startsWith('# Погода: Казань/сегодня\n')&&emd.includes('## Вы\n\nПогода?\n')&&emd.includes('_Файлы: a.docx_')&&emd.includes('## Модель · Облачная')&&emd.includes('1. [Яндекс](https://ya.ru/p)'),emd);
   assert.equal(run(`fileName(${JSON.stringify(ec)},'md')`),'Погода Казань сегодня 2026-10-12.md');
+  // An emoji is centred by its picture's measured bounds; without a canvas it falls back to the em box.
+  assert.ok(run("emojiSVG('🎃')").includes('x="10" y="10.6" text-anchor="middle" dominant-baseline="central"'));
+  run(`emojiPos.clear();var realCreate=document.createElement;document.createElement=t=>t==='canvas'?{getContext:()=>({measureText:()=>({actualBoundingBoxLeft:40,actualBoundingBoxRight:44,actualBoundingBoxAscent:70,actualBoundingBoxDescent:20})})}:realCreate(t)`);
+  assert.ok(run("emojiSVG('🤖')").includes('x="9.68" y="14" text-anchor="middle" dominant-baseline="alphabetic"'),run("emojiSVG('🤖')"));
+  run("document.createElement=realCreate;emojiPos.clear()");
   // Dictation: a browser without speech recognition shows no microphone.
   run('renderMic()');assert.equal(nodes['mic-btn'].hidden,true);
   // On an iPhone (Safari inside every browser) a connected OpenRouter writes the voice down.
