@@ -799,6 +799,9 @@ details.srcs summary:hover{border-color:var(--iris-line);color:var(--text)}
 .wave{flex:1;display:flex;align-items:center;justify-content:center;gap:3px;height:28px;min-width:0;overflow:hidden}
 .wave i{flex:none;width:3px;height:3px;border-radius:2px;background:var(--muted);transition:height .08s linear}
 .wave i.on{background:var(--iris-text)}
+.wave.idle i{background:var(--iris-text);animation:sway 1.2s ease-in-out infinite}
+@keyframes sway{0%,100%{height:3px}50%{height:16px}}
+@media (prefers-reduced-motion:reduce){.wave.idle i{animation:none;height:8px}}
 .dict-st{font-size:12px;color:var(--muted);white-space:nowrap}
 .dict-st:empty{display:none}
 .mact button.speak[aria-pressed="true"]{color:var(--iris-text);opacity:1}

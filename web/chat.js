@@ -306,7 +306,7 @@ async function consume(r,s){const reader=r.body.getReader(),dec=new TextDecoder(
       schedulePaint(s);}}}
 function newStream(chat,opts){const s={chat,opts,again:opts.retry||opts.edit||'',answer:'',thinking:'',sources:[],trace:[],status:'',err:'',userMessage:null,done:null,ctrl:new AbortController(),el:null,pending:0};
   C.streams[chat]=s;renderSend();renderThreads();return s;}
-async function send(opts={}){if(C.busy)return;stopFollowUps();if(dict)dict.stop();const m=curModel();
+async function send(opts={}){if(C.busy)return;stopFollowUps();if(dict)dict.detach();const m=curModel();
   if(!m){notice('Выберите модель в списке над чатом.',true);byId('picker-btn').click();return;}
   if(C.starting){notice('Модель ещё запускается — подождите несколько секунд.');return;}
   const text=opts.retry?'':(opts.text??byId('prompt').value).trim();const files=opts.retry||opts.text!==undefined?[]:C.attached;const again=opts.retry||opts.edit;
@@ -401,7 +401,7 @@ async function switchBranch(btn){if(C.busy||!C.chat)return;stopFollowUps();
 // Microsoft's service, Safari recognizes on the device. Brave has the API but no service behind
 // it ("network" at once): there, or when chosen in the settings, the panel records the voice and
 // an OpenRouter model that hears audio writes it down. Reading aloud uses the system's voices.
-const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null,recording=null,transcribing=false,dict=null;
+let SR=window.SpeechRecognition||window.webkitSpeechRecognition,rec=null,recording=null,transcribing=false,dict=null;
 const canRecord=()=>!!(navigator.mediaDevices?.getUserMedia&&window.MediaRecorder);
 // Safari's recognition (every browser on iPhone is Safari inside) often listens and writes
 // nothing: there a recording written down by OpenRouter is the reliable way, when it is connected.
@@ -417,8 +417,10 @@ function insertDictation(text){const ta=byId('prompt');if(!text)return;ta.value=
 const WAVE_BARS=36;
 function startWave(stream){const w=byId('dict-wave');w.innerHTML='<i></i>'.repeat(WAVE_BARS);const bars=[...w.children||[]];const lv=new Array(WAVE_BARS).fill(0);
   const paint=()=>bars.forEach((b,k)=>{b.style.height=`${3+Math.round(lv[k]*22)}px`;b.classList.toggle('on',lv[k]>0.06);});
-  const AC=window.AudioContext||window.webkitAudioContext;if(!stream||!AC){paint();return ()=>{};}
-  let ctx,an,buf,raf;try{ctx=new AC();an=ctx.createAnalyser();an.fftSize=512;ctx.createMediaStreamSource(stream).connect(an);buf=new Uint8Array(an.fftSize);}catch(e){paint();return ()=>{};}
+  // Without the sound itself (Safari's own recognition holds the microphone) the bars only sway.
+  const idle=()=>{paint();w.classList.add('idle');bars.forEach((b,k)=>b.style.setProperty('animation-delay',`${-(k%12)*0.1}s`));return ()=>w.classList.remove('idle');};
+  w.classList.remove('idle');const AC=window.AudioContext||window.webkitAudioContext;if(!stream||!AC)return idle();
+  let ctx,an,buf,raf;try{ctx=new AC();an=ctx.createAnalyser();an.fftSize=512;ctx.createMediaStreamSource(stream).connect(an);buf=new Uint8Array(an.fftSize);}catch(e){return idle();}
   let last=0;const tick=t=>{raf=requestAnimationFrame(tick);if(t-last<70)return;last=t;an.getByteTimeDomainData(buf);let sum=0;for(const v of buf){const x=(v-128)/128;sum+=x*x;}
     lv.shift();lv.push(Math.min(1,Math.sqrt(sum/buf.length)*4));paint();};raf=requestAnimationFrame(tick);
   return ()=>{cancelAnimationFrame(raf);ctx.close?.();};}
@@ -426,7 +428,7 @@ let micStarting=false;
 function toggleMic(){if(dict){dict.stop();return;}if(transcribing||micStarting)return;micStarting=true;(voiceServer()?startRecording():startRecognition()).finally(()=>{micStarting=false;});}
 // Browser recognition writes into the field as it hears; Safari stops after a pause, so it is
 // started again until the user presses stop. Cancel puts the text back as it was.
-async function startRecognition(){const ta=byId('prompt'),before=ta.value;let base=before&&!/\s$/.test(before)?before+' ':before,heard=false,done=false;
+async function startRecognition(){const ta=byId('prompt'),before=ta.value;let base=before&&!/\s$/.test(before)?before+' ':before,heard=false,done=false,live=true;
   // Safari would lose the microphone to a second capture: there the waveform stays flat.
   let stream=null;if(!webkitOnly()&&navigator.mediaDevices?.getUserMedia){try{stream=await navigator.mediaDevices.getUserMedia({audio:true});}catch(e){}}
   const stopWave=startWave(stream);
@@ -434,7 +436,7 @@ async function startRecognition(){const ta=byId('prompt'),before=ta.value;let ba
     if(!heard&&webkitOnly())notice(S.cloud?.connected?'Браузер не распознал речь. Включите «Настройки → Чат → Голосовой ввод через OpenRouter».':'Браузер не распознал речь. Проверьте, что включена «Диктовка» в настройках iPhone (Основные → Клавиатура).',true);
     if(after)byId('composer').requestSubmit();};
   const listen=()=>{rec=new SR();rec.lang='ru-RU';rec.interimResults=true;rec.continuous=!webkitOnly();
-    rec.onresult=e=>{let fin='',mid='';for(const r of e.results){if(r.isFinal)fin+=r[0].transcript;else mid=r[0].transcript;}if(fin||mid)heard=true;ta.value=base+fin+mid;ta.dispatchEvent(new Event('input'));};
+    rec.onresult=e=>{if(!live)return;let fin='',mid='';for(const r of e.results){if(r.isFinal)fin+=r[0].transcript;else mid=r[0].transcript;}if(fin||mid)heard=true;ta.value=base+fin+mid;ta.dispatchEvent(new Event('input'));};
     rec.onerror=e=>{if(e.error==='not-allowed'){done=true;notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);}
       else if((e.error==='network'||e.error==='service-not-allowed')&&!heard&&canRecord()){
         // The browser has no recognition service (Brave): record instead, from now on.
@@ -443,7 +445,9 @@ async function startRecognition(){const ta=byId('prompt'),before=ta.value;let ba
       else if(e.error!=='no-speech'&&e.error!=='aborted'){done=true;notice('Голосовой ввод прервался.',true);}};
     rec.onend=()=>{if(!done&&dict){base=ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value;try{listen();return;}catch(e){}}finish();};
     rec.start();};
-  dict={mode:'sr',stop:()=>{done=true;rec?.stop();},cancel:()=>{done=true;heard=true;rec?.abort();ta.value=before;ta.dispatchEvent(new Event('input'));},after:false};
+  dict={mode:'sr',stop:()=>{done=true;rec?.stop();},cancel:()=>{done=true;heard=true;live=false;rec?.abort();ta.value=before;ta.dispatchEvent(new Event('input'));},
+    // Sent another way: words still on their way must not come back into the emptied field.
+    detach:()=>{done=true;heard=true;live=false;rec?.abort();},after:false};
   try{listen();}catch(e){finish();return;}renderMic();}
 // A recording goes to OpenRouter after stop; its text lands in the field (and is sent, after the send button).
 async function startRecording(){if(!canRecord()){notice('Этот браузер не умеет записывать звук.',true);return;}
@@ -456,7 +460,7 @@ async function startRecording(){if(!canRecord()){notice('Этот браузер
     try{const wav=await toWav(new Blob(chunks,{type:mr.mimeType}));const d=await api('/api/chat/transcribe',{data:wav});
       if(d.text)insertDictation(d.text);else notice('Речь не распознана.',true);transcribing=false;renderMic();if(d.text&&after)byId('composer').requestSubmit();}
     catch(e){fail(e);}finally{transcribing=false;renderMic();}};
-  recording=mr;dict={mode:'rec',stop:()=>{if(mr.state==='recording')mr.stop();},cancel:()=>{dropped=true;if(mr.state==='recording')mr.stop();},after:false};mr.start();renderMic();}
+  recording=mr;dict={mode:'rec',stop:()=>{if(mr.state==='recording')mr.stop();},cancel:()=>{dropped=true;if(mr.state==='recording')mr.stop();},after:false};dict.detach=dict.cancel;mr.start();renderMic();}
 // Send while dictating: the text is finished first, then sent.
 function dictateThenSend(){if(transcribing)return true;if(!dict)return false;dict.after=true;dict.stop();return true;}
 // toWav turns a recording into 16 kHz mono WAV in base64: every model that hears audio reads it.

@@ -28,7 +28,7 @@ class Node{
   insertAdjacentHTML(_,v){this._html+=String(v);}
   get outerHTML(){return this._html;}set outerHTML(v){this._html=String(v);}
   setAttribute(n,v){this.attributes[n]=String(v);}getAttribute(n){return this.attributes[n]??null;}removeAttribute(n){delete this.attributes[n];}
-  addEventListener(t,fn){(this.listeners[t]??=[]).push(fn);}removeEventListener(){}
+  addEventListener(t,fn){(this.listeners[t]??=[]).push(fn);}removeEventListener(){}dispatchEvent(e){(this.listeners[e.type]||[]).forEach(fn=>fn(e));return true;}
   append(...n){n.forEach(x=>{x.parent=this;this.children.push(x);});}
   get firstElementChild(){return this.children[0]||new Node();}get lastElementChild(){return this.children.at(-1)||new Node();}
   querySelector(){return new Node();}querySelectorAll(){return [];}closest(){return null;}matches(){return false;}
@@ -46,7 +46,7 @@ const context=vm.createContext({document,window:{addEventListener:(t,fn)=>(winLi
   localStorage:{getItem:k=>store.get(k)??null,setItem:(k,v)=>store.set(k,String(v))},navigator:{hardwareConcurrency:16},innerWidth:1280,innerHeight:800,
   matchMedia:()=>({matches:false,addEventListener:()=>{}}),requestAnimationFrame:fn=>{fn();return 1;},
   fetch:async(path)=>{requests.push(path);return {ok:false,status:401,json:async()=>({error:'Войди в панель.'})};},
-  setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,clearInterval:()=>{},console,URL,TextDecoder,AbortController,FileReader:function(){},Promise,Map,Set,Date,Number,JSON,Math,Object,Array,String,Error});
+  setTimeout:()=>1,clearTimeout:()=>{},setInterval:()=>1,clearInterval:()=>{},console,URL,TextDecoder,Event:function(type){this.type=type;},AbortController,FileReader:function(){},Promise,Map,Set,Date,Number,JSON,Math,Object,Array,String,Error});
 const run=code=>vm.runInContext(code,context);
 // Values made in the page's realm are compared as JSON: their prototypes differ from the test's.
 const J=code=>JSON.parse(run(`JSON.stringify(${code})`));
@@ -355,6 +355,12 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run("dict=null;transcribing=true;renderMic()");assert.equal(nodes['dict-state'].textContent,'Распознаём…');assert.equal(run('dictateThenSend()'),true,'no send while the text is written down');
   run("transcribing=false;renderMic()");assert.equal(nodes.dict.hidden,true);assert.equal(nodes.composer.classList.contains('dictating'),false);assert.equal(run('dictateThenSend()'),false);
   run("startWave(null)");assert.equal((nodes['dict-wave'].innerHTML.match(/<i><\/i>/g)||[]).length,36);
+  // Browser recognition: words arriving after the message was sent stay out of the emptied field.
+  run("S.cloud=null;delete window.MediaRecorder;delete navigator.mediaDevices;SR=function(){globalThis.lastRec=this;this.start=()=>{};this.stop=()=>{};this.abort=()=>{};};document.getElementById('prompt').value=''");
+  await run("startRecognition()");assert.equal(run("dict.mode"),'sr');assert.equal(nodes['dict-wave'].classList.contains('idle'),true,'no sound to show: the bars sway');
+  run("lastRec.onresult({results:[[{transcript:'Привет что ты умеешь'}]]})");assert.equal(nodes.prompt.value,'Привет что ты умеешь');
+  run("dict.detach();document.getElementById('prompt').value='';lastRec.onresult({results:Object.assign([[{transcript:'Привет что ты умеешь'}]],{})});lastRec.onend()");
+  assert.equal(nodes.prompt.value,'','a late result does not come back');assert.equal(run('dict'),null);assert.equal(nodes.composer.classList.contains('dictating'),false);
   run("navigator.userAgent='';delete window.webkitSpeechRecognition;S.cloud=null;delete window.MediaRecorder;delete navigator.mediaDevices");
   // A link the user wrote is a link with the site's badge; anything else stays escaped text.
   const lk=run(`linkify('Глянь https://www.gismeteo.ru/weather-kazan-4364/. И <b>это</b> javascript:alert(1)')`);
