@@ -55,11 +55,16 @@ type Runner struct {
 	// answer, for the indicator next to the message box.
 	ChatGPT       Subscription
 	ChatGPTLimits func() any
-	// Search asks SearXNG; Read opens a page of the results or one the user named.
-	Search func(ctx context.Context, query string) ([]websearch.Result, error)
-	Read   func(ctx context.Context, url string) (websearch.Page, error)
-	Now    func() time.Time
-	Logf   func(format string, args ...any)
+	// ChatGPTSearch lets ChatGPT models search with OpenAI's built-in web search.
+	ChatGPTSearch func() bool
+	// Search asks the chosen search engine; Read opens a page of the results or one the user named.
+	Search func(ctx context.Context, query string) (websearch.Found, error)
+	// SearchByQuestion means the engine answers questions (Perplexity Sonar): it is given the
+	// question restated on its own, once, instead of keyword queries.
+	SearchByQuestion func() bool
+	Read             func(ctx context.Context, url string) (websearch.Page, error)
+	Now              func() time.Time
+	Logf             func(format string, args ...any)
 
 	// learned are parameters OpenRouter refused for a model; they are not sent again.
 	learned sync.Map
@@ -207,6 +212,7 @@ type turn struct {
 	assistant *chats.Assistant
 	media     []map[string]any // image, audio and video parts of this message only
 	web       bool
+	native    bool // the model searches itself (ChatGPT with OpenAI's web search)
 	read      bool // pages of the results are read in full
 	effort    string
 }

@@ -182,7 +182,7 @@ internal/chatrun/       ответ на сообщение чата: истор�
 internal/openrouter/    OpenRouter: ключ (DPAPI), модели, баланс, расходы
 internal/chatgpt/       ChatGPT по подписке через Codex app-server: установка, вход по коду, лимиты, ответы без инструментов
 internal/reasoning/     профили размышлений моделей и очистка параметров запроса
-internal/websearch/     SearXNG; internal/attach/ — текст из документов; internal/library/ — единый список моделей
+internal/websearch/     поиск: SearXNG, Perplexity, Tavily, Brave, ключи; internal/attach/ — текст из документов; internal/library/ — единый список моделей
 web/                    интерфейс: app.js и страницы chat.js, models.js, server.js, settings.js
 tests/                  web_test.cjs (поведение UI); HTTP-тесты — Go-тесты пакетов
 ```

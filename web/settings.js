@@ -13,16 +13,34 @@ async function saveGateway(body){const d=await api('/api/gateway',body);ST.gatew
   if(d.key){byId('newkey').hidden=false;byId('newkey-v').value=d.key;}return d;}
 
 // ── web search and chat data ──
-function renderChatSettings(){const s=S.chatSettings;if(!s)return;byId('searx').value=s.search_url||'';byId('search-n').value=String(s.search_results);
+// The search engines and what each needs: SearXNG an address, three of them a key, Sonar the
+// OpenRouter key.
+const ENGINES={'':{name:'SearXNG',hint:'Свой сервер SearXNG: бесплатно, но качество зависит от того, какие движки на нём отвечают (Google и Bing часто отвечают капчей).'},
+  perplexity:{name:'Perplexity',key:'Ключ Perplexity',ph:'pplx-…',url:'https://www.perplexity.ai/account/api/keys',hint:'Лучшая выдача: ранжированные результаты с текстом страниц. Платно — около $5 за 1000 запросов с баланса API Perplexity (подписчикам Pro начисляется $5 в месяц).'},
+  sonar:{name:'Perplexity Sonar',hint:'Perplexity сам ищет и кратко отвечает с источниками, а модель чата сверяет ответ с ними. Платит ваш ключ OpenRouter: около цента за поиск, расход виден в «OpenRouter».'},
+  tavily:{name:'Tavily',key:'Ключ Tavily',ph:'tvly-…',url:'https://app.tavily.com/',hint:'Поиск для ИИ: сразу текст страниц. 1000 запросов в месяц бесплатно, дальше — по тарифу Tavily.'},
+  brave:{name:'Brave Search',key:'Ключ Brave Search',ph:'BSA…',url:'https://api-dashboard.search.brave.com/',hint:'Собственный индекс Brave, хорошо ищет по-русски. Тариф Search: $5 бесплатного кредита в месяц (около 1000 запросов), нужна карта.'}};
+function renderSearchEngine(){const s=S.chatSettings||{},e=byId('search-engine').value,x=ENGINES[e]||ENGINES[''],keys=s.search_keys||{};
+  byId('search-engine-hint').textContent=x.hint;byId('searx-wrap').hidden=e!=='';byId('sonar-wrap').hidden=e!=='sonar';byId('search-key-wrap').hidden=!x.key;
+  if(x.key){byId('search-key-label').textContent=x.key;byId('search-key').placeholder=x.ph;const k=keys[e];byId('search-key-saved').hidden=!k;
+    byId('search-key-info').textContent=k?`Сохранён: …${k.hint.replace(/^…/,'')}${k.saved?' · '+dateShort(k.saved):''}`:'';
+    setHTML(byId('search-key-hint'),`Ключ создаётся на <a class="ink" href="${x.url}" target="_blank" rel="noopener noreferrer">${esc(hostOf(x.url))}</a>. Перед сохранением OmniBox делает один пробный поиск; ключ хранится на ПК зашифрованным и в панель не возвращается.`);}
+  if(e==='sonar'){byId('sonar-model').innerHTML=(s.sonar_models||['perplexity/sonar']).map(m=>`<option value="${esc(m)}">${esc(m)}</option>`).join('');byId('sonar-model').value=s.sonar_model||'perplexity/sonar';
+    byId('sonar-hint').innerHTML=s.openrouter?'sonar — быстрый и дешёвый, sonar-pro — глубже и дороже.':'Нужен ключ OpenRouter: <a href="#settings" data-jump="s-cloud" class="ink">добавить</a>.';}}
+function renderChatSettings(){const s=S.chatSettings;if(!s)return;byId('searx').value=s.search_url||'';byId('search-engine').value=s.search_engine||'';byId('plan-queries').checked=s.plan_queries!==false;renderSearchEngine();byId('search-n').value=String(s.search_results);
   if(!['3','5','8'].includes(String(s.search_results)))byId('search-n').insertAdjacentHTML('beforeend',`<option value="${s.search_results}" selected>${s.search_results}</option>`);
   byId('search-lang').value=s.search_language||'';byId('search-default').checked=!!s.search_default;byId('site-icons').checked=!!s.site_icons;byId('read-pages').checked=s.read_pages!==false;
   // Suggestions: the chat's own model or a favourite OpenRouter one; another local model would have to be started.
   byId('follow-on').checked=!!s.follow_ups;byId('auto-title').checked=s.auto_title!==false;const fm=s.follow_up_model||'',favs=models().filter(m=>(m.source==='cloud'&&m.favorite)||m.source==='chatgpt'),where=k=>k.startsWith('chatgpt:')?'ChatGPT':'OpenRouter';
   byId('follow-model').innerHTML='<option value="">Та же модель, что в чате</option>'+favs.map(m=>`<option value="${esc(m.key)}">${esc(m.name)} · ${where(m.key)}</option>`).join('')+(fm&&!favs.some(m=>m.key===fm)?`<option value="${esc(fm)}">${esc(chatModelName(fm))} · ${where(fm)}</option>`:'');
   byId('follow-model').value=fm;byId('follow-model-hint').textContent=fm.startsWith('chatgpt:')?'Модель ChatGPT пишет вопросы для любого чата: видеокарта не занята, расходуются лимиты подписки.':fm?'Модель OpenRouter пишет вопросы для любого чата: видеокарта не занята, каждый раз — доли цента по цене модели.':'Та же модель, что отвечала: локальная — бесплатно, но несколько секунд занимает видеокарту; облачная — по цене её токенов или из лимитов подписки. В списке — модели ChatGPT и избранные модели OpenRouter.';
+  // Dictation: the OpenRouter models that hear audio, cheapest first; "auto" picks a Gemini Flash.
+  const ears=models().filter(m=>m.source==='cloud'&&has(m,'audio')).sort((a,b)=>(a.prompt_usd||0)-(b.prompt_usd||0)),vm=s.voice_model||'';
+  byId('voice-model').innerHTML='<option value="">Модель: авто</option>'+ears.map(m=>`<option value="${esc(m.id)}">${esc(m.name)}</option>`).join('')+(vm&&!ears.some(m=>m.id===vm)?`<option value="${esc(vm)}">${esc(vm)}</option>`:'');
+  byId('voice-model').value=vm;byId('voice-server').checked=!!s.voice_server;
   byId('keep-chats').value=String(s.retention_hours);if(byId('keep-chats').value!==String(s.retention_hours))byId('keep-chats').insertAdjacentHTML('beforeend',`<option value="${s.retention_hours}" selected>${Math.round(s.retention_hours/24)} дн.</option>`);
   byId('keep-chats-hint').textContent=`Сейчас ${s.chats} ${plural(s.chats,'чат','чата','чатов')}, ${fsize(s.chats_bytes||0)}. Избранные не удаляются по сроку; новый срок действует для новых чатов.`;
-  byId('search-state').textContent=s.search_url?'Задан':'Не задан';byId('search-state').className='pill';}
+  byId('search-state').textContent=s.search_ready?(ENGINES[s.search_engine||'']||ENGINES['']).name:'Не настроен';byId('search-state').className='pill'+(s.search_ready?' ok':'');}
 async function saveChatSettings(body){S.chatSettings=await api('/api/chat-settings',{action:'save',...body});renderChatSettings();if(typeof renderWeb==='function')renderWeb();}
 
 // ── OpenRouter ──
@@ -89,7 +107,7 @@ function renderGpt(){const g=S.gpt;if(!g)return;const st=g.status||{},signed=!!g
     byId('gpt-warn').hidden=!(l?.reached||l?.blocked);byId('gpt-warn').textContent='Достигнут лимит подписки ChatGPT: ответы возобновятся после сброса'+(gptWindows(l).find(w=>w.used_percent>=100)?.resets_at?` (${gptReset(gptWindows(l).find(w=>w.used_percent>=100))})`:'')+'.';
     byId('gpt-limits-when').textContent=l?.updated?`Обновлены ${new Date(l.updated).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})}: после каждого ответа и при открытии этого раздела.`:'Обновляются после каждого ответа и при открытии этого раздела.';
     byId('gpt-models').textContent=(g.models||[]).map(m=>m.name).join(', ')||'Список появится после первого обращения.';
-    byId('gpt-expose').checked=!!g.expose_api;byId('gpt-account-info').textContent=a?.email?`Вход: ${a.email}`:'';}
+    byId('gpt-expose').checked=!!g.expose_api;byId('gpt-search').checked=g.openai_search!==false;byId('gpt-account-info').textContent=a?.email?`Вход: ${a.email}`:'';}
   if(g.error&&signed)byId('gpt-limits-when').textContent=g.error;
   gptFollow(busy||waiting);}
 let gptTimer=0;
@@ -182,7 +200,13 @@ byId('api-save').addEventListener('click',()=>saveGateway({action:'save',base_ur
   public_origin:byId('public-origin').value.trim(),trusted_proxies:byId('trusted').value.split(',').map(s=>s.trim()).filter(Boolean)}).then(()=>notice('Настройки API сохранены.')).catch(fail));
 byId('searx-check').addEventListener('click',async()=>{const st=byId('search-state');st.textContent='Проверяем…';st.className='pill';
   try{const d=await api('/api/chat-settings',{action:'check-search',search_url:byId('searx').value.trim()});st.textContent=`Работает · ${d.search_ms} мс`;st.className='pill ok';}catch(e){st.textContent='Ошибка';st.className='pill warn';fail(e);}});
-byId('search-save').addEventListener('click',()=>saveChatSettings({search_url:byId('searx').value.trim(),search_results:Number(byId('search-n').value),search_language:byId('search-lang').value,search_default:byId('search-default').checked,site_icons:byId('site-icons').checked,read_pages:byId('read-pages').checked}).then(()=>notice('Настройки веб-поиска сохранены.')).catch(fail));
+byId('search-engine').addEventListener('change',renderSearchEngine);
+byId('search-key-save').addEventListener('click',async()=>{const engine=byId('search-engine').value,key=byId('search-key').value.trim();byId('search-key').value='';if(!key){notice('Вставьте ключ.',true);return;}
+  try{S.chatSettings=await api('/api/chat-settings',{action:'search-key',engine,key});renderChatSettings();byId('search-engine').value=engine;renderSearchEngine();notice(`Ключ ${ENGINES[engine].name} проверен и сохранён. Нажмите «Сохранить», чтобы искать через ${ENGINES[engine].name}.`);}catch(e){fail(e);}});
+byId('search-key-forget').addEventListener('click',()=>{const engine=byId('search-engine').value;api('/api/chat-settings',{action:'search-key-forget',engine}).then(d=>{S.chatSettings=d;renderChatSettings();byId('search-engine').value=engine;renderSearchEngine();if(typeof renderWeb==='function')renderWeb();notice('Ключ удалён с ПК.');}).catch(fail);});
+byId('search-check').addEventListener('click',async()=>{const st=byId('search-state');st.textContent='Проверяем…';
+  try{const d=await api('/api/chat-settings',{action:'check-search'});S.chatSettings={...S.chatSettings,...d};st.textContent=`Работает · ${d.search_ms} мс`;st.className='pill ok';}catch(e){st.textContent='Ошибка';st.className='pill warn';fail(e);}});
+byId('search-save').addEventListener('click',()=>saveChatSettings({search_engine:byId('search-engine').value,sonar_model:byId('search-engine').value==='sonar'?byId('sonar-model').value:undefined,plan_queries:byId('plan-queries').checked,search_url:byId('searx').value.trim(),search_results:Number(byId('search-n').value),search_language:byId('search-lang').value,search_default:byId('search-default').checked,site_icons:byId('site-icons').checked,read_pages:byId('read-pages').checked}).then(()=>notice('Настройки веб-поиска сохранены.')).catch(fail));
 byId('or-connect').addEventListener('click',async()=>{const key=byId('or-key').value.trim();byId('or-key').value='';if(!key){notice('Вставьте ключ OpenRouter.',true);return;}
   try{await cloudAction({action:'key-save',key});notice('OpenRouter подключён: список моделей загружен.');await Promise.all([refreshAccount(),refreshLibrary()]);renderCloud();}catch(e){fail(e);}});
 byId('or-disconnect').addEventListener('click',()=>cloudAction({action:'key-forget'}).then(()=>{S.account=null;renderNow();notice('Ключ OpenRouter удалён с ПК.');return refreshLibrary();}).catch(fail));
@@ -194,6 +218,7 @@ byId('gpt-login').addEventListener('click',()=>gptAction({action:'login'}).catch
 byId('gpt-login-cancel').addEventListener('click',()=>gptAction({action:'login-cancel'}).catch(fail));
 byId('gpt-code-copy').addEventListener('click',()=>copyText(byId('gpt-code-v').textContent).then(()=>notice('Код скопирован.')).catch(fail));
 byId('gpt-refresh').addEventListener('click',()=>gptAction({action:'limits'}).then(()=>notice('Лимиты ChatGPT обновлены.')).catch(fail));
+byId('gpt-search').addEventListener('change',e=>gptAction({action:'settings',openai_search:e.target.checked}).then(()=>{if(S.chatSettings)S.chatSettings.chatgpt_search=e.target.checked;if(typeof renderWeb==='function')renderWeb();notice(e.target.checked?'Модели ChatGPT ищут встроенным поиском OpenAI.':'Модели ChatGPT ищут поисковой системой OmniBox.');}).catch(fail));
 byId('gpt-expose').addEventListener('change',e=>gptAction({action:'settings',expose_api:e.target.checked}).then(()=>notice(e.target.checked?'Модели ChatGPT видны клиентам API.':'Модели ChatGPT скрыты из API.')).catch(fail));
 byId('gpt-logout').addEventListener('click',e=>{const b=e.currentTarget;if(b.dataset.sure!=='1'){b.dataset.sure='1';b.textContent='Точно выйти?';return;}b.dataset.sure='';b.textContent='Выйти из аккаунта';
   gptAction({action:'logout'}).then(()=>{S.gptLimits=null;notice('Вы вышли из ChatGPT: вход удалён с ПК.');return refreshLibrary();}).catch(fail);});
@@ -211,6 +236,8 @@ byId('ae-delete').addEventListener('click',async()=>{const b=byId('ae-delete');i
   try{S.assistants=await api('/api/assistants',{action:'delete',id:ST.editing});hideAll();renderAssistants();}catch(e){fail(e);}});
 byId('follow-on').addEventListener('change',e=>saveChatSettings({follow_ups:e.target.checked}).then(()=>notice(e.target.checked?'Под ответами появятся вопросы для продолжения.':'Вопросы после ответов выключены.')).catch(err=>{e.target.checked=!e.target.checked;fail(err);}));
 byId('auto-title').addEventListener('change',e=>saveChatSettings({auto_title:e.target.checked}).then(()=>notice(e.target.checked?'Новые чаты будет называть модель.':'Название чата — начало первого вопроса.')).catch(err=>{e.target.checked=!e.target.checked;fail(err);}));
+byId('voice-server').addEventListener('change',e=>saveChatSettings({voice_server:e.target.checked}).then(()=>{if(typeof renderMic==='function')renderMic();notice(e.target.checked?'Голос распознаёт модель OpenRouter во всех браузерах.':'Голос распознаёт браузер, если умеет.');}).catch(fail));
+byId('voice-model').addEventListener('change',e=>saveChatSettings({voice_model:e.target.value}).then(()=>notice('Модель для голоса сохранена.')).catch(fail));
 byId('follow-model').addEventListener('change',e=>saveChatSettings({follow_up_model:e.target.value}).then(()=>notice('Модель для вопросов сохранена.')).catch(fail));
 byId('keep-chats').addEventListener('change',e=>saveChatSettings({retention_hours:Number(e.target.value)}).then(()=>notice('Срок хранения новых чатов сохранён.')).catch(fail));
 byId('keep-logs').addEventListener('change',e=>api('/api/storage',{action:'save',...KEEP_LOGS[e.target.value]}).then(u=>{ST.storage=u;renderStorage();notice('Срок хранения журналов сохранён.');}).catch(fail));

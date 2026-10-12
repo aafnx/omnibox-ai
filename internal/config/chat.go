@@ -12,6 +12,11 @@ import (
 type Chat struct {
 	// RetentionHours is how long a new chat is kept; 0 keeps chats until they are deleted.
 	RetentionHours int `json:"retention_hours"`
+	// SearchEngine is "" (the owner's SearXNG), perplexity, tavily, brave (their keys are kept
+	// encrypted outside config.json) or sonar (Perplexity Sonar through the OpenRouter key).
+	SearchEngine string `json:"search_engine,omitempty"`
+	// SonarModel is the Perplexity model for the sonar engine; empty is perplexity/sonar.
+	SonarModel string `json:"sonar_model,omitempty"`
 	// SearchURL is the SearXNG instance (its JSON format must be enabled); empty means no search.
 	SearchURL      string `json:"search_url,omitempty"`
 	SearchResults  int    `json:"search_results"`
@@ -26,9 +31,15 @@ type Chat struct {
 	// FollowUps suggests a few questions to ask next under the last answer; a chat may turn
 	// them on or off for itself.
 	FollowUps bool `json:"follow_ups,omitempty"`
+	// NoSearchPlan searches with the question's own words: the model does not write the queries.
+	NoSearchPlan bool `json:"no_search_plan,omitempty"`
+	// VoiceServer writes dictation down with an OpenRouter model even where the browser could;
+	// VoiceModel is that model (empty picks one that hears audio).
+	VoiceServer bool   `json:"voice_server,omitempty"`
+	VoiceModel  string `json:"voice_model,omitempty"`
 	// NoAutoTitle keeps a new chat's title from its first message: the model does not name it.
 	NoAutoTitle bool `json:"no_auto_title,omitempty"`
-	// FollowUpModel writes the suggestions and titles: empty is the chat's own model, otherwise an
+	// FollowUpModel writes the suggestions, titles and search queries: empty is the chat's own model, otherwise an
 	// OpenRouter (cloud:<id>) or ChatGPT (chatgpt:<id>) model — never another local model, which
 	// would have to be started.
 	FollowUpModel string `json:"follow_up_model,omitempty"`
@@ -74,6 +85,9 @@ type ChatGPT struct {
 	// ExposeAPI shows the subscription's models to the /v1 clients (chatgpt/<id>); off by
 	// default, since their requests are counted against the owner's limits.
 	ExposeAPI bool `json:"expose_api"`
+	// OmniBoxSearch searches for ChatGPT models with the chat's own engine; by default they use
+	// OpenAI's built-in web search, which runs on OpenAI's side within the subscription.
+	OmniBoxSearch bool `json:"omnibox_search,omitempty"`
 }
 
 // ChatGPTSettings returns the ChatGPT settings, defaults filled in.
@@ -167,6 +181,17 @@ func (c *Chat) Validate() error {
 			return errors.New("Адрес SearXNG: http(s)://адрес без параметров, например https://search.example.com.")
 		}
 		c.SearchURL = strings.TrimRight(u.String(), "/")
+	}
+	switch c.SearchEngine {
+	case "", "perplexity", "tavily", "brave", "sonar":
+	default:
+		return errors.New("Поисковая система: SearXNG, Perplexity, Tavily, Brave Search или Perplexity Sonar.")
+	}
+	if c.VoiceModel != "" && !ValidCloudModel(c.VoiceModel) {
+		return errors.New("Модель для голоса: модель OpenRouter, например google/gemini-2.5-flash.")
+	}
+	if c.SonarModel != "" && (!ValidCloudModel(c.SonarModel) || !strings.HasPrefix(c.SonarModel, "perplexity/")) {
+		return errors.New("Модель Sonar: модель Perplexity в OpenRouter, например perplexity/sonar.")
 	}
 	if c.SearchResults < 1 || c.SearchResults > 10 {
 		return errors.New("Источников на запрос: от 1 до 10.")

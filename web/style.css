@@ -122,6 +122,10 @@ input:focus,select:focus,textarea:focus{border-color:var(--iris)}
 .menu button .pill{justify-self:end;margin-top:1px}
 .menu button[aria-current="true"]{background:var(--iris-soft)}
 .menu button:hover{background:var(--surface2)}
+.menu .pitem{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:2px}
+.menu .pitem>.pstar{display:grid;place-items:center;width:30px;height:30px;padding:0;border-radius:7px;color:var(--faint)}
+.menu .pitem>.pstar.on{color:var(--iris)}.menu .pitem>.pstar.on svg{fill:currentColor}
+.menu .pitem>.pstar:hover{color:var(--iris)}
 .menu .note{padding:8px 10px;font-size:12px;color:var(--faint);border-top:1px solid var(--line);margin-top:4px}
 .messages{flex:1;overflow:auto;padding:24px}
 .messages>div{max-width:760px;margin:0 auto;display:grid;gap:22px}
@@ -659,6 +663,10 @@ details.mini>summary:hover{color:var(--text)}
    words are in the tips and popovers. */
 .composer .tog{min-width:0;width:34px;height:34px;padding:0;border-radius:50%}
 .composer .tog svg.i{width:17px !important;height:17px !important}
+#think-btn{position:relative}
+#think-btn[aria-pressed="true"]{color:color-mix(in oklab,#ff9654 calc(var(--lvl,0) * 100%),var(--iris-text));border-color:color-mix(in oklab,#ff9654 calc(var(--lvl,0) * 70%),var(--iris-line))}
+#think-btn::after{content:"";position:absolute;left:50%;bottom:3px;height:3px;border-radius:2px;width:calc(6px + var(--lvl,0) * 14px);transform:translateX(-50%);background:var(--light) left/20px 100% no-repeat;opacity:0}
+#think-btn[aria-pressed="true"]::after{opacity:1}
 .asst-chip{width:34px;height:34px;max-width:none;padding:0;justify-content:center;border-radius:50%;border-color:transparent;background:none}
 /* .picker>button gives the model picker its padding; the round assistant button has none, so the avatar is centred. */
 .picker>button.asst-chip{padding:0;gap:0;background:none}

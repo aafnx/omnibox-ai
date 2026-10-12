@@ -129,13 +129,14 @@ function renderAll(){renderThreads();renderChat();renderPicker();renderAssist();
 
 // ── models: the picker ──
 function setChosen(key,start=true){C.chosen=key;try{localStorage.setItem('omnibox-model',key);}catch(e){}
-  renderPicker();renderThink();recheckAttached();renderFoot();const m=modelByKey(key);if(start&&m?.source==='local'&&!m.running)startLocal(m).catch(fail);}
+  renderPicker();renderThink();renderWeb();recheckAttached();renderFoot();const m=modelByKey(key);if(start&&m?.source==='local'&&!m.running)startLocal(m).catch(fail);}
 const curModel=()=>modelByKey(C.chosen);
 async function startLocal(m){if(C.starting)return;C.starting=true;loadBegin(m);renderBusy(`Запускаем ${m.name}`);
   try{const op=await operation({action:'model-start',model:m.key},{quiet:true});if(op.state==='failed')return;await refreshLibrary();}finally{C.starting=false;loadEnd();renderBusy();}}
 function renderBusy(text){byId('model-busy').hidden=!text;if(text)byId('model-busy-text').textContent=text;byId('send').disabled=!!text&&!C.busy;}
 function pickerItem(m){const pill=m.source==='cloud'?`<span class="pill sky">${price(m.prompt_usd)} / ${price(m.completion_usd)}</span>`:m.source==='chatgpt'?'<span class="pill iris">Подписка</span>':m.running?'<span class="pill ok">Работает</span>':'<span class="pill">Локальная</span>';
-  return `<button type="button" data-pick-model="${esc(m.key)}"${m.key===C.chosen?' aria-current="true"':''}><b>${m.favorite?'★ ':''}${esc(m.name)}</b>${pill}${capIcons(m)}</button>`;}
+  const fav=m.favorite?'Убрать из избранного':'В избранное';
+  return `<div class="pitem"><button type="button" data-pick-model="${esc(m.key)}"${m.key===C.chosen?' aria-current="true"':''}><b>${esc(m.name)}</b>${pill}${capIcons(m)}</button><button type="button" class="pstar${m.favorite?' on':''}" data-pick-star="${esc(m.key)}" aria-pressed="${!!m.favorite}" title="${fav}" aria-label="${fav}: ${esc(m.name)}"><svg class="i"><use href="#i-star"/></svg></button></div>`;}
 function renderPicker(){const m=curModel();const btn=byId('picker-btn');
   btn.innerHTML=`${m?.source==='cloud'||m?.source==='chatgpt'?'<svg class="i i15"><use href="#i-cloud"/></svg>':`<span class="dot${m?.running?'':' off'}"></span>`}<span class="pname">${esc(m?.name||'Выберите модель')}</span><svg class="i i15"><use href="#i-down"/></svg>`;
   if(byId('picker-menu').hidden)return;
@@ -143,14 +144,14 @@ function renderPicker(){const m=curModel();const btn=byId('picker-btn');
   const grp=(title,list)=>{if(!list.length)return '';const key='p:'+title;const shut=!q&&collapsed.has(key);return `<button type="button" class="grp-btn h4" data-grp="${key}" aria-expanded="${!shut}"><span>${title}</span><span class="grp-n">${list.length}</span><svg class="i chev${shut?' shut':''}"><use href="#i-down"/></svg></button>${shut?'':list.map(pickerItem).join('')}`;};
   const cloudOff=!S.cloud?.connected?'<div class="note">OpenRouter не подключён: <a href="#settings" data-go="settings" data-jump-after="s-cloud" class="ink">добавить ключ</a>.</div>':'';
   const gptOff=!S.library?.chatgpt?.connected?'<div class="note">ChatGPT не подключён: <a href="#settings" data-go="settings" data-jump-after="s-gpt" class="ink">войти по подписке</a>.</div>':'';
-  setHTML(byId('picker-list'),(grp('Избранные',all.filter(x=>x.favorite))+grp('Локальные модели',all.filter(x=>!x.favorite&&x.source==='local'))+grp('ChatGPT',all.filter(x=>!x.favorite&&x.source==='chatgpt'))+grp('OpenRouter',all.filter(x=>!x.favorite&&x.source==='cloud'))||'<div class="note">Ничего не найдено</div>')+gptOff+cloudOff);
+  setHTML(byId('picker-list'),(grp('Избранные',all.filter(x=>x.favorite))+grp('Локальные модели',all.filter(x=>x.source==='local'))+grp('ChatGPT',all.filter(x=>x.source==='chatgpt'))+grp('OpenRouter',all.filter(x=>x.source==='cloud'))||'<div class="note">Ничего не найдено</div>')+gptOff+cloudOff);
   byId('picker-note').textContent=m?.source==='cloud'?'Облачная модель: запрос уходит в OpenRouter, локальная модель продолжает работать.':m?.source==='chatgpt'?'Модель подписки ChatGPT: запрос уходит в OpenAI и расходует лимиты подписки; локальная модель продолжает работать.':'Другая локальная модель запустится вместо текущей, это займёт 10–60 секунд.';}
 // ── context: how much of the model's window the chat fills ──
 // The window is the context the local model runs with (or will start with), or the cloud model's limit.
 // The fill is what the last answer's request held, as the engine counted it; chats from before 0.22
 // have no such count and get an estimate from the text.
 const tk=(n,k=1024)=>{const f=(v,u)=>v.toFixed(1).replace(/\.0$/,'').replace('.',',')+u;return n>=k*k?f(n/(k*k),'M'):n>=k?f(n/k,'K'):String(n);};
-function ctxWindow(m){if(!m)return 0;if(m.source==='cloud')return m.context||0;if(m.source==='chatgpt')return 0;
+function ctxWindow(m){if(!m)return 0;if(m.source==='cloud'||m.source==='chatgpt')return m.context||0;
   const b=(S.status?.backends||[]).find(x=>x.name===m.engine);if(m.running&&b?.active_context)return b.active_context;return curCtx(m)||m.context||0;}
 function ctxUsed(){const msgs=C.chat?.messages||[];
   for(let i=msgs.length-1;i>=0;i--){const n=msgs[i].meta?.context_tokens;if(n)return {n,est:false};}
@@ -165,7 +166,7 @@ function renderCtxMeter(){const i=ctxInfo(),w=byId('ctx-wrap');w.hidden=!i;if(!i
   setHTML(byId('ctx-pop'),`<div class="line"><b>Контекст</b><span class="muted">${i.est?'≈ ':''}${t(i.used)} / ${t(i.total)} (${i.pct}%)</span></div>
     <div class="meter${lv?' '+lv:''}"><i data-w="${i.pct}%"></i></div>
     <dl class="ctxkv"><dt>Длина контекста</dt><dd>${t(i.total)}</dd><dt>Занято</dt><dd>${i.est?'≈ ':''}${t(i.used)}</dd><dt>Осталось</dt><dd>${i.est?'≈ ':''}${t(i.left)}</dd></dl>
-    <span class="hint">${i.m.source==='cloud'?'Предел модели в OpenRouter.':i.m.running?'С этой длиной модель запущена; изменить — «Модели → Настроить».':'С этой длиной модель запустится; изменить — «Модели → Настроить».'} Занято — история чата, инструкции ассистента и файлы${i.est?'; это оценка по тексту — точное число появится после следующего ответа':' по последнему ответу модели'}.${i.pct>=70?' Ближе к 100% начните новый чат: длинную историю модель может не принять или забыть её начало.':''}</span>`);}
+    <span class="hint">${i.m.source==='cloud'?'Предел модели в OpenRouter.':i.m.source==='chatgpt'?'Окно модели ChatGPT по данным Codex; длинную историю Codex сжимает сам.':i.m.running?'С этой длиной модель запущена; изменить — «Модели → Настроить».':'С этой длиной модель запустится; изменить — «Модели → Настроить».'} Занято — история чата, инструкции ассистента и файлы${i.est?'; это оценка по тексту — точное число появится после следующего ответа':' по последнему ответу модели'}.${i.pct>=70?' Ближе к 100% начните новый чат: длинную историю модель может не принять или забыть её начало.':''}</span>`);}
 function renderFoot(){const m=curModel();const f=byId('chat-foot');renderCtxMeter();
   if(m?.source==='chatgpt'){const l=S.gptLimits,short=gptShort(l),hot=gptWindows(l).some(w=>w.used_percent>=90)||l?.reached;
     f.innerHTML=`<a class="cloudnote${hot?' warn-text':''}" href="#settings" data-go="settings" data-jump-after="s-gpt" title="Лимиты подписки ChatGPT по данным OpenAI — открыть настройки"><svg class="i"><use href="#i-cloud"/></svg>ChatGPT${short?' · '+esc(short):' · лимиты подписки'}</a><span class="sep"> · </span><span class="disc">ИИ может ошибаться — проверяйте важное.</span>`;
@@ -194,10 +195,14 @@ async function pickAssistant(id){const a=asstById(id);if(a?.model&&modelByKey(a.
   byId('asst-menu').hidden=true;renderAssist();renderWeb();}
 
 // ── reasoning ──
+// thinkLevel is a step's place on the model's scale, 0 for the lightest (or off) to 1 for the deepest.
+function thinkLevel(scale,step){const s=scale.filter(x=>x!=='off');if(step==='off'||!s.includes(step))return 0;return s.length>1?s.indexOf(step)/(s.length-1):0.5;}
 function renderThink(){const m=curModel()||{reasoning:{mode:'none'}};const t=m.reasoning||{mode:'none'},S2=steps(t);
   let st=efforts[m.key];if(!S2.includes(st))st=S2.includes(t.default)?t.default:S2[Math.min(S2.length-1,S2[0]==='off'?2:1)]||S2[0];
   const on=t.mode!=='none'&&st!=='off';const lbl=t.mode==='none'?'Без размышлений':!on?'Размышления: выкл':S2.length>2||t.mode==='always'?`Размышления: ${STEP_NAME[st].toLowerCase()}`:'Размышления';
   const b=byId('think-btn');b.classList.toggle('dim',!on);b.setAttribute('aria-pressed',String(on));b.title=lbl;b.setAttribute('aria-label',lbl);
+  // The depth in colour: the icon goes from Iris to Ember and a bar of the brand gradient grows with it.
+  b.style.setProperty('--lvl',String(thinkLevel(S2,on?st:'off')));
   let h='';
   if(t.mode==='none')h='<div class="line"><b>Размышления</b><span class="pill">Нет</span></div><span class="hint">Эта модель отвечает сразу и не умеет размышлять. Для сложных задач выберите модель со значком «Рассуждения».</span>';
   else if(S2.length===1)h='<div class="line"><b>Размышления</b><span class="pill iris">Всегда включены</span></div><span class="hint">Модель сама решает, сколько думать; настроить глубину нельзя.</span>';
@@ -214,10 +219,13 @@ byId('think-pop').addEventListener('input',e=>{if(e.target.id!=='think-range')re
   try{localStorage.setItem('omnibox-effort',JSON.stringify(efforts));}catch(x){}renderThink();if(thinkKbd){byId('think-range').focus();$('.ttrack').classList.add('kbd');}});
 
 // ── web search ──
-function renderWeb(){const s=S.chatSettings||{};const ready=!!s.search_url;byId('web').setAttribute('aria-pressed',String(C.web&&ready));
-  const tip=!ready?'Веб-поиск: SearXNG не настроен':C.web?'Веб-поиск: включён':'Веб-поиск: выключен';byId('web').title=tip;byId('web').setAttribute('aria-label',tip);byId('web-on').checked=C.web;byId('web-on').disabled=!ready;
-  byId('web-host').textContent=ready?hostOf(s.search_url)||s.search_url:'не задан';
-  byId('web-hint').innerHTML=ready?(curModel()&&!has(curModel(),'tools')?'Эта модель не вызывает функции: поиск выполняется по каждому вопросу. Источники появятся под ответом.':'Модель сама решает, когда искать. Источники появятся под ответом.'):'Адрес SearXNG не задан: <a href="#settings" data-go="settings" data-jump-after="s-search" class="ink">настроить</a>.';}
+// Search is ready when the chosen engine is set up; a ChatGPT model may search with OpenAI's own.
+const ENGINE_NAMES={'':'SearXNG',perplexity:'Perplexity',sonar:'Perplexity Sonar',tavily:'Tavily',brave:'Brave Search'};
+function webMode(){const s=S.chatSettings||{},m=curModel();if(m?.source==='chatgpt'&&s.chatgpt_search)return 'openai';return s.search_ready?'engine':'';}
+function renderWeb(){const s=S.chatSettings||{},mode=webMode(),ready=!!mode;byId('web').setAttribute('aria-pressed',String(C.web&&ready));
+  const tip=!ready?'Веб-поиск: не настроен':C.web?'Веб-поиск: включён':'Веб-поиск: выключен';byId('web').title=tip;byId('web').setAttribute('aria-label',tip);byId('web-on').checked=C.web;byId('web-on').disabled=!ready;
+  byId('web-host').textContent=mode==='openai'?'поиск OpenAI':mode?(s.search_engine?ENGINE_NAMES[s.search_engine]:hostOf(s.search_url)||s.search_url):'не задан';
+  byId('web-hint').innerHTML=mode==='openai'?'ChatGPT ищет сам встроенным поиском OpenAI, в рамках подписки; ссылки на источники — в тексте ответа.':ready?(curModel()&&!has(curModel(),'tools')?'Перед ответом OmniBox составляет поисковые запросы и ищет; источники появятся под ответом.':'Модель сама решает, когда искать. Источники появятся под ответом.'):'Поиск не настроен: <a href="#settings" data-go="settings" data-jump-after="s-search" class="ink">настроить</a>.';}
 
 // ── attachments: refused before sending when the model cannot read them ──
 const KINDS={image:{name:'изображения',need:'vision',ext:['png','jpg','jpeg','webp','gif']},video:{name:'видео',need:'video',ext:['mp4','mov','webm','mkv','avi']},audio:{name:'аудио',need:'audio',ext:['mp3','wav','m4a','ogg','flac','opus']},
@@ -297,7 +305,7 @@ async function send(opts={}){if(C.busy)return;stopFollowUps();if(rec)rec.stop();
   if(!again){box.insertAdjacentHTML('beforeend',userHTML({text,attachments}));C.chat.messages.push({role:'user',text,attachments,pending:true});
     if(opts.text===undefined){byId('prompt').value='';C.attached=[];renderAttached();byId('attach-warn').hidden=true;}}
   const s=newStream(chat.id,opts);paintLive(s);scrollDown(true);
-  const body={chat_id:chat.id,model:m.key,text,files:data,web:!!(C.web&&S.chatSettings?.search_url),effort:C.effort||'',assistant_id:chatAsst()||''};if(opts.retry)body.retry=opts.retry;if(opts.edit)body.edit=opts.edit;
+  const body={chat_id:chat.id,model:m.key,text,files:data,web:!!(C.web&&webMode()),effort:C.effort||'',assistant_id:chatAsst()||''};if(opts.retry)body.retry=opts.retry;if(opts.edit)body.edit=opts.edit;
   try{const r=await fetch('/api/chat/send',{method:'POST',credentials:'same-origin',headers:{'Content-Type':'application/json','X-Omnibox-CSRF':csrf},body:JSON.stringify(body),signal:s.ctrl.signal});
     if(!r.ok){let msg=`Ошибка ${r.status}`;try{msg=(await r.json()).error||msg;}catch(e){}if(r.status===401)showLogin();throw Object.assign(new Error(msg),{refused:true});}
     await consume(r,s);
@@ -369,18 +377,49 @@ function sendEdit(msg){const id=msg.dataset.id,text=(msg.querySelector('.edit-ta
 async function switchBranch(btn){if(C.busy||!C.chat)return;stopFollowUps();
   C.chat=await api('/api/chats',{action:'branch',id:C.chat.id,message_id:btn.dataset.branch,index:+btn.dataset.to});renderChat();showChatCost();}
 
-// ── voice: dictation and reading aloud, both by the browser ──
-// Recognition is the browser's own: Chrome and Edge send the sound to Google's or Microsoft's
-// service, Safari recognizes on the device when it can. Reading aloud uses the system's voices.
-const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null;
-function renderMic(){const b=byId('mic-btn');b.hidden=!SR;b.setAttribute('aria-pressed',String(!!rec));b.classList.toggle('rec',!!rec);
-  b.title=rec?'Слушаю… нажмите, чтобы закончить':'Голосовой ввод: распознаёт браузер (Chrome и Edge — через облачный сервис Google или Microsoft)';}
-function toggleMic(){if(rec){rec.stop();return;}if(!SR)return;const ta=byId('prompt'),base=ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value;
-  rec=new SR();rec.lang='ru-RU';rec.interimResults=true;rec.continuous=true;
-  rec.onresult=e=>{let t='';for(const r of e.results)t+=r[0].transcript;ta.value=base+t;};
-  rec.onerror=e=>{if(e.error==='not-allowed'||e.error==='service-not-allowed')notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);else if(e.error!=='no-speech'&&e.error!=='aborted')notice('Голосовой ввод прервался.',true);};
+// ── voice: dictation and reading aloud ──
+// Recognition is the browser's own where it works: Chrome and Edge send the sound to Google's or
+// Microsoft's service, Safari recognizes on the device. Brave has the API but no service behind
+// it ("network" at once): there, or when chosen in the settings, the panel records the voice and
+// an OpenRouter model that hears audio writes it down. Reading aloud uses the system's voices.
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;let rec=null,recording=null,transcribing=false;
+const canRecord=()=>!!(navigator.mediaDevices?.getUserMedia&&window.MediaRecorder);
+function voiceServer(){if(S.chatSettings?.voice_server||!SR)return true;try{return localStorage.getItem('omnibox-voice-server')==='1';}catch(e){return false;}}
+function renderMic(){const b=byId('mic-btn');b.hidden=!SR&&!canRecord();const on=!!rec||!!recording;b.setAttribute('aria-pressed',String(on));b.classList.toggle('rec',on);b.disabled=transcribing;
+  b.title=transcribing?'Распознаём запись…':on?'Слушаю… нажмите, чтобы закончить':voiceServer()?'Голосовой ввод: запись распознаёт модель OpenRouter':'Голосовой ввод: распознаёт браузер (Chrome и Edge — через облачный сервис Google или Microsoft)';}
+function insertDictation(text){const ta=byId('prompt');if(!text)return;ta.value=(ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value)+text;ta.dispatchEvent(new Event('input'));ta.focus();}
+function toggleMic(){if(rec){rec.stop();return;}if(recording){recording.stop();return;}if(transcribing)return;
+  if(voiceServer()){startRecording();return;}
+  const ta=byId('prompt'),base=ta.value&&!/\s$/.test(ta.value)?ta.value+' ':ta.value;
+  rec=new SR();rec.lang='ru-RU';rec.interimResults=true;rec.continuous=true;let heard=false;
+  rec.onresult=e=>{heard=true;let t='';for(const r of e.results)t+=r[0].transcript;ta.value=base+t;};
+  rec.onerror=e=>{if(e.error==='not-allowed')notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);
+    else if((e.error==='network'||e.error==='service-not-allowed')&&!heard&&canRecord()){
+      // The browser has no recognition service (Brave): record instead, from now on.
+      try{localStorage.setItem('omnibox-voice-server','1');}catch(x){}rec.onend=null;rec=null;
+      notice('Этот браузер не распознаёт речь сам — записываю голос, текст распознает модель OpenRouter. Говорите и нажмите микрофон ещё раз.');startRecording();}
+    else if(e.error!=='no-speech'&&e.error!=='aborted')notice('Голосовой ввод прервался.',true);};
   rec.onend=()=>{rec=null;renderMic();byId('prompt').focus();};
   try{rec.start();}catch(e){rec=null;}renderMic();}
+async function startRecording(){if(!canRecord()){notice('Этот браузер не умеет записывать звук.',true);return;}
+  if(!S.cloud?.connected){notice('Для голосового ввода в этом браузере нужен OpenRouter: «Настройки → OpenRouter». Или откройте панель в Chrome, Edge или Safari.',true);return;}
+  let stream;try{stream=await navigator.mediaDevices.getUserMedia({audio:true});}catch(e){notice('Браузер не дал доступ к микрофону: разрешите его для этой страницы.',true);return;}
+  const mr=new MediaRecorder(stream),chunks=[];mr.ondataavailable=e=>{if(e.data.size)chunks.push(e.data);};
+  const limit=setTimeout(()=>{if(mr.state==='recording')mr.stop();},230000);
+  mr.onstop=async()=>{clearTimeout(limit);stream.getTracks().forEach(t=>t.stop());recording=null;transcribing=true;renderMic();
+    try{const wav=await toWav(new Blob(chunks,{type:mr.mimeType}));const d=await api('/api/chat/transcribe',{data:wav});
+      if(d.text)insertDictation(d.text);else notice('Речь не распознана.',true);}catch(e){fail(e);}finally{transcribing=false;renderMic();}};
+  recording=mr;mr.start();renderMic();}
+// toWav turns a recording into 16 kHz mono WAV in base64: every model that hears audio reads it.
+async function toWav(blob){const AC=window.AudioContext||window.webkitAudioContext,ctx=new AC();
+  try{const src=await ctx.decodeAudioData(await blob.arrayBuffer());const rate=16000,n=Math.max(1,Math.ceil(src.duration*rate));
+    const off=new OfflineAudioContext(1,n,rate),node=off.createBufferSource();node.buffer=src;node.connect(off.destination);node.start();
+    return wavBase64((await off.startRendering()).getChannelData(0),rate);}finally{ctx.close?.();}}
+function wavBase64(pcm,rate){const buf=new ArrayBuffer(44+pcm.length*2),v=new DataView(buf),str=(o,t)=>{for(let i=0;i<t.length;i++)v.setUint8(o+i,t.charCodeAt(i));};
+  str(0,'RIFF');v.setUint32(4,36+pcm.length*2,true);str(8,'WAVE');str(12,'fmt ');v.setUint32(16,16,true);v.setUint16(20,1,true);v.setUint16(22,1,true);
+  v.setUint32(24,rate,true);v.setUint32(28,rate*2,true);v.setUint16(32,2,true);v.setUint16(34,16,true);str(36,'data');v.setUint32(40,pcm.length*2,true);
+  for(let i=0;i<pcm.length;i++){const x=Math.max(-1,Math.min(1,pcm[i]));v.setInt16(44+i*2,x<0?x*0x8000:x*0x7fff,true);}
+  const bytes=new Uint8Array(buf);let bin='';for(let i=0;i<bytes.length;i+=0x8000)bin+=String.fromCharCode.apply(null,bytes.subarray(i,i+0x8000));return btoa(bin);}
 // Text to read: Markdown marks, links and citation numbers out; code is named, not spelled.
 function speechText(t){return String(t).replace(/```[\s\S]*?(```|$)/g,' (фрагмент кода) ').replace(/`([^`]*)`/g,'$1').replace(/!?\[([^\]]*)\]\([^)]*\)/g,'$1').replace(/\[\d{1,2}\]/g,'')
   .replace(/^\s{0,3}(#{1,6}|>|[-*+]|\d+[.)])\s+/gm,'').replace(/[*_~|]/g,'').replace(/\$\$?/g,'').replace(/\n{2,}/g,'\n').trim();}
@@ -466,6 +505,7 @@ document.addEventListener('click',e=>{
   if(e.target.closest('#asst-btn')){const m=byId('asst-menu');m.hidden=!m.hidden;byId('asst-btn').setAttribute('aria-expanded',String(!m.hidden));return;}
   const ap=e.target.closest('[data-asst-pick]');if(ap){pickAssistant(ap.dataset.asstPick).catch(fail);return;}
   if(e.target.closest('#picker-btn')){const m=byId('picker-menu');m.hidden=!m.hidden;byId('picker-btn').setAttribute('aria-expanded',String(!m.hidden));if(!m.hidden){renderPicker();byId('picker-q').focus();}return;}
+  const ps=e.target.closest('[data-pick-star]');if(ps){const k=ps.dataset.pickStar,m=modelByKey(k);api('/api/library',{action:'favorite',model:k,on:!m?.favorite}).then(()=>refreshLibrary()).then(renderPicker).catch(fail);return;}
   const pm=e.target.closest('[data-pick-model]');if(pm){byId('picker-menu').hidden=true;setChosen(pm.dataset.pickModel);return;}
   const gb2=e.target.closest('[data-grp]');if(gb2&&(gb2.dataset.grp[0]==='t'||gb2.dataset.grp[0]==='p')){toggleGroup(gb2.dataset.grp);gb2.dataset.grp[0]==='t'?renderThreads():renderPicker();return;}
   const act=e.target.closest('[data-act]');if(act){messageAction(act.dataset.act,act).catch(fail);return;}

@@ -59,6 +59,7 @@ function setHTML(el,html){el.innerHTML=html;paint(el);}
 const CAP={
   vision:{icon:'i-eye',name:'Изображения',tip:'Понимает изображения: скриншоты, фото, сканы документов.'},
   novision:{icon:'i-eye',name:'Изображения: нужен проектор',tip:'Модель умеет видеть, но файл проектора mmproj не скачан. Откройте модель → «Скачать проектор».',missing:true},
+  search:{icon:'i-globe',name:'Веб-поиск',tip:'Ищет в интернете сама, встроенным поиском (у ChatGPT — поиск OpenAI в рамках подписки).'},
   video:{icon:'i-video',name:'Видео',tip:'Понимает видео: смотрит ролик и отвечает по нему.'},
   audio:{icon:'i-audio',name:'Аудио',tip:'Понимает аудио: речь, записи разговоров, звуки.'},
   reasoning:{icon:'i-brain',name:'Рассуждения',tip:'Думает перед ответом: точнее на задачах с логикой, кодом и математикой, но отвечает дольше.'},
@@ -75,9 +76,9 @@ function ico(m,k,on){const c=CAP[k];const tip=k==='reasoning'?thinkTip(m):on?`${
   return `<span class="ico${on?'':' off'}${c.missing?' missing':''}" tabindex="0" data-tip="${esc(tip)}" aria-label="${esc(c.name)}${on?'':': нет'}"><svg><use href="#${c.icon}"/></svg></span>`;}
 // Every capability, the missing ones dimmed: the cards of the model list.
 function allChips(m){const miss=has(m,'vision_missing');
-  return `<span class="icaps">${[miss?ico(m,'novision',true):ico(m,'vision',has(m,'vision')),ico(m,'video',has(m,'video')),ico(m,'audio',has(m,'audio')),ico(m,'reasoning',has(m,'reasoning')),ico(m,'tools',has(m,'tools')),ico(m,'draws',has(m,'draws'))].join('')}</span>`;}
+  return `<span class="icaps">${[miss?ico(m,'novision',true):ico(m,'vision',has(m,'vision')),ico(m,'video',has(m,'video')),ico(m,'audio',has(m,'audio')),ico(m,'reasoning',has(m,'reasoning')),ico(m,'tools',has(m,'tools')),ico(m,'draws',has(m,'draws')),has(m,'search')?ico(m,'search',true):''].join('')}</span>`;}
 // Only what the model can do, for compact lists.
-function capIcons(m){const keys=['vision','video','audio','reasoning','tools','draws'].filter(k=>has(m,k));if(has(m,'vision_missing'))keys.unshift('novision');
+function capIcons(m){const keys=['vision','video','audio','reasoning','tools','search','draws'].filter(k=>has(m,k));if(has(m,'vision_missing'))keys.unshift('novision');
   return `<span class="icaps">${keys.map(k=>`<span class="ico${CAP[k].missing?' missing':''}" data-tip="${esc(k==='reasoning'?thinkTip(m):CAP[k].name+'. '+CAP[k].tip)}" aria-label="${CAP[k].name}"><svg><use href="#${CAP[k].icon}"/></svg></span>`).join('')}${m.context?`<span class="ictx" data-tip="Контекст: сколько текста модель держит в разговоре.">${kfmt(m.context)}</span>`:''}</span>`;}
 const ctxChip=m=>m.context?`<span class="ictx chip" tabindex="0" data-tip="Контекст: сколько текста модель держит в разговоре."><svg class="i"><use href="#i-ctx"/></svg>${kfmt(m.context)}</span>`:'';
 

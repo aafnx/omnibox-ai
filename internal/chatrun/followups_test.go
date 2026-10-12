@@ -43,6 +43,7 @@ func withFollowUps(on bool, model string) func() *config.Config {
 	return func() *config.Config {
 		c := config.Default()
 		s := config.DefaultChat()
+		s.NoSearchPlan = true
 		s.FollowUps, s.FollowUpModel = on, model
 		c.Chat = &s
 		return c

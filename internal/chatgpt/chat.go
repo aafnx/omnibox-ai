@@ -29,6 +29,9 @@ const Prefix = "chatgpt/"
 // no system message.
 const defaultInstructions = "You are ChatGPT, a helpful assistant. Answer in the language of the user."
 
+// searchInstructions ask for the sources a search found: Codex does not pass OpenAI's citations on.
+const searchInstructions = "You can search the web. Search when the answer needs current or specific facts. Cite the sources you used as Markdown links [site](url) right after the facts they support."
+
 // allowedItems are what an answer may consist of; anything else (a command, a file change, a
 // tool call) interrupts the turn.
 var allowedItems = map[string]bool{"userMessage": true, "agentMessage": true, "reasoning": true, "contextCompaction": true, "hookPrompt": true}
@@ -95,16 +98,19 @@ type request struct {
 	stream       bool
 	effort       string
 	instructions string
-	history      []map[string]any
-	input        []map[string]any
+	// search turns on OpenAI's own web search for this answer (web_search_options).
+	search  bool
+	history []map[string]any
+	input   []map[string]any
 }
 
 func (s *Service) parse(ctx context.Context, body []byte) (*request, error) {
 	var in struct {
-		Model     string        `json:"model"`
-		Messages  []chatMessage `json:"messages"`
-		Stream    bool          `json:"stream"`
-		Effort    string        `json:"reasoning_effort"`
+		Model     string          `json:"model"`
+		Messages  []chatMessage   `json:"messages"`
+		Stream    bool            `json:"stream"`
+		Effort    string          `json:"reasoning_effort"`
+		Search    json.RawMessage `json:"web_search_options"`
 		Reasoning *struct {
 			Effort string `json:"effort"`
 		} `json:"reasoning"`
@@ -113,6 +119,8 @@ func (s *Service) parse(ctx context.Context, body []byte) (*request, error) {
 		return nil, &Error{http.StatusBadRequest, "invalid JSON body"}
 	}
 	r := &request{model: strings.TrimPrefix(in.Model, Prefix), stream: in.Stream, effort: in.Effort}
+	// OpenAI searches on its side, with no access to this PC; the owner allows it in the settings.
+	r.search = len(in.Search) > 0 && string(in.Search) != "null" && s.WebSearch != nil && s.WebSearch()
 	if in.Reasoning != nil && in.Reasoning.Effort != "" {
 		r.effort = in.Reasoning.Effort
 	}
@@ -258,12 +266,18 @@ func (s *Service) Chat(ctx context.Context, body []byte) (*http.Response, error)
 			ID string `json:"id"`
 		} `json:"thread"`
 	}
-	err = c.call(ctx, "thread/start", map[string]any{
+	start := map[string]any{
 		"model": r.model, "ephemeral": true, "sandbox": "read-only", "approvalPolicy": "on-request",
 		"baseInstructions": r.instructions, "cwd": s.work(),
 		// No environment: Codex offers the model no shell, no file edits and no images to view.
 		"environments": []any{},
-	}, &started)
+	}
+	if r.search {
+		// The only tool then is OpenAI's hosted web search; it runs on OpenAI's side.
+		start["config"] = map[string]any{"web_search": "live"}
+		start["baseInstructions"] = r.instructions + "\n\n" + searchInstructions
+	}
+	err = c.call(ctx, "thread/start", start, &started)
 	if err != nil {
 		return fail(err)
 	}
@@ -303,7 +317,7 @@ func (s *Service) Chat(ctx context.Context, body []byte) (*http.Response, error)
 	if !r.stream {
 		var buf strings.Builder
 		w.w = &buf
-		err := s.follow(ctx, c, q, threadID, turn.Turn.ID, w)
+		err := s.follow(ctx, c, q, r, threadID, turn.Turn.ID, w)
 		done()
 		if err != nil {
 			return nil, &Error{http.StatusBadGateway, err.Error()}
@@ -317,7 +331,7 @@ func (s *Service) Chat(ctx context.Context, body []byte) (*http.Response, error)
 	w.w = pw
 	go func() {
 		defer done()
-		if err := s.follow(ctx, c, q, threadID, turn.Turn.ID, w); err != nil {
+		if err := s.follow(ctx, c, q, r, threadID, turn.Turn.ID, w); err != nil {
 			w.chunk(map[string]any{"error": map[string]any{"message": err.Error()}})
 		} else {
 			w.finish()
@@ -331,7 +345,7 @@ func (s *Service) Chat(ctx context.Context, body []byte) (*http.Response, error)
 
 // follow turns the thread's notifications into the answer until the turn ends. A cancelled
 // request interrupts the turn, so the subscription stops spending on it.
-func (s *Service) follow(ctx context.Context, c *conn, q *queue, threadID, turnID string, w *writer) error {
+func (s *Service) follow(ctx context.Context, c *conn, q *queue, r *request, threadID, turnID string, w *writer) error {
 	interrupt := func() {
 		ictx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -343,7 +357,8 @@ func (s *Service) follow(ctx context.Context, c *conn, q *queue, threadID, turnI
 				TurnID string `json:"turnId"`
 				Delta  string `json:"delta"`
 				Item   struct {
-					Type string `json:"type"`
+					Type  string `json:"type"`
+					Query string `json:"query"`
 				} `json:"item"`
 				Turn struct {
 					ID     string `json:"id"`
@@ -363,6 +378,7 @@ func (s *Service) follow(ctx context.Context, c *conn, q *queue, threadID, turnI
 						Output    int `json:"outputTokens"`
 						Reasoning int `json:"reasoningOutputTokens"`
 					} `json:"last"`
+					Window int `json:"modelContextWindow"`
 				} `json:"tokenUsage"`
 			}
 			_ = json.Unmarshal(n.params, &p)
@@ -376,8 +392,12 @@ func (s *Service) follow(ctx context.Context, c *conn, q *queue, threadID, turnI
 				w.reasoning(p.Delta)
 			case "item/reasoning/summaryPartAdded":
 				w.reasoning("\n\n")
+			case "item/completed":
+				if p.Item.Type == "webSearch" && strings.TrimSpace(p.Item.Query) != "" {
+					w.searched(p.Item.Query)
+				}
 			case "item/started":
-				if !allowedItems[p.Item.Type] {
+				if !allowedItems[p.Item.Type] && !(r.search && p.Item.Type == "webSearch") {
 					interrupt()
 					s.logf("chatgpt: interrupted a turn that started %q", p.Item.Type)
 					return fmt.Errorf("ChatGPT попытался выполнить действие (%s), а не ответить: ответ остановлен.", p.Item.Type)
@@ -385,6 +405,9 @@ func (s *Service) follow(ctx context.Context, c *conn, q *queue, threadID, turnI
 			case "thread/tokenUsage/updated":
 				u := p.TokenUsage.Last
 				w.usage = &usage{Prompt: u.Input, Completion: u.Output, Total: u.Input + u.Output, Details: map[string]int{"reasoning_tokens": u.Reasoning}}
+				if p.TokenUsage.Window > 0 {
+					s.learnWindow(r.model, p.TokenUsage.Window)
+				}
 			case "error":
 				if p.Error != nil && !p.WillRetry {
 					return errors.New(limitText(p.Error.Message))
@@ -450,6 +473,15 @@ func (w *writer) chunk(v map[string]any) {
 func (w *writer) delta(d map[string]any, finish any) {
 	w.chunk(map[string]any{"id": w.id, "object": "chat.completion.chunk", "created": w.created, "model": w.model,
 		"choices": []any{map[string]any{"index": 0, "delta": d, "finish_reason": finish}}})
+}
+
+// searched tells a streaming client what OpenAI searched for, in a field of its own that
+// OpenAI-compatible clients ignore; the panel's chat shows it as its own searches.
+func (w *writer) searched(query string) {
+	if w.stream {
+		w.chunk(map[string]any{"id": w.id, "object": "chat.completion.chunk", "created": w.created, "model": w.model,
+			"choices": []any{}, "omnibox_search": map[string]string{"query": query}})
+	}
 }
 
 func (w *writer) content(s string) {

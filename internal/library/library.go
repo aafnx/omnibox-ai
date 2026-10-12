@@ -28,7 +28,9 @@ type Caps struct {
 	Reasoning     bool `json:"reasoning"`
 	Tools         bool `json:"tools"`
 	Draws         bool `json:"draws"`
-	MoE           bool `json:"moe,omitempty"`
+	// Search: the model searches the web itself (ChatGPT with OpenAI's search).
+	Search bool `json:"search,omitempty"`
+	MoE    bool `json:"moe,omitempty"`
 }
 
 // Model is one entry of the list.
@@ -159,6 +161,9 @@ func Cloud(cfg *config.Config, models []openrouter.Model) []Model {
 	return out
 }
 
+// ChatGPTWindow is the context of a ChatGPT model until Codex reports its own in an answer.
+const ChatGPTWindow = 272_000
+
 // ChatGPT turns the subscription's models into list entries. They always reason; the depth
 // is one of the model's levels, and the chat shows the summary of the reasoning.
 func ChatGPT(cfg *config.Config, models []chatgpt.Model) []Model {
@@ -183,8 +188,12 @@ func ChatGPT(cfg *config.Config, models []chatgpt.Model) []Model {
 		if len(p.Efforts) == 0 {
 			p.Default = reasoning.StepAuto
 		}
-		out = append(out, Model{Key: key, Source: "chatgpt", Engine: "chatgpt", ID: c.ID, Name: c.Name, Provider: "OpenAI",
-			Favorite: slices.Contains(cfg.Favorites, key), Caps: Caps{Vision: c.Images, Reasoning: true}, Reasoning: p,
+		window := c.Context
+		if window == 0 {
+			window = ChatGPTWindow
+		}
+		out = append(out, Model{Key: key, Source: "chatgpt", Engine: "chatgpt", ID: c.ID, Name: c.Name, Provider: "OpenAI", Context: window,
+			Favorite: slices.Contains(cfg.Favorites, key), Caps: Caps{Vision: c.Images, Reasoning: true, Search: !cfg.ChatGPTSettings().OmniBoxSearch}, Reasoning: p,
 			Alias: chatgpt.Prefix + c.ID, Page: "https://chatgpt.com/"})
 	}
 	return out
