@@ -37,7 +37,7 @@ svg.i{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-widt
 .app{display:grid;grid-template-columns:232px 1fr;height:100%}
 /* ── navigation ── */
 .nav{border-right:1px solid var(--line);padding:20px 14px;display:flex;flex-direction:column;gap:22px;background:var(--surface)}
-.brand{display:flex;align-items:center;gap:10px;padding:0 8px;font-weight:600;letter-spacing:.18em;font-size:12.5px}
+.brand{display:flex;align-items:center;gap:10px;padding:0 0 0 8px;font-weight:600;letter-spacing:.18em;font-size:12.5px;min-height:30px}
 .brand svg{width:26px;height:26px}
 .nav ul{list-style:none;margin:0;padding:0;display:grid;gap:2px}
 .nav a{display:flex;align-items:center;gap:11px;padding:9px 10px;border-radius:var(--r-s);color:var(--muted);text-decoration:none;font-weight:500}
@@ -139,13 +139,8 @@ input:focus,select:focus,textarea:focus{border-color:var(--iris)}
 .threads li.t a{padding-right:62px;display:grid;gap:1px}
 .threads li.t a small{font-size:11.5px;color:var(--faint);display:flex;align-items:center;gap:4px}
 .threads li.t a small svg{width:12px;height:12px}
-.tacts{position:absolute;right:4px;top:50%;transform:translateY(-50%);display:flex;gap:2px;opacity:0}
-.threads li.t:hover .tacts,.tacts:focus-within{opacity:1}
-.tacts button{width:26px;height:26px;display:grid;place-items:center;border:0;border-radius:7px;background:var(--surface2);color:var(--faint)}
-.tacts button:hover{color:var(--text)} .tacts button.tdel:hover{color:var(--err)}
-.tacts button,.mact button,.send{padding:0}
-.tacts svg.i,.mact svg.i{width:15px;height:15px;display:block}
-.tacts button.on{color:var(--iris-text)}
+.mact button,.send{padding:0}
+.mact svg.i{width:15px;height:15px;display:block}
 .cbtns{display:flex;gap:6px;flex-wrap:wrap}
 .cbtns .btn{white-space:normal;text-align:left}
 .tfoot{min-width:0}
@@ -153,21 +148,15 @@ input:focus,select:focus,textarea:focus{border-color:var(--iris)}
 .close-threads{display:none}
 .tfoot{padding:10px 14px 14px;border-top:1px solid var(--line);display:grid;gap:8px}
 .tfoot .confirm{font-size:12.5px}
-@media (hover:none){.mact,.tacts{opacity:1}}
+@media (hover:none){.mact{opacity:1}}
 .msg.bot{display:grid;gap:10px}
 .msg.bot p{margin:0}
 .trace{display:flex;flex-wrap:wrap;gap:8px}
-details.step{border:1px solid var(--line);border-radius:var(--r-s);background:var(--surface);font-size:13px}
+details.step{border:1px solid var(--line);border-radius:var(--r-s);background:var(--surface);font-size:13px;justify-self:start;max-width:100%}
 details.step summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:6px 10px;color:var(--muted)}
 details.step summary::-webkit-details-marker{display:none}
 details.step[open] summary{border-bottom:1px solid var(--line)}
 details.step .in{padding:8px 12px;color:var(--muted);display:grid;gap:4px}
-.sources{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:8px}
-.src{display:grid;gap:2px;border:1px solid var(--line);border-radius:var(--r-s);padding:8px 10px;text-decoration:none;color:var(--text);background:var(--surface);font-size:12.5px;min-width:0}
-.src:hover{border-color:var(--iris-line)}
-.src b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.src span{color:var(--faint);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-sup.c{display:inline-grid;place-items:center;min-width:17px;height:17px;border-radius:5px;background:var(--iris-soft);color:var(--iris-text);font-size:10.5px;font-weight:600;vertical-align:2px;margin:0 1px;padding:0 3px}
 .meta{font-size:12px;color:var(--faint);display:flex;gap:12px;flex-wrap:wrap}
 .composer{padding:0 24px 20px}
 .conv{position:relative}
@@ -548,10 +537,7 @@ input[type=password],input[type=number],input[type=email]{width:100%;background:
 .md hr{border:0;border-top:1px solid var(--line);margin:4px 0}
 .msg.user .bubble{white-space:pre-wrap;overflow-wrap:anywhere}
 .msg.user .files{display:flex;flex-wrap:wrap;gap:6px;justify-content:flex-end}
-details.think{border:1px solid var(--line);border-radius:var(--r-s);font-size:13px;background:var(--surface)}
-details.think summary{cursor:pointer;list-style:none;display:flex;align-items:center;gap:8px;padding:6px 10px;color:var(--muted)}
-details.think summary::-webkit-details-marker{display:none}
-details.think .in{padding:8px 12px;color:var(--muted);white-space:pre-wrap;max-height:320px;overflow:auto;border-top:1px solid var(--line)}
+details.think .in{white-space:pre-wrap;max-height:320px;overflow:auto;display:block}
 .msg.bot .err{color:var(--err);font-size:13px}
 .caret::after{content:"▍";color:var(--iris);animation:blink 1s steps(2) infinite}
 @keyframes blink{50%{opacity:0}}
@@ -631,18 +617,16 @@ details.mini[open]>summary::after{transform:rotate(-135deg) translate(-1px,-1px)
 details.mini>summary:hover{color:var(--text)}
 @media (max-width:420px){.login-card{padding:24px 20px}}
 /* Phones: the tab bar sits on the bottom edge of the screen (dynamic viewport, not the tallest one);
-   while the keyboard is open the panel fills the visible part and the tab bar steps aside. */
+   while the keyboard is open the panel fills the visible part, the tab bar right above the keyboard. */
 @media (max-width:860px){
   .app{height:100vh;height:100dvh}
   .kb body{overflow:hidden}
   .kb .app{position:fixed;left:0;right:0;top:var(--vvt,0px);height:var(--vvh,100dvh)}
-  .kb .nav{display:none}
+  .kb .nav{padding-bottom:6px}
   .kb .composer{padding-bottom:8px}
   .kb #chat-foot{display:none}
   .kb .empty{padding-top:16px}
 }
-/* Favourite chats: a star like favourite models. */
-.tacts button.star.on{color:#ff9654} .tacts button.star.on svg{fill:#ff9654}
 /* Confirmation window: above everything, including the chat list opened on a phone. */
 .confirm-scrim{z-index:60}
 .dialog.modal-confirm{z-index:61;display:grid;background:var(--surface);top:50%;transform:translate(-50%,-50%);width:min(400px,calc(100% - 32px));padding:22px 22px 18px;gap:10px}
@@ -662,3 +646,103 @@ details.mini>summary:hover{color:var(--text)}
 .ctxpop .meter.warn i{background:var(--warn)} .ctxpop .meter.err i{background:var(--err)}
 .ctxkv{display:grid;grid-template-columns:1fr auto;gap:4px 12px;margin:0}
 .ctxkv dt{color:var(--muted)} .ctxkv dd{margin:0;text-align:right;font-variant-numeric:tabular-nums;color:var(--text)}
+/* ── 0.23.0: composer icons, sources, chat menu, folding navigation ── */
+/* Composer: the assistant, reasoning and web search are round icons; their state is the colour, the
+   words are in the tips and popovers. */
+.composer .tog{min-width:0;width:34px;height:34px;padding:0;border-radius:50%}
+.composer .tog svg.i{width:17px !important;height:17px !important}
+.asst-chip{width:34px;height:34px;max-width:none;padding:0;justify-content:center;border-radius:50%;border-color:transparent;background:none}
+.asst-chip.on{background:none}
+.asst-chip:hover{border-color:var(--line-strong)}
+.asst-chip .av{width:30px;height:30px;font-size:14px}
+.asst-chip .av.none{width:30px;height:30px;border:1px solid var(--line);background:none;color:var(--muted)}
+.asst-chip:hover .av.none{color:var(--text)}
+.asst-chip .av.none svg{width:16px !important;height:16px !important}
+/* Emoji fonts sit on their own baseline: a centred box of one line keeps the emoji in the circle. */
+.av .em{display:block;line-height:1;font-size:1.05em;font-family:"Segoe UI Emoji","Apple Color Emoji","Noto Color Emoji",var(--font);transform:translateY(.04em)}
+.av.emo{font-size:16px} .asst-chip .av.emo{font-size:17px}
+#asst-menu .mhead{font-size:11.5px;color:var(--faint);letter-spacing:.06em;text-transform:uppercase;padding:4px 10px 6px}
+/* The search trace and the reasoning: the same chip, as wide as its words until opened. */
+.msg.bot details.step{justify-self:start}
+.msg.bot details.step[open]{justify-self:stretch}
+.trace details.step[open]{flex:1 1 100%}
+details.step summary::after{content:"";width:6px;height:6px;border-right:1.5px solid currentColor;border-bottom:1.5px solid currentColor;transform:rotate(45deg) translate(-1px,-1px);transition:transform .15s;margin-left:2px}
+details.step[open] summary::after{transform:rotate(-135deg) translate(-1px,-1px)}
+/* Citations in the text: the source's site in a small chip. */
+a.cite{text-decoration:none}
+.cite .c{display:inline-block;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:1px;margin:0 2px;padding:0 7px;border-radius:99px;background:var(--surface2);border:1px solid var(--line);color:var(--muted);font-size:11px;line-height:18px;font-weight:500}
+a.cite:hover .c{border-color:var(--iris-line);color:var(--iris-text)}
+/* Sources: one chip with the sites' badges; the list opens under it. */
+details.srcs{justify-self:start;max-width:100%;font-size:12.5px}
+details.srcs[open]{justify-self:stretch}
+details.srcs summary{display:inline-flex;align-items:center;gap:8px;cursor:pointer;border:1px solid var(--line);background:var(--surface);border-radius:99px;padding:3px 12px 3px 4px;color:var(--muted)}
+details.srcs summary:hover{border-color:var(--iris-line);color:var(--text)}
+.favs{display:inline-flex}
+.favs .fav+.fav{margin-left:-6px}
+.favs .fav{box-shadow:0 0 0 2px var(--surface)}
+.fav{position:relative;display:inline-grid;place-items:center;flex:none;width:20px;height:20px;border-radius:50%;overflow:hidden;font-size:10.5px;font-weight:600;line-height:1}
+.fav.t0{background:#beefff;color:#0a0c1f} .fav.t1{background:#7c6cff;color:#fff} .fav.t2{background:#ff9654;color:#0a0c1f}
+.fav img{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;opacity:0}
+.fav.img{background:#fff;color:transparent} .fav.img img{opacity:1;padding:2px}
+.srclist{list-style:none;margin:8px 0 0;padding:4px;display:grid;gap:1px;border:1px solid var(--line);border-radius:var(--r-s);background:var(--surface)}
+.srclist a{display:grid;grid-template-columns:20px 20px minmax(0,1fr);gap:8px;align-items:center;padding:6px 8px;border-radius:7px;color:var(--text);text-decoration:none}
+.srclist a:hover{background:var(--surface2)}
+.srclist .n{color:var(--faint);font-variant-numeric:tabular-nums;text-align:right}
+.srclist .st{display:flex;gap:8px;align-items:baseline;min-width:0}
+.srclist .st b{font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.srclist .st span{color:var(--faint);white-space:nowrap;flex:none}
+/* Chat list: the title ends in an ellipsis before the "⋯" button; the button shows on hover. */
+.threads li.t a{padding-right:36px}
+.threads li.t a .tt{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tmore{position:absolute;right:4px;top:50%;transform:translateY(-50%);width:28px;height:28px;padding:0;display:grid;place-items:center;border:0;border-radius:7px;background:none;color:var(--faint);opacity:0}
+.tmore svg.i{width:18px;height:18px;stroke-width:3}
+.threads li.t:hover .tmore,.tmore:focus-visible,.tmore.open{opacity:1}
+.tmore:hover,.tmore.open{background:var(--surface2);color:var(--text)}
+.threads li.t a.on+.tmore{opacity:1;color:var(--iris-text)}
+@media (hover:none){.tmore{opacity:1}}
+.tmenu{position:fixed;z-index:50;width:250px;padding:4px;display:grid;gap:1px;background:var(--surface);border:1px solid var(--line-strong);border-radius:var(--r);box-shadow:var(--shadow)}
+.tmenu button{display:flex;align-items:center;gap:10px;width:100%;padding:8px 10px;border:0;border-radius:7px;background:none;text-align:left;font-size:13.5px;color:var(--text)}
+.tmenu button:hover,.tmenu button:focus-visible{background:var(--surface2)}
+.tmenu button svg.i{width:16px;height:16px;color:var(--muted)}
+.tmenu button.on svg.i{color:#ff9654;fill:#ff9654}
+.tmenu button.del{color:var(--err)} .tmenu button.del svg.i{color:var(--err)}
+.trename{width:100%;margin:1px 0;padding:7px 9px;border:1px solid var(--iris-line);border-radius:var(--r-s);background:var(--field)}
+/* Navigation: folds to a rail of icons on wide screens; the tips name the sections. */
+.navfold{margin-left:auto;width:30px;height:30px;padding:0;display:grid;place-items:center;border:0;border-radius:7px;background:none;color:var(--faint)}
+.navfold:hover{background:var(--surface2);color:var(--text)}
+.navfold svg.i{width:18px;height:18px}
+@media (min-width:861px){
+  .app{transition:grid-template-columns .15s}
+  .app.rail{grid-template-columns:64px 1fr}
+  .rail .nav{padding:16px 10px;align-items:center}
+  .rail .nav .lbl{display:none}
+  .rail .brand{flex-direction:column;gap:12px;padding:0}
+  .rail .navfold{margin:0;transform:scaleX(-1)}
+  .rail .nav ul{width:100%}
+  .rail .nav a{justify-content:center;padding:10px 0}
+  .rail .nav .now{padding:10px 0;width:44px;justify-items:center;gap:10px;border-radius:12px}
+  .rail .nav .now>:not(.who):not(.orbal){display:none}
+  .rail .now .who #now-model{display:none}
+  .rail .nav .now a.orbal{margin:0;padding:8px 0 0;justify-content:center}
+  .rail .nav .now a.orbal span{gap:0;font-size:0}
+  .rail .nav .now a.orbal b{display:none}
+}
+@media (max-width:860px){.navfold{display:none}}
+@media (prefers-reduced-motion:reduce){.app{transition:none}}
+/* OpenRouter: the key's limit and expiry. */
+.keylim b{font-size:14px}
+.keylim .meter{margin-top:4px}
+.meter.warn i{background:var(--warn)}
+.warn-text{color:var(--warn)}
+.trename::selection{background:var(--iris-line)}
+/* Suggested questions under the last answer, as rows like Open WebUI's "Продолжить". */
+.follow{display:grid;margin-top:4px}
+.follow .fh{font-size:13px;color:var(--muted);font-weight:500;padding:2px 0 6px}
+.follow .fh.err{color:var(--faint);font-weight:400;font-size:12.5px}
+.follow button{display:flex;align-items:center;gap:10px;width:100%;text-align:left;border:0;border-top:1px solid var(--line);background:none;padding:9px 6px;color:var(--muted);font-size:13.5px;border-radius:0}
+.follow button:hover,.follow button:focus-visible{color:var(--text);background:var(--surface2)}
+.follow button svg.i{width:15px;height:15px;flex:none;transform:rotate(90deg);color:var(--faint)}
+.follow button:hover svg.i{color:var(--iris-text)}
+.follow button span{min-width:0;overflow-wrap:anywhere}
+.tmenu .tick{margin-left:auto;font-size:12px;color:var(--faint)}
+.tmenu button.on2 .tick{color:var(--iris-text)}

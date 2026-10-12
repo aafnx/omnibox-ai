@@ -45,6 +45,7 @@
     <symbol id="i-dots" viewBox="0 0 24 24"><path d="M5 12h.01M12 12h.01M19 12h.01"/></symbol>
     <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v11M7 10l5 5 5-5M5 20h14"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20h4L19 9l-4-4L4 16z"/></symbol>
+    <symbol id="i-fold" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3"/><path d="M9 4v16M15 10l-2 2 2 2"/></symbol>
     <symbol id="i-test" viewBox="0 0 24 24"><path d="M13 3 4 14h7l-1 7 9-11h-7z"/></symbol>
   </defs>
 </svg>
@@ -66,12 +67,12 @@
 
 <div class="app" id="app" hidden>
   <nav class="nav" aria-label="Разделы">
-    <div class="brand"><svg viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="200" fill="none" stroke="url(#g)" stroke-width="34"/><circle cx="256" cy="256" r="146" fill="none" stroke="url(#g)" stroke-width="6" opacity=".55"/></svg>OMNIBOX AI</div>
+    <div class="brand"><svg viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="200" fill="none" stroke="url(#g)" stroke-width="34"/><circle cx="256" cy="256" r="146" fill="none" stroke="url(#g)" stroke-width="6" opacity=".55"/></svg><span class="lbl">OMNIBOX AI</span><button type="button" class="navfold" id="nav-fold" aria-expanded="true" aria-controls="app" title="Свернуть меню" aria-label="Свернуть меню"><svg class="i"><use href="#i-fold"/></svg></button></div>
     <ul>
-      <li><a href="#chat" data-go="chat" aria-current="page"><svg class="i"><use href="#i-chat"/></svg>Чат</a></li>
-      <li><a href="#models" data-go="models"><svg class="i"><use href="#i-models"/></svg>Модели</a></li>
-      <li><a href="#server" data-go="server"><svg class="i"><use href="#i-server"/></svg>Сервер</a></li>
-      <li><a href="#settings" data-go="settings"><svg class="i"><use href="#i-settings"/></svg>Настройки</a></li>
+      <li><a href="#chat" data-go="chat" aria-current="page" title="Чат"><svg class="i"><use href="#i-chat"/></svg><span class="lbl">Чат</span></a></li>
+      <li><a href="#models" data-go="models" title="Модели"><svg class="i"><use href="#i-models"/></svg><span class="lbl">Модели</span></a></li>
+      <li><a href="#server" data-go="server" title="Сервер"><svg class="i"><use href="#i-server"/></svg><span class="lbl">Сервер</span></a></li>
+      <li><a href="#settings" data-go="settings" title="Настройки"><svg class="i"><use href="#i-settings"/></svg><span class="lbl">Настройки</span></a></li>
     </ul>
     <div class="now" id="now">
       <div class="who"><span class="dot off" id="now-dot"></span><span id="now-model">Модель не запущена</span></div>
@@ -92,6 +93,7 @@
           <input type="search" id="thread-search" placeholder="Поиск по чатам" aria-label="Поиск по чатам">
         </div>
         <ul id="thread-list"></ul>
+        <div class="tmenu" id="thread-menu" role="menu" aria-label="Действия с чатом" hidden></div>
         <div class="tfoot">
           <button class="btn ghost sm" type="button" data-del-all><svg class="i i15"><use href="#i-trash"/></svg>Удалить все чаты</button>
           <div class="confirm" id="del-all" hidden><span id="del-all-text"></span><div class="cbtns" id="del-all-btns"></div></div>
@@ -116,8 +118,8 @@
             <div class="row">
               <div class="picker asst-picker"><button type="button" id="asst-btn" class="asst-chip" aria-expanded="false" aria-haspopup="true"></button><div class="menu" id="asst-menu" hidden></div></div>
               
-              <div class="websearch thinkwrap"><button type="button" class="tog" id="think-btn" aria-haspopup="true"><svg class="i i15"><use href="#i-brain"/></svg><span class="lbl">Размышления</span></button><div class="pop" id="think-pop" hidden></div></div>
-              <div class="websearch webwrap"><button type="button" class="tog" id="web" aria-pressed="false" aria-expanded="false" aria-haspopup="true" aria-label="Веб-поиск" title="Веб-поиск"><svg class="i i15"><use href="#i-globe"/></svg><span class="lbl">Веб-поиск</span></button><div class="pop" id="web-pop" hidden><div class="line"><b>Искать в интернете</b><label class="switch"><input type="checkbox" id="web-on" aria-label="Поиск в интернете"><span></span></label></div><div class="line"><span class="muted">Движок</span><span>SearXNG</span></div><div class="line"><span class="muted">Адрес</span><span class="mono" id="web-host">не задан</span></div><span class="hint" id="web-hint">Модель сама решает, когда искать. Источники появятся под ответом.</span></div></div>
+              <div class="websearch thinkwrap"><button type="button" class="tog" id="think-btn" aria-haspopup="true" aria-label="Размышления" title="Размышления"><svg class="i i15"><use href="#i-brain"/></svg></button><div class="pop" id="think-pop" hidden></div></div>
+              <div class="websearch webwrap"><button type="button" class="tog" id="web" aria-pressed="false" aria-expanded="false" aria-haspopup="true" aria-label="Веб-поиск" title="Веб-поиск"><svg class="i i15"><use href="#i-globe"/></svg></button><div class="pop" id="web-pop" hidden><div class="line"><b>Искать в интернете</b><label class="switch"><input type="checkbox" id="web-on" aria-label="Поиск в интернете"><span></span></label></div><div class="line"><span class="muted">Движок</span><span>SearXNG</span></div><div class="line"><span class="muted">Адрес</span><span class="mono" id="web-host">не задан</span></div><span class="hint" id="web-hint">Модель сама решает, когда искать. Источники появятся под ответом.</span></div></div>
               <div class="websearch ctxwrap" id="ctx-wrap" hidden><button type="button" class="tog ctxring" id="ctx-btn" aria-haspopup="true" aria-expanded="false" aria-label="Контекст"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" class="trk"/><circle cx="10" cy="10" r="7" class="val" id="ctx-ring" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 10 10)"/></svg></button><div class="pop ctxpop" id="ctx-pop" hidden></div></div>
               <button type="button" class="tog attach-r" id="attach-btn" title="Прикрепить файл: изображение, видео, аудио, текст, Word, Excel. Можно перетащить в окно чата." aria-label="Прикрепить файл"><svg class="i i15"><use href="#i-clip"/></svg></button><input type="file" id="attach-input" multiple hidden><button type="submit" class="send" id="send" aria-label="Отправить"><svg class="i"><use href="#i-up"/></svg></button>
             </div>
@@ -184,7 +186,7 @@
       <div class="head"><div><h1>Настройки</h1><p>Подключение клиентов, веб-поиск, хранение данных и обновления.</p></div></div>
       <div class="settings">
         <nav class="sub-nav" aria-label="Разделы настроек">
-          <a href="#settings" data-jump="s-api">Подключение</a><a href="#settings" data-jump="s-search">Веб-поиск</a><a href="#settings" data-jump="s-cloud">OpenRouter</a><a href="#settings" data-jump="s-assist">Ассистенты</a>
+          <a href="#settings" data-jump="s-api">Подключение</a><a href="#settings" data-jump="s-chat">Чат</a><a href="#settings" data-jump="s-search">Веб-поиск</a><a href="#settings" data-jump="s-cloud">OpenRouter</a><a href="#settings" data-jump="s-assist">Ассистенты</a>
           <a href="#settings" data-jump="s-data">Данные и хранение</a><a href="#settings" data-jump="s-sleep">Сон и пробуждение</a>
           <a href="#settings" data-jump="s-update">Обновления</a><a href="#settings" data-jump="s-panel">Панель</a>
         </nav>
@@ -206,6 +208,11 @@
                   <div><button class="btn" type="button" id="api-save">Сохранить</button></div>
                 </div></details>
             </div></div>
+          <div class="panel" id="s-chat"><header><h2>Чат</h2></header>
+            <div class="body">
+              <div class="line"><div><b>Предлагать вопросы после ответа</b><div class="small muted">Под последним ответом — 3–5 вопросов, которые можно задать дальше, как «Продолжить» в Open WebUI; нажатие отправляет вопрос. Это отдельный короткий запрос к модели после ответа. В каждом чате можно включить или выключить отдельно: меню «⋯» в списке чатов.</div></div><label class="switch"><input type="checkbox" id="follow-on" aria-label="Предлагать вопросы после ответа"><span></span></label></div>
+              <div class="line"><div><b>Кто пишет вопросы</b><div class="small muted" id="follow-model-hint">Та же модель, что отвечала: локальная — бесплатно, но несколько секунд занимает видеокарту; облачная — по цене её токенов.</div></div><select id="follow-model" class="sel-auto"></select></div>
+            </div></div>
           <div class="panel" id="s-search"><header><h2>Веб-поиск</h2><span class="pill" id="search-state">Не проверен</span></header>
             <div class="body">
               <div class="field"><label for="searx">Адрес SearXNG</label><div class="copy"><input id="searx" type="url" placeholder="https://search.example.com"><button class="btn" type="button" id="searx-check">Проверить</button></div><span class="hint">Нужен JSON-формат ответа: в settings.yml SearXNG строка <span class="mono">formats: [html, json]</span>.</span></div>
@@ -214,13 +221,15 @@
                 <div class="field"><label for="search-lang">Язык поиска</label><select id="search-lang"><option value="">Как в вопросе</option><option value="ru">Русский</option><option value="en">English</option></select></div>
               </div>
               <div class="line"><div><b>Поиск включён в новых чатах</b><div class="small muted">Модель сама решает, когда искать. Без поддержки функций — поиск по каждому вопросу.</div></div><label class="switch"><input type="checkbox" id="search-default" aria-label="Поиск в новых чатах"><span></span></label></div>
+              <div class="line"><div><b>Значки сайтов у источников</b><div class="small muted">Выключено — первая буква сайта, панель ничего не загружает со сторонних адресов. Включено — браузер загружает значок с каждого сайта-источника, и сайт видит ваш IP-адрес. Действует после обновления страницы.</div></div><label class="switch"><input type="checkbox" id="site-icons" aria-label="Значки сайтов у источников"><span></span></label></div>
               <div><button class="btn" type="button" id="search-save">Сохранить</button></div>
             </div></div>
           <div class="panel" id="s-cloud"><header><h2>OpenRouter</h2><span class="pill" id="or-state">Не подключено</span></header>
             <div class="body">
               <div id="or-off"><div class="field"><label for="or-key">Ключ API OpenRouter</label><div class="copy"><input id="or-key" type="password" placeholder="sk-or-v1-…" autocomplete="off"><button class="btn primary" type="button" id="or-connect">Подключить</button></div><span class="hint">Ключ создаётся на openrouter.ai в разделе Keys. Он хранится на ПК в зашифрованном виде и не показывается в панели.</span></div></div>
               <div id="or-on" class="stack14" hidden>
-                <div class="kv"><div><span class="label">Баланс</span><b id="or-balance">—</b><span class="small faint" id="or-credits"></span></div><div><span class="label">Сегодня</span><b id="or-today">—</b></div><div><span class="label">За 30 дней</span><b id="or-month">—</b></div></div>
+                <div class="kv"><div><span class="label">Баланс</span><b id="or-balance">—</b><span class="small faint" id="or-credits"></span></div><div><span class="label" title="Расход ключа за текущие сутки UTC, по данным OpenRouter: все запросы с этим ключом, не только через OmniBox">Сегодня</span><b id="or-today">—</b></div><div><span class="label">За 30 дней</span><b id="or-month">—</b></div></div>
+                <div class="kv keylim" id="or-keylim" hidden></div>
                 <div class="warnbox" id="or-low-warn" hidden></div>
                 <div class="orlinks" aria-label="Быстрые ссылки OpenRouter">
                   <a class="btn sm primary" href="https://openrouter.ai/settings/credits" target="_blank" rel="noopener noreferrer">Пополнить баланс ↗</a>
@@ -229,7 +238,7 @@
                   <a class="btn sm" href="https://openrouter.ai/models" target="_blank" rel="noopener noreferrer">Каталог моделей ↗</a>
                 </div>
                 <div class="spend">
-                  <div class="line"><b>Расходы за 14 дней</b><span class="small faint">по данным OpenRouter о каждом ответе через OmniBox</span></div>
+                  <div class="line"><b>Расходы за 14 дней</b><span class="small faint">ответы через OmniBox: чат и API</span></div>
                   <div class="chart" id="spend-chart" role="img" aria-label="Расходы по дням за 14 дней"></div><div class="xlabs" id="spend-x"></div>
                   <details class="mini"><summary>Таблица</summary><div class="tablewrap"><table id="spend-table"></table></div></details>
                 </div>

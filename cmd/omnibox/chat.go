@@ -159,13 +159,15 @@ func (c *chatSide) runner(local func(ctx context.Context, session string, body [
 func (c *chatSide) handlers(local func(ctx context.Context, session string, body []byte) *http.Response) map[string]http.Handler {
 	history := &chats.Handler{Chats: c.Chats, Assistants: c.Assistants, Logf: c.logf,
 		KeepHours: func() int { return c.Store.Get().ChatSettings().RetentionHours }}
+	run := c.runner(local)
 	return map[string]http.Handler{
-		"/api/chats":         history,
-		"/api/assistants":    history,
-		"/api/chat/send":     c.runner(local),
-		"/api/library":       http.HandlerFunc(c.serveLibrary),
-		"/api/cloud":         http.HandlerFunc(c.serveCloud),
-		"/api/chat-settings": http.HandlerFunc(c.serveSettings),
+		"/api/chats":          history,
+		"/api/assistants":     history,
+		"/api/chat/send":      run,
+		"/api/chat/followups": http.HandlerFunc(run.FollowUps),
+		"/api/library":        http.HandlerFunc(c.serveLibrary),
+		"/api/cloud":          http.HandlerFunc(c.serveCloud),
+		"/api/chat-settings":  http.HandlerFunc(c.serveSettings),
 	}
 }
 
@@ -377,6 +379,9 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 		SearchResults  *int    `json:"search_results"`
 		SearchLanguage *string `json:"search_language"`
 		SearchDefault  *bool   `json:"search_default"`
+		SiteIcons      *bool   `json:"site_icons"`
+		FollowUps      *bool   `json:"follow_ups"`
+		FollowUpModel  *string `json:"follow_up_model"`
 	}
 	if err := body(r, &in); err != nil {
 		replyError(w, err)
@@ -401,6 +406,15 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 			}
 			if in.SearchDefault != nil {
 				s.SearchDefault = *in.SearchDefault
+			}
+			if in.SiteIcons != nil {
+				s.SiteIcons = *in.SiteIcons
+			}
+			if in.FollowUps != nil {
+				s.FollowUps = *in.FollowUps
+			}
+			if in.FollowUpModel != nil {
+				s.FollowUpModel = strings.TrimSpace(*in.FollowUpModel)
 			}
 			cfg.Chat = &s
 			return nil
@@ -458,7 +472,8 @@ func (c *chatSide) settingsView() map[string]any {
 		}
 	}
 	return map[string]any{"retention_hours": s.RetentionHours, "search_url": s.SearchURL, "search_results": s.SearchResults,
-		"search_language": s.SearchLanguage, "search_default": s.SearchDefault, "chats": len(list), "chats_bytes": size}
+		"search_language": s.SearchLanguage, "search_default": s.SearchDefault, "site_icons": s.SiteIcons,
+		"follow_ups": s.FollowUps, "follow_up_model": s.FollowUpModel, "chats": len(list), "chats_bytes": size}
 }
 
 // cloudRoute shows the favourite OpenRouter models to /v1 clients when the owner allowed it.

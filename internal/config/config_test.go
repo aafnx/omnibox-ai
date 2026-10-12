@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -36,9 +37,23 @@ func TestSaveLoadRoundTrip(t *testing.T) {
 	}
 }
 
-func TestParseRejectsUnknownFields(t *testing.T) {
-	if _, err := Parse([]byte(`{"schema_version":1,"surprise":true}`)); err == nil {
-		t.Fatal("unknown field accepted")
+// A rollback runs an older version on the settings a newer one wrote: fields it does not know
+// are skipped, the ones it knows are still checked.
+func TestParseSkipsFieldsOfNewerVersions(t *testing.T) {
+	c := validConfig()
+	c.Chat = &Chat{RetentionHours: 24, SearchResults: 5}
+	data, _ := json.Marshal(c)
+	newer := strings.Replace(string(data), `{`, `{"surprise":true,`, 1)
+	newer = strings.Replace(newer, `"retention_hours":24`, `"retention_hours":24,"from_the_future":1`, 1)
+	got, err := Parse([]byte(newer))
+	if err != nil {
+		t.Fatalf("a newer version's settings: %v", err)
+	}
+	if got.ChatSettings().RetentionHours != 24 {
+		t.Fatalf("known fields lost: %+v", got.Chat)
+	}
+	if _, err := Parse([]byte(strings.Replace(newer, `"retention_hours":24`, `"retention_hours":-5`, 1))); err == nil {
+		t.Fatal("a bad known value accepted")
 	}
 }
 

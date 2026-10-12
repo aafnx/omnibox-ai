@@ -111,6 +111,14 @@ func TestStaticFilesAndSecurityHeaders(t *testing.T) {
 			t.Fatalf("missing %s", h)
 		}
 	}
+	if csp := w.Header().Get("Content-Security-Policy"); !strings.Contains(csp, "img-src 'self' data:;") {
+		t.Fatalf("images from outside allowed by default: %q", csp)
+	}
+	// Site icons of the web search sources are loaded by the browser only when the owner chose so.
+	icons := newServer(t, testConfig(t, func(c *config.Config) { c.Chat = &config.Chat{RetentionHours: 24, SearchResults: 5, SiteIcons: true} }))
+	if csp := call(icons, "GET", "/", "", nil).Header().Get("Content-Security-Policy"); !strings.Contains(csp, "img-src 'self' data: https:;") || !strings.Contains(csp, "script-src 'self';") {
+		t.Fatalf("site icons: %q", csp)
+	}
 	font := call(s, "GET", "/inter-400.woff", "", nil)
 	if font.Code != 200 || !strings.HasPrefix(font.Body.String(), "wOFF") {
 		t.Fatalf("font not decoded: %d %q", font.Code, font.Body.String()[:4])

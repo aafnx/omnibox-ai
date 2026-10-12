@@ -33,6 +33,9 @@ const (
 	MaxChatBytes = 8 << 20
 	// MaxTitle is the longest chat title in characters.
 	MaxTitle = 120
+	// MaxFollowUps and MaxFollowUp bound the suggested questions under an answer.
+	MaxFollowUps = 5
+	MaxFollowUp  = 200
 	// DefaultTitle names a chat created without a title.
 	DefaultTitle = "Новый чат"
 
@@ -114,8 +117,10 @@ type Chat struct {
 	AssistantID string    `json:"assistant_id"`
 	Model       string    `json:"model"`
 	// CostUSD is the sum of the messages' cost; the store recomputes it on every write.
-	CostUSD  float64   `json:"cost_usd"`
-	Messages []Message `json:"messages"`
+	CostUSD float64 `json:"cost_usd"`
+	// FollowUps turns the suggested questions on or off for this chat; nil follows the setting.
+	FollowUps *bool     `json:"follow_ups,omitempty"`
+	Messages  []Message `json:"messages"`
 }
 
 // Message is one turn of a chat.
@@ -154,6 +159,8 @@ type Meta struct {
 	CostUSD         float64  `json:"cost_usd"`
 	Sources         []Source `json:"sources,omitempty"`
 	Searches        []string `json:"searches,omitempty"`
+	// FollowUps are questions the user may ask next, written after the answer on request.
+	FollowUps []string `json:"follow_ups,omitempty"`
 }
 
 // Source is a web page an answer used.
@@ -175,6 +182,7 @@ type Summary struct {
 	Model       string     `json:"model"`
 	Messages    int        `json:"messages"`
 	CostUSD     float64    `json:"cost_usd"`
+	FollowUps   *bool      `json:"follow_ups,omitempty"`
 }
 
 // Hit is a chat found by Search; MessageID is empty when the title matched.
@@ -205,7 +213,7 @@ func (c *Chat) expired(now time.Time) bool {
 func (c *Chat) Summary() Summary {
 	return Summary{ID: c.ID, Title: c.Title, Created: c.Created, Updated: c.Updated, Pinned: c.Pinned,
 		KeepHours: c.KeepHours, Expires: c.Expires(), AssistantID: c.AssistantID, Model: c.Model,
-		Messages: len(c.Messages), CostUSD: c.CostUSD}
+		Messages: len(c.Messages), CostUSD: c.CostUSD, FollowUps: c.FollowUps}
 }
 
 // Store keeps chats as files in Dir. Writes are serialized, so a read-modify-write of a chat
@@ -304,6 +312,28 @@ func (s *Store) update(id string, fn func(*Chat) error) (*Chat, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+// SetFollowUps turns the suggested questions on or off for a chat; nil follows the setting.
+func (s *Store) SetFollowUps(id string, on *bool) (*Chat, error) {
+	return s.Update(id, func(c *Chat) error { c.FollowUps = on; return nil })
+}
+
+// SetSuggestions stores the questions suggested under an answer of the chat.
+func (s *Store) SetSuggestions(id, messageID string, questions []string, cost float64) (*Chat, error) {
+	return s.Update(id, func(c *Chat) error {
+		i := slices.IndexFunc(c.Messages, func(m Message) bool { return m.ID == messageID && m.Role == "assistant" })
+		if i < 0 {
+			return errMessageNotFound
+		}
+		m := &c.Messages[i]
+		if m.Meta == nil {
+			m.Meta = &Meta{}
+		}
+		m.Meta.FollowUps = questions
+		m.Meta.CostUSD += cost
+		return nil
+	})
 }
 
 // Rename sets a chat's title.
@@ -634,6 +664,16 @@ func checkMessage(m *Message) error {
 	}
 	if x := m.Meta; x != nil && (x.Seconds < 0 || x.InputTokens < 0 || x.OutputTokens < 0 || x.TokensPerSecond < 0 || x.CostUSD < 0) {
 		return errorf("Статистика ответа не может быть отрицательной.")
+	}
+	if x := m.Meta; x != nil {
+		if len(x.FollowUps) > MaxFollowUps {
+			return errorf("Не больше %d предложенных вопросов.", MaxFollowUps)
+		}
+		for _, q := range x.FollowUps {
+			if q == "" || runes(q) > MaxFollowUp || !utf8.ValidString(q) || hasControl(q) {
+				return errorf("Некорректный предложенный вопрос.")
+			}
+		}
 	}
 	return nil
 }

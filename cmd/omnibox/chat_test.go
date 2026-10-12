@@ -56,6 +56,12 @@ func TestChatSettingsAndDeleteAllData(t *testing.T) {
 	if s.RetentionHours != 168 || s.SearchURL != "https://search.example.com" || s.SearchResults != 8 || s.SearchDefault {
 		t.Fatalf("%+v", s)
 	}
+	if s.SiteIcons || strings.Contains(w.Body.String(), `"site_icons":true`) {
+		t.Fatal("site icons are off by default")
+	}
+	if w := post(h, "/api/chat-settings", `{"action":"save","site_icons":true}`); w.Code != 200 || !strings.Contains(w.Body.String(), `"site_icons":true`) || !c.Store.Get().ChatSettings().SiteIcons {
+		t.Fatalf("site icons: %d %s", w.Code, w.Body)
+	}
 	if w := post(h, "/api/chat-settings", `{"action":"save","search_url":"ftp://x"}`); w.Code != 400 {
 		t.Fatalf("%d", w.Code)
 	}
