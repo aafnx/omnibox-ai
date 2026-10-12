@@ -97,6 +97,7 @@ func (e Engine) search(ctx context.Context, query, lang string, n int) ([]Result
 		return nil, fmt.Errorf("Нет ключа %s: добавьте его в «Настройки → Веб-поиск».", EngineName(e.Name))
 	}
 	query = clip(query, 380)
+	lang = QueryLang(lang, query)
 	n = min(max(n, 1), 20)
 	var req *http.Request
 	var err error

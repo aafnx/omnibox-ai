@@ -164,7 +164,7 @@ func (c Client) search(ctx context.Context, query, lang string, n int) ([]Result
 // Ukrainian and Kazakh sites first (sinoptik.ua for the weather in Kazan), ru-RU asks for Russia's.
 // With no language chosen a Russian query gets ru-RU too; Ukrainian letters leave it to SearXNG.
 func region(lang, query string) string {
-	switch lang {
+	switch lang = QueryLang(lang, query); lang {
 	case "ru":
 		return "ru-RU"
 	case "":
@@ -177,6 +177,23 @@ func region(lang, query string) string {
 			}
 		}
 		return ""
+	}
+	return lang
+}
+
+// QueryLang is the language a query is searched in: an English query (Latin letters, none
+// Cyrillic) is searched in English even when Russian is chosen — "AI news this week" filtered
+// to Russian pages lost the English sites that matter most for such topics.
+func QueryLang(lang, query string) string {
+	latin := false
+	for _, r := range query {
+		if unicode.Is(unicode.Cyrillic, r) {
+			return lang
+		}
+		latin = latin || unicode.Is(unicode.Latin, r)
+	}
+	if latin && lang == "ru" {
+		return "en"
 	}
 	return lang
 }

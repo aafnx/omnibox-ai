@@ -48,7 +48,7 @@ func TestEnginesSearch(t *testing.T) {
 	if err != nil || len(res) != 1 || res[0].Snippet != "текст страницы" || header.Get("Authorization") != "Bearer tvly-0123456789abcdef" {
 		t.Fatalf("tavily %v %+v", err, res)
 	}
-	res, err = Engine{Name: EngineBrave, Key: "BSA0123456789abcdef", BaseURL: srv.URL}.Search(ctx, "q", "ru", 3)
+	res, err = Engine{Name: EngineBrave, Key: "BSA0123456789abcdef", BaseURL: srv.URL}.Search(ctx, "новости", "ru", 3)
 	if err != nil || len(res) != 1 || res[0].Snippet != "(2026-10-11) описание … ещё" || header.Get("X-Subscription-Token") != "BSA0123456789abcdef" ||
 		!strings.Contains(got["query"].(string), "search_lang=ru") || !strings.Contains(got["query"].(string), "count=3") {
 		t.Fatalf("brave %v %+v %v", err, res, got)
