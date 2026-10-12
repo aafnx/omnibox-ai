@@ -122,7 +122,15 @@ function renderChat(){const box=byId('message-list');const c=C.chat;
   if(!c||!c.messages?.length){setHTML(box,`<div class="empty"><b>${c?esc(c.title):'Новый чат'}</b><span>Спросите что-нибудь. Можно приложить файлы и включить поиск в интернете.</span></div>`);}
   else setHTML(box,c.messages.map((m,i)=>m.role==='user'?userHTML(m):botHTML(m,i===c.messages.length-1&&followOn(c),c.messages[i-1])).join(''));
   enhance(box,true);const s=c&&C.streams[c.id];if(s){s.el=null;paintLive(s);}showChatCost();renderKeep();scrollDown(true);}
-function scrollDown(force){const el=byId('messages');if(force||el.scrollHeight-el.scrollTop-el.clientHeight<160)el.scrollTop=el.scrollHeight;}
+// The chat follows the answer while the reader is at its end. Whether they are is learnt from their
+// own scrolling, not measured after the answer grew: a reasoning block or a status line taller than
+// the margin used to leave the chat behind. Scrolled up, an arrow brings them back to the end.
+let atEnd=true;
+const nearEnd=el=>el.scrollHeight-el.scrollTop-el.clientHeight<80;
+function scrollDown(force){const el=byId('messages');if(force)atEnd=true;if(atEnd)el.scrollTop=el.scrollHeight;renderToEnd();}
+function renderToEnd(){byId('to-end').hidden=atEnd||nearEnd(byId('messages'));}
+byId('messages').addEventListener('scroll',()=>{atEnd=nearEnd(byId('messages'));renderToEnd();},{passive:true});
+byId('to-end').addEventListener('click',()=>{const el=byId('messages');atEnd=true;el.scrollTo?el.scrollTo({top:el.scrollHeight,behavior:'smooth'}):el.scrollTop=el.scrollHeight;renderToEnd();});
 function showChatCost(){const c=byId('chat-cost');const paid=(C.chat?.messages||[]).filter(m=>m.meta?.cost_usd>0);c.hidden=!paid.length;if(!paid.length)return;
   const sum=paid.reduce((s,m)=>s+m.meta.cost_usd,0);c.innerHTML=`${money(sum)}<span class="lbl"> за чат</span>`;
   c.title=`Стоимость этого чата по данным OpenRouter: ${paid.length} ${plural(paid.length,'ответ','ответа','ответов')}. Локальные ответы бесплатны.`;}
@@ -289,7 +297,7 @@ const LIVE='<div class="msg bot live"><div class="trace"></div><details class="s
 function paintLive(s){if(C.chat?.id!==s.chat)return;const box=byId('message-list');
   if(!s.el||s.el.isConnected===false){box.querySelector('.empty')?.remove();box.querySelectorAll('.follow').forEach(el=>el.remove());box.insertAdjacentHTML('beforeend',LIVE);s.el=box.lastElementChild;}
   const el=s.el;el.querySelector('.trace').innerHTML=s.trace.join('');
-  const th=el.querySelector('details.think');th.hidden=!s.thinking;th.querySelector('.in').textContent=s.thinking;
+  const th=el.querySelector('details.think');th.hidden=!s.thinking;const tin=th.querySelector('.in');tin.textContent=s.thinking;if(atEnd)tin.scrollTop=tin.scrollHeight;
   const mdEl=el.querySelector('.md');mdEl.innerHTML=md(s.answer,s.sources);enhance(mdEl,false);
   const st=el.querySelector('.status-line:last-child');st.hidden=!s.status;st.textContent=s.status;
   if(s.err){mdEl.classList.remove('caret');if(!el.querySelector('.err'))el.insertAdjacentHTML('beforeend',`<div class="err">${esc(s.err)}</div>`);}
