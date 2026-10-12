@@ -53,6 +53,19 @@ func TestEnginesSearch(t *testing.T) {
 		!strings.Contains(got["query"].(string), "search_lang=ru") || !strings.Contains(got["query"].(string), "count=3") {
 		t.Fatalf("brave %v %+v %v", err, res, got)
 	}
+	// Fresh news: each engine in its own words.
+	Engine{Name: EnginePerplexity, Key: "pplx-0123456789abcdef", BaseURL: srv.URL, Recency: "week", News: true}.Search(ctx, "q", "", 3)
+	if body := got["body"].(map[string]any); body["search_recency_filter"] != "week" {
+		t.Fatalf("perplexity recency %v", body)
+	}
+	Engine{Name: EngineTavily, Key: "tvly-0123456789abcdef", BaseURL: srv.URL, Recency: "day", News: true}.Search(ctx, "q", "", 3)
+	if body := got["body"].(map[string]any); body["topic"] != "news" || body["time_range"] != "day" {
+		t.Fatalf("tavily news %v", body)
+	}
+	Engine{Name: EngineBrave, Key: "BSA0123456789abcdef", BaseURL: srv.URL, Recency: "month"}.Search(ctx, "q", "", 3)
+	if !strings.Contains(got["query"].(string), "freshness=pm") {
+		t.Fatalf("brave freshness %v", got)
+	}
 	if _, err := (Engine{Name: EngineBrave, BaseURL: srv.URL}).Search(ctx, "q", "", 3); err == nil || !strings.Contains(err.Error(), "Нет ключа Brave Search") {
 		t.Fatalf("no key: %v", err)
 	}

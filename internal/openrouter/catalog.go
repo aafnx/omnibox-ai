@@ -95,8 +95,13 @@ func (c *Catalog) load() (catalogFile, bool) {
 	if json.Unmarshal(data, &f) != nil || f.Fetched.IsZero() {
 		return catalogFile{}, false
 	}
-	for i := range f.Models {
-		f.Models[i].finish()
+	models := f.Models[:0]
+	for _, m := range f.Models {
+		if Chattable(m.ID) {
+			m.finish()
+			models = append(models, m)
+		}
 	}
+	f.Models = models
 	return f, true
 }

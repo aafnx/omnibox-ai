@@ -52,6 +52,9 @@ type Engine struct {
 	// BaseURL replaces the engine's address in tests.
 	BaseURL string
 	HTTP    *http.Client
+	// Recency and News narrow the search as in Query.
+	Recency string
+	News    bool
 }
 
 var engineHTTP = &http.Client{
@@ -71,8 +74,21 @@ func (e Engine) base(def string) string {
 	return def
 }
 
-// Search returns up to n results; lang is "", ru or en.
+// Search returns up to n results; lang is "", ru or en. A narrowed search that finds nothing is
+// asked again without the narrowing.
 func (e Engine) Search(ctx context.Context, query, lang string, n int) ([]Result, error) {
+	res, err := e.search(ctx, query, lang, n)
+	if err == nil && len(res) == 0 && (e.News || e.Recency != "") {
+		e.News, e.Recency = false, ""
+		return e.search(ctx, query, lang, n)
+	}
+	return res, err
+}
+
+// braveFreshness is Brave's name for each recency.
+var braveFreshness = map[string]string{"day": "pd", "week": "pw", "month": "pm", "year": "py"}
+
+func (e Engine) search(ctx context.Context, query, lang string, n int) ([]Result, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, errors.New("Пустой поисковый запрос.")
@@ -90,12 +106,21 @@ func (e Engine) Search(ctx context.Context, query, lang string, n int) ([]Result
 		if lang != "" {
 			body["search_language_filter"] = []string{lang}
 		}
+		if e.Recency != "" {
+			body["search_recency_filter"] = e.Recency
+		}
 		req, err = jsonRequest(ctx, e.base("https://api.perplexity.ai")+"/search", body)
 		if req != nil {
 			req.Header.Set("Authorization", "Bearer "+e.Key)
 		}
 	case EngineTavily:
 		body := map[string]any{"query": query, "max_results": n, "search_depth": "basic", "include_answer": false}
+		if e.News {
+			body["topic"] = "news"
+		}
+		if e.Recency != "" {
+			body["time_range"] = e.Recency
+		}
 		req, err = jsonRequest(ctx, e.base("https://api.tavily.com")+"/search", body)
 		if req != nil {
 			req.Header.Set("Authorization", "Bearer "+e.Key)
@@ -104,6 +129,9 @@ func (e Engine) Search(ctx context.Context, query, lang string, n int) ([]Result
 		q := url.Values{"q": {query}, "count": {strconv.Itoa(n)}, "text_decorations": {"false"}, "extra_snippets": {"true"}}
 		if lang != "" {
 			q.Set("search_lang", lang)
+		}
+		if f := braveFreshness[e.Recency]; f != "" {
+			q.Set("freshness", f)
 		}
 		req, err = http.NewRequestWithContext(ctx, http.MethodGet, e.base("https://api.search.brave.com")+"/res/v1/web/search?"+q.Encode(), nil)
 		if req != nil {

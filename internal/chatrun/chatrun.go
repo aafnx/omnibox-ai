@@ -58,7 +58,7 @@ type Runner struct {
 	// ChatGPTSearch lets ChatGPT models search with OpenAI's built-in web search.
 	ChatGPTSearch func() bool
 	// Search asks the chosen search engine; Read opens a page of the results or one the user named.
-	Search func(ctx context.Context, query string) (websearch.Found, error)
+	Search func(ctx context.Context, q websearch.Query) (websearch.Found, error)
 	// SearchByQuestion means the engine answers questions (Perplexity Sonar): it is given the
 	// question restated on its own, once, instead of keyword queries.
 	SearchByQuestion func() bool

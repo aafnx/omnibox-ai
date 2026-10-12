@@ -254,6 +254,10 @@ func perMillion(s string) float64 {
 	return math.Round(v*1e12) / 1e6
 }
 
+// Chattable tells whether a model answers chat/completions: the ":batch" variants (Gemini
+// through Google's batch API) are listed with the others but refuse it with 404.
+func Chattable(id string) bool { return !strings.HasSuffix(strings.ToLower(id), ":batch") }
+
 // Models returns the models OpenRouter offers now (GET /models).
 func (c *Client) Models(ctx context.Context) ([]Model, error) {
 	var body struct {
@@ -277,7 +281,7 @@ func (c *Client) Models(ctx context.Context) ([]Model, error) {
 	}
 	models := make([]Model, 0, len(body.Data))
 	for _, d := range body.Data {
-		if d.ID == "" {
+		if d.ID == "" || !Chattable(d.ID) {
 			continue
 		}
 		m := Model{ID: d.ID, Name: d.Name, Context: d.Context, Input: d.Architecture.Input, Output: d.Architecture.Output,

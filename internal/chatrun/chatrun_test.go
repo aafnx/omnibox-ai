@@ -75,7 +75,7 @@ func newRig(t *testing.T) *rig {
 			g.mu.Unlock()
 			return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader(reply))}
 		},
-		Search: func(ctx context.Context, q string) (websearch.Found, error) {
+		Search: func(ctx context.Context, _ websearch.Query) (websearch.Found, error) {
 			return websearch.Found{Results: []websearch.Result{{Title: "Wake on LAN", URL: "https://www.home-assistant.io/wol", Snippet: "magic packet"}}}, nil
 		},
 		Spend: &openrouter.Spend{Path: filepath.Join(dir, "spend.json")},

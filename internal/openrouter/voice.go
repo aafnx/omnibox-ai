@@ -17,7 +17,8 @@ import (
 func VoiceModel(list []Model, chosen string) (string, bool) {
 	var audio []Model
 	for _, m := range list {
-		if m.Caps.Audio && m.PromptUSD >= 0 {
+		// Never a batch-only variant: it is the cheapest Gemini and cannot answer.
+		if m.Caps.Audio && m.PromptUSD >= 0 && Chattable(m.ID) {
 			if m.ID == chosen {
 				return m.ID, true
 			}

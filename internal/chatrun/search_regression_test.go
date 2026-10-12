@@ -15,7 +15,8 @@ func TestTextualBrowserCallIsRecoveredWithoutLeakingMarkup(t *testing.T) {
 		sse(`{"choices":[{"delta":{"content":"В Казани +8 °C [1]."}}]}`),
 	}
 	queries := []string{}
-	g.r.Search = func(_ context.Context, q string) (websearch.Found, error) {
+	g.r.Search = func(_ context.Context, sq websearch.Query) (websearch.Found, error) {
+		q := sq.Text
 		queries = append(queries, q)
 		return websearch.Found{Results: []websearch.Result{{Title: "Погода в Казани", URL: "https://weather.example/kazan", Snippet: "Сегодня +8 °C"}}}, nil
 	}
@@ -75,7 +76,8 @@ func TestToolQueryCannotReplaceTheRequestedCity(t *testing.T) {
 		sse(`{"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"web_search","arguments":"{\"query\":\"погода Кохем\"}"}}]}}]}`),
 		sse(`{"choices":[{"delta":{"content":"Погода в Казани [1]."}}]}`),
 	}
-	g.r.Search = func(_ context.Context, q string) (websearch.Found, error) {
+	g.r.Search = func(_ context.Context, sq websearch.Query) (websearch.Found, error) {
+		q := sq.Text
 		if !strings.Contains(q, "Казани") {
 			t.Errorf("query lost the city: %q", q)
 		}

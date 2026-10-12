@@ -118,7 +118,7 @@ func TestUnreadablePagesGiveWayToTheNextResults(t *testing.T) {
 	g := newRig(t)
 	var read []string
 	var mu sync.Mutex
-	g.r.Search = func(_ context.Context, q string) (websearch.Found, error) {
+	g.r.Search = func(_ context.Context, _ websearch.Query) (websearch.Found, error) {
 		var res []websearch.Result
 		for _, h := range []string{"refused", "shell", "first", "second", "third"} {
 			res = append(res, websearch.Result{Title: h, URL: "https://" + h + ".example/kazan", Snippet: "Погода в Казани"})
