@@ -82,11 +82,24 @@ type Task struct {
 	Files     []chats.Attachment // documents with their text
 	Media     []map[string]any   // images for a model that sees
 	Web, Read bool
-	Timeout   time.Duration
+	// Sites keep the search on these sites and let the task read their pages and follow the
+	// links between them; the owner listed them in the automation.
+	Sites   []string
+	Timeout time.Duration
 }
 
 // taskNote tells the model nobody waits to answer its questions: a scheduled run is read later.
 const taskNote = "Это задача автоматизации: выполни её полностью и сразу дай итоговый результат, без уточняющих вопросов и предложений продолжить — ответ прочитают позже. Если данных не хватает, сделай что можно и прямо скажи, чего не хватило."
+
+// sitesNote tells a task that walks sites where it may go: a model told only "addresses of the
+// results" does not open the links it is shown.
+func sitesNote(sites []string) string {
+	if len(sites) == 0 {
+		return ""
+	}
+	return " Поиск идёт только по сайтам " + strings.Join(sites, ", ") + ". Инструментом read_page можно открыть любую страницу этих сайтов: из результатов поиска, из задачи и из списков ссылок под прочитанными страницами. " +
+		"Если нужного на странице нет, открой подходящие ссылки — списки, поиск, карточки документов — и только потом отвечай. Для каждого факта давай ссылку на страницу сайта."
+}
 
 // Task runs the task and returns the answer: its text, sources, searches and cost in Meta, or
 // its error in Error. A private task never searches, whatever it asks for.
@@ -123,10 +136,14 @@ func (r *Runner) Task(ctx context.Context, q Task) (chats.Message, error) {
 		text += "\n\nДанные:\n" + d
 	}
 	t := &turn{chat: &chats.Chat{ID: q.Session, Model: q.Model}, model: model, context: ctxLen, private: true, effort: effort,
-		assistant: &chats.Assistant{Instructions: taskNote}, user: chats.Message{Role: "user", Text: text, Attachments: q.Files},
+		assistant: &chats.Assistant{Instructions: taskNote + sitesNote(q.Sites)}, user: chats.Message{Role: "user", Text: text, Attachments: q.Files},
 		media: q.Media, web: q.Web && r.Search != nil, result: &result}
 	t.read = t.web && q.Read && r.Read != nil
-	t.native = t.web && model.Source == "chatgpt" && r.ChatGPTSearch != nil && r.ChatGPTSearch()
+	if t.web {
+		t.sites = q.Sites
+	}
+	// OpenAI's own search cannot be kept on the sites: OmniBox searches and reads them itself.
+	t.native = t.web && len(t.sites) == 0 && model.Source == "chatgpt" && r.ChatGPTSearch != nil && r.ChatGPTSearch()
 	r.run(ctx, t, &stream{})
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) && result.Text == "" {
 		result.Error = "Модель не ответила вовремя. Попробуйте ещё раз или выберите модель быстрее."

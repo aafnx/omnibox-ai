@@ -22,6 +22,14 @@ type Page struct {
 	URL   string `json:"url"`
 	Title string `json:"title"`
 	Text  string `json:"text"`
+	// Links are the page's links, resolved: an automation that may read a site follows them.
+	Links []Link `json:"links,omitempty"`
+}
+
+// Link is a link of a page: its text and where it goes.
+type Link struct {
+	Text string `json:"text"`
+	URL  string `json:"url"`
 }
 
 // Reader opens web pages for the chat: the pages its search found or the user named. Only public
@@ -161,6 +169,7 @@ func (r Reader) read(ctx context.Context, raw string) (Page, error) {
 	} else {
 		p.Title, p.Text = HTMLText(text)
 		p.Text = ClipText(p.Text, maxPageText)
+		p.Links = HTMLLinks(text, resp.Request.URL)
 	}
 	if strings.TrimSpace(p.Text) == "" {
 		return Page{}, fmt.Errorf("На странице %s нет текста (возможно, она собирается скриптами).", Host(u.String()))
@@ -211,6 +220,32 @@ func HTMLText(doc string) (title, text string) {
 	doc = reCell.ReplaceAllString(doc, " \t")
 	doc = reTag.ReplaceAllString(doc, "")
 	return title, tidy(html.UnescapeString(doc))
+}
+
+var reLink = regexp.MustCompile(`(?is)<a\b[^>]*?\bhref\s*=\s*["']([^"'#][^"']*)["'][^>]*>(.*?)</a>`)
+
+const maxLinks = 300
+
+// HTMLLinks are the web links of an HTML page, resolved against its address, each once.
+func HTMLLinks(doc string, base *url.URL) []Link {
+	var out []Link
+	seen := map[string]bool{}
+	for _, m := range reLink.FindAllStringSubmatch(doc, -1) {
+		u, err := base.Parse(strings.TrimSpace(html.UnescapeString(m[1])))
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") {
+			continue
+		}
+		u.Fragment = ""
+		if seen[u.String()] {
+			continue
+		}
+		seen[u.String()] = true
+		out = append(out, Link{Text: clip(tidy(html.UnescapeString(reTag.ReplaceAllString(m[2], " "))), 160), URL: u.String()})
+		if len(out) == maxLinks {
+			break
+		}
+	}
+	return out
 }
 
 // ClipText cuts text to n characters, keeping its lines.

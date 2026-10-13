@@ -936,3 +936,8 @@ svg[id^="mmd"] .pieCircle{stroke:var(--surface);stroke-width:2px}
 
 select{min-width:0;max-width:100%;text-overflow:ellipsis}
 .field,.au-step,.au-steps,.au-sopts,.au-shead{min-width:0}
+.au-sopts .au-sites{flex:1 1 100%;display:flex;align-items:center;gap:8px;min-width:0}
+.au-sites input{flex:1;min-width:0}
+.au-tadd{border-style:dashed}
+.au-tadd .label{margin-bottom:-2px}
+.au-frow select[data-au-fcheck],#au-tadd-check{width:auto;max-width:45%;flex:0 0 auto}

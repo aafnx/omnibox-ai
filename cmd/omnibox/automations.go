@@ -221,6 +221,21 @@ func (c *chatSide) automationAction(ctx context.Context, run *chatrun.Runner, in
 			return nil, err
 		}
 		return map[string]bool{"deleted": true}, nil
+	case "place":
+		// The owner names a text of the template: its places, checked as the model's are.
+		_, d, err := c.automation(in.ID)
+		if err != nil {
+			return nil, err
+		}
+		places := automations.FindPlaces(d, in.Text)
+		if len(places) == 0 {
+			return nil, errors.New("Такого текста в шаблоне нет: впишите его так, как он стоит в документе, — с теми же пробелами и знаками.")
+		}
+		tpl := &automations.Template{Fields: []automations.Field{{Name: "x", Places: places}}}
+		if err := automations.Verify(tpl, d); err != nil {
+			return nil, err
+		}
+		return map[string]any{"places": tpl.Fields[0].Places}, nil
 	case "analyze":
 		a, d, err := c.automation(in.ID)
 		if err != nil {
@@ -323,7 +338,7 @@ func (c *chatSide) execute(ctx context.Context, run *chatrun.Runner, a automatio
 	}
 	seen := map[string]bool{}
 	for i, st := range a.Steps {
-		task := chatrun.Task{Model: keys[i], Private: a.Private, Session: "panel-auto-" + a.ID, Text: stepData(data, res.Steps), Files: files, Web: st.Web, Read: st.Read}
+		task := chatrun.Task{Model: keys[i], Private: a.Private, Session: "panel-auto-" + a.ID, Text: stepData(data, res.Steps), Files: files, Web: st.Web, Read: st.Read, Sites: st.Sites}
 		// A model that cannot see gets the text only; the first step's model was checked to see.
 		if vision[i] {
 			task.Media = images

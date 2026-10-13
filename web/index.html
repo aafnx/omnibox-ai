@@ -167,6 +167,7 @@
             <div class="mhead">Заготовки — можно поменять как угодно</div>
             <button type="button" data-au-preset="passport"><b>🪪 Паспорт РФ</b><span>Поля паспорта с фото, с проверкой серии, номера, дат и кода подразделения</span></button>
             <button type="button" data-au-preset="news"><b>📰 Сводка новостей</b><span>Новости по теме за период, с поиском в интернете</span></button>
+            <button type="button" data-au-preset="duma"><b>🏛️ Законопроекты Госдумы</b><span>Законопроекты по теме на sozd.duma.gov.ru: стадия, последние события, ссылки</span></button>
           </div></div>
       </div>
       <div id="au-list" class="au-list"><div class="banner">Загружаем автоматизации…</div></div>
@@ -454,7 +455,11 @@
     <div class="field" id="au-doc-wrap"><div class="line"><span class="label">Шаблон</span><a class="btn ghost sm" id="au-tpl" href="#" download hidden><svg class="i i15"><use href="#i-download"/></svg><span id="au-tpl-name"></span></a></div>
       <div class="line"><span class="label" id="au-fields-title">Поля</span><button class="btn sm" type="button" id="au-analyze"><svg class="i i15"><use href="#i-spark"/></svg>Найти поля моделью</button></div>
       <span class="hint" id="au-fields-hint">Модель прочитает шаблон и предложит места для заполнения. Метки вида {{ФИО}} становятся полями сами.</span>
-      <div id="au-fields" class="au-fields"></div></div>
+      <div id="au-fields" class="au-fields"></div>
+      <div class="au-field au-tadd" id="au-tadd" hidden><span class="label">Добавить поле</span>
+        <div class="au-frow"><input type="text" id="au-tadd-name" maxlength="80" placeholder="Название, например «Цена»" aria-label="Название нового поля"><select id="au-tadd-check" aria-label="Тип нового поля"><option value="">Текст</option><option value="number">Число, сумма</option><option value="date">Дата</option><option value="phone">Телефон</option><option value="email">Email</option><option value="inn">ИНН</option></select></div>
+        <div class="au-frow"><input type="text" id="au-tadd-text" maxlength="300" placeholder="Текст в шаблоне, который заменить: «____» или «Иванов И. И.»" aria-label="Текст в шаблоне"><button class="btn sm" type="button" id="au-tadd-go"><svg class="i i15"><use href="#i-plus"/></svg>Найти</button></div>
+        <span class="hint">OmniBox найдёт этот текст во всём шаблоне — каждое место станет местом поля. Тип потом можно поменять в списке.</span></div></div>
     <div class="field"><label for="au-instr">Указания для модели</label><textarea id="au-instr" rows="3" maxlength="4000" placeholder="Для всех шагов. Например: даты пиши как «12» октября 2026 г.; ФИО полностью; ответ — списком."></textarea></div>
     <div class="line"><div><b>Хранить историю запусков</b><div class="small muted">Результаты на ПК — столько, сколько хранятся чаты</div></div><label class="switch"><input type="checkbox" id="au-history" aria-label="Хранить историю"><span></span></label></div>
     <div class="field au-sched" id="au-sched-wrap">

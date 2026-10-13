@@ -19,6 +19,11 @@ func TestCheckValue(t *testing.T) {
 		{"inn", "7707083893", ""}, {"inn", "7707083894", "ИНН"}, {"inn", "500100732259", ""},
 		{"snils", "112-233-445 95", ""}, {"snils", "112-233-445 96", "СНИЛС"},
 		{"digits", "12 34", ""}, {"digits", "12a", "цифры"}, {"passport_series", "", ""},
+		{"number", "1 250 000,50", ""}, {"number", "сто", "число"}, {"phone", "+7 (912) 345-67-89", ""}, {"phone", "12-34", "телефон"},
+		{"email", "ivan@example.ru", ""}, {"email", "ivan@", "email"},
+		{"ogrn", "1027700132195", ""}, {"ogrn", "1027700132196", "ОГРН"}, {"ogrn", "304500116000157", ""},
+		{"kpp", "773601001", ""}, {"kpp", "77360100", "КПП"}, {"bik", "044525225", ""}, {"bik", "144525225", "БИК"},
+		{"account", "40702810938000012345", ""}, {"account", "4070281093800001234", "20 цифр"},
 	} {
 		got := CheckValue(c.check, c.value)
 		if (c.want == "") != (got == "") || !strings.Contains(got, c.want) {
@@ -91,6 +96,23 @@ func TestPrivacyAndScheduleRules(t *testing.T) {
 	f.Steps[0].Fields[0].Check, f.History, f.Model = "passport_series", true, "x"
 	if err := check(&f); err == nil || !strings.Contains(err.Error(), "начинаются с задачи") {
 		t.Fatal(err)
+	}
+}
+
+// Sites are site names whatever the owner pasted; listing one turns on search and reading, and a
+// private automation has none.
+func TestSites(t *testing.T) {
+	a := Automation{Name: "Законы", Steps: []Step{{Kind: KindTask, Prompt: "Законы о {{тема}}", Sites: []string{"https://sozd.duma.gov.ru/bill/1234", " WWW.Duma.gov.ru ", "sozd.duma.gov.ru", ""}}}}
+	if err := check(&a); err != nil || strings.Join(a.Steps[0].Sites, "|") != "sozd.duma.gov.ru|duma.gov.ru" || !a.Steps[0].Web || !a.Steps[0].Read || !a.Web {
+		t.Fatalf("%v %+v", err, a.Steps[0])
+	}
+	a.Steps[0].Sites = []string{"не сайт"}
+	if err := check(&a); err == nil || !strings.Contains(err.Error(), "не адрес сайта") {
+		t.Fatal(err)
+	}
+	a.Steps[0].Sites, a.Private = []string{"sozd.duma.gov.ru"}, true
+	if err := check(&a); err != nil || a.Steps[0].Sites != nil || a.Steps[0].Web {
+		t.Fatalf("%v %+v", err, a.Steps[0])
 	}
 }
 
