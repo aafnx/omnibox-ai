@@ -532,6 +532,13 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   // A long model name in a list does not widen a drawer past a phone's screen: the drawer's column
   // and every list may shrink.
   assert.ok(/\.drawer \.scroll\{[^}]*grid-template-columns:minmax\(0,1fr\)/.test(css)&&/(^|\n)select\{min-width:0;max-width:100%/.test(css));
+  // A model on the PC that is not running is named with a button; the run itself never starts it.
+  run(`S.library={models:[{key:'prismml:b.gguf',source:'local',name:'Bonsai',caps:{}},{key:'cloud:o/m',source:'cloud',name:'Облачная',favorite:true,caps:{}}]};A.list=[];openRun({id:'t',name:'Тест',kind:'task',model:'prismml:b.gguf',steps:[{kind:'task',prompt:'x'}]})`);
+  assert.equal(nodes['ar-need'].hidden,false);assert.ok(nodes['ar-need'].innerHTML.includes('Модель Bonsai не запущена')&&nodes['ar-need'].innerHTML.includes('data-ar-start="prismml:b.gguf"'),nodes['ar-need'].innerHTML);
+  run("var started=[];startLocal=async m=>{started.push(m.key);S.library.models[0].running=true;}");
+  await nodes['ar-need'].listeners.click[0]({target:{closest:s=>s==='[data-ar-start]'?{dataset:{arStart:'prismml:b.gguf'}}:null}});
+  assert.deepEqual(J('started'),['prismml:b.gguf']);assert.equal(nodes['ar-need'].hidden,true);
+  run(`openRun({id:'t',name:'Тест',kind:'task',model:'cloud:o/m',steps:[{kind:'task',prompt:'x'}]})`);assert.equal(nodes['ar-need'].hidden,true);
   // A run of several steps shows each step folded, the last as the result.
   run(`A.run={a:{id:'n',name:'Новости',kind:'task',steps:[{kind:'task'},{kind:'task'}]},files:[]};showResult({text:'Итог',steps:[{name:'Поиск',kind:'task',text:'**найдено**'},{name:'Сводка',kind:'task',text:'Итог'}]})`);
   assert.equal(nodes['ar-steps'].hidden,false);assert.ok(nodes['ar-steps'].innerHTML.includes('1. Поиск')&&nodes['ar-steps'].innerHTML.includes('<b>найдено</b>')&&!nodes['ar-steps'].innerHTML.includes('Сводка'),nodes['ar-steps'].innerHTML);
