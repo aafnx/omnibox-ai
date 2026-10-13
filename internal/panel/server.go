@@ -153,6 +153,7 @@ func New(opt Options) (*Server, error) {
 		"/models.js":       {"models.js", "text/javascript; charset=utf-8"},
 		"/server.js":       {"server.js", "text/javascript; charset=utf-8"},
 		"/settings.js":     {"settings.js", "text/javascript; charset=utf-8"},
+		"/automations.js":  {"automations.js", "text/javascript; charset=utf-8"},
 		"/style.css":       {"style.css", "text/css; charset=utf-8"},
 		"/favicon.svg":     {"favicon.svg", "image/svg+xml"},
 		"/brand-light.svg": {"brand-light.svg", "image/svg+xml"},

@@ -493,7 +493,14 @@ func (r *Runner) wrote(a *answer, text string, out *stream) {
 func (r *Runner) send(ctx context.Context, t *turn, body map[string]any) (*http.Response, error) {
 	if t.model.Source == "local" {
 		data, _ := json.Marshal(body)
-		resp := r.Local(ctx, "panel-chat-"+t.chat.ID, data)
+		local, session := r.Local, "panel-chat-"+t.chat.ID
+		if t.private {
+			if r.Automation == nil {
+				return nil, errors.New("Автоматизации недоступны: служба запущена без них.")
+			}
+			local, session = r.Automation, t.chat.ID
+		}
+		resp := local(ctx, session, data)
 		if resp.StatusCode != http.StatusOK {
 			defer resp.Body.Close()
 			var e struct {

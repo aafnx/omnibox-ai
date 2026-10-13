@@ -16,6 +16,7 @@ import (
 	"time"
 
 	omnibox "github.com/aafnx/omnibox-ai"
+	"github.com/aafnx/omnibox-ai/internal/automations"
 	"github.com/aafnx/omnibox-ai/internal/chatgpt"
 	"github.com/aafnx/omnibox-ai/internal/chatrun"
 	"github.com/aafnx/omnibox-ai/internal/chats"
@@ -48,7 +49,10 @@ type chatSide struct {
 	GPT *chatgpt.Service
 	// SearchKeys are the keys of Perplexity, Tavily and Brave Search, encrypted.
 	SearchKeys websearch.Keys
-	Logf       func(format string, args ...any)
+	// Automations are the owner's saved scenarios; Results the documents they built, in memory.
+	Automations *automations.Store
+	Results     *automations.Results
+	Logf        func(format string, args ...any)
 }
 
 func newChatSide(data string, store *config.Store, services platform.Services, controller *control.Controller, estimates estimator) *chatSide {
@@ -59,6 +63,7 @@ func newChatSide(data string, store *config.Store, services platform.Services, c
 		Assistants: &chats.Assistants{Path: filepath.Join(data, "assistants.json")}}
 	c.Catalog = &openrouter.Catalog{Path: filepath.Join(data, filepath.FromSlash(openrouter.CatalogFile)), Client: c.client}
 	c.SearchKeys = websearch.Keys{Path: filepath.Join(data, filepath.FromSlash(websearch.KeyFile))}
+	c.Automations, c.Results = &automations.Store{Dir: filepath.Join(data, automations.Dir)}, &automations.Results{}
 	c.GPT = &chatgpt.Service{Dir: filepath.Join(data, chatgpt.Dir), Version: omnibox.Version, Logf: c.logf, WebSearch: c.openaiSearch}
 	return c
 }
@@ -266,24 +271,27 @@ func (c *chatSide) searchEngines(s config.Chat) map[string]bool {
 }
 
 // handlers are the panel's routes of this side.
-func (c *chatSide) handlers(local func(ctx context.Context, session string, body []byte) *http.Response) map[string]http.Handler {
+func (c *chatSide) handlers(local, automation func(ctx context.Context, session string, body []byte) *http.Response) map[string]http.Handler {
 	history := &chats.Handler{Chats: c.Chats, Assistants: c.Assistants, Logf: c.logf,
 		KeepHours: func() int { return c.Store.Get().ChatSettings().RetentionHours }}
 	run := c.runner(local)
+	run.Automation = automation
 	return map[string]http.Handler{
-		"/api/chats":           history,
-		"/api/assistants":      history,
-		"/api/chat/send":       run,
-		"/api/chat/followups":  http.HandlerFunc(run.FollowUps),
-		"/api/chat/title":      http.HandlerFunc(run.Title),
-		"/api/chat/active":     http.HandlerFunc(run.Active),
-		"/api/chat/stream":     http.HandlerFunc(run.Follow),
-		"/api/chat/stop":       http.HandlerFunc(run.Stop),
-		"/api/library":         http.HandlerFunc(c.serveLibrary),
-		"/api/cloud":           http.HandlerFunc(c.serveCloud),
-		"/api/chatgpt":         http.HandlerFunc(c.serveChatGPT),
-		"/api/chat/transcribe": http.HandlerFunc(c.serveTranscribe),
-		"/api/chat-settings":   http.HandlerFunc(c.serveSettings),
+		"/api/chats":            history,
+		"/api/assistants":       history,
+		"/api/chat/send":        run,
+		"/api/chat/followups":   http.HandlerFunc(run.FollowUps),
+		"/api/chat/title":       http.HandlerFunc(run.Title),
+		"/api/chat/active":      http.HandlerFunc(run.Active),
+		"/api/chat/stream":      http.HandlerFunc(run.Follow),
+		"/api/chat/stop":        http.HandlerFunc(run.Stop),
+		"/api/library":          http.HandlerFunc(c.serveLibrary),
+		"/api/cloud":            http.HandlerFunc(c.serveCloud),
+		"/api/chatgpt":          http.HandlerFunc(c.serveChatGPT),
+		"/api/chat/transcribe":  http.HandlerFunc(c.serveTranscribe),
+		"/api/chat-settings":    http.HandlerFunc(c.serveSettings),
+		"/api/automations":      c.serveAutomations(run),
+		"/api/automations/file": http.HandlerFunc(c.serveAutomationFile),
 	}
 }
 

@@ -390,7 +390,8 @@ func jsonEncoder(w io.Writer) *json.Encoder {
 
 func (g *Gateway) generate(w http.ResponseWriter, r *http.Request, cfg *config.Config, target *url.URL, t Target, gen uint64, keyID string) {
 	limit := bodyLimit
-	if r.Context().Value(internalRequest{}) == "chat" {
+	internal := r.Context().Value(internalRequest{})
+	if internal == "chat" || internal == "automation" {
 		limit = chatBodyLimit
 	}
 	if r.ContentLength > int64(limit) {
@@ -412,7 +413,7 @@ func (g *Gateway) generate(w http.ResponseWriter, r *http.Request, cfg *config.C
 	}
 	var c *capture
 	// The client's own body, before OmniBox adds engine options; embeddings carry no readable text.
-	if cfg.Storage.RequestLog == "content" && r.URL.Path != "/v1/embeddings" {
+	if cfg.Storage.RequestLog == "content" && r.URL.Path != "/v1/embeddings" && internal != "automation" {
 		c = newCapture(body)
 	}
 	forward, _, perr := prepare(body, r.URL.Path, t, g.dateFor(cfg))

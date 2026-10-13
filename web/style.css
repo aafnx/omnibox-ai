@@ -858,3 +858,38 @@ svg[id^="mmd"] .pieCircle{stroke:var(--surface);stroke-width:2px}
 .botfoot .meta span{white-space:nowrap}
 .botfoot .meta .mname{min-width:0;max-width:340px;overflow:hidden;text-overflow:ellipsis;flex:0 1 auto}
 @media (max-width:860px){.botfoot .meta{flex-wrap:wrap;justify-content:flex-start}.botfoot .meta .mname{max-width:100%}}
+
+/* ── automations ── */
+.nav .lbl-s{display:none}
+@media (max-width:860px){.nav .lbl-l{display:none}.nav .lbl-s{display:inline}}
+.au-list{display:grid;gap:10px}
+.au-card{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:14px;align-items:center;border:1px solid var(--line);border-radius:var(--r);background:var(--surface);padding:14px 16px}
+.au-card>.av{width:40px;height:40px}
+.au-main{display:grid;gap:4px;min-width:0}
+.au-main b{font-size:15px;overflow-wrap:anywhere}
+.au-policy{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--muted)}
+.au-policy.priv{color:var(--iris-text)}
+.au-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
+@media (max-width:560px){.au-card{grid-template-columns:auto minmax(0,1fr)}.au-acts{grid-column:1/-1;justify-content:flex-start}}
+.au-fields{display:grid;gap:10px;margin-top:6px}
+.au-field{display:grid;gap:6px;border:1px solid var(--line);border-radius:var(--r-s);padding:10px}
+.au-frow{display:flex;gap:6px;align-items:center}
+.au-frow input{font-weight:600}
+.au-place{display:grid;gap:2px;font-size:12.5px;line-height:1.45}
+.au-ptext{color:var(--muted);overflow-wrap:anywhere}
+.au-ptext mark{background:var(--iris-soft);color:var(--iris-text);border-radius:3px;padding:0 2px}
+#ar-title{display:flex;align-items:center;gap:10px;padding-right:40px}
+#ar-title .av{width:30px;height:30px}
+.ar-files{display:flex;gap:6px;flex-wrap:wrap}
+.ar-files:empty{display:none}
+.ar-files .chip{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--line);border-radius:99px;padding:2px 4px 2px 10px;font-size:12.5px}
+.ar-files .chip button{border:0;background:none;padding:2px;color:var(--muted);display:grid;place-items:center}
+.ar-actions{flex-wrap:wrap;justify-content:flex-start;gap:8px}
+.ar-actions #ar-go{margin-left:auto}
+.ar-values{display:grid;gap:10px}
+.ar-row{display:grid;gap:4px}
+.ar-row label{font-size:13px;font-weight:600}
+.ar-row textarea{min-height:38px;resize:vertical}
+.ar-row.miss textarea{border-color:var(--warn)}
+.ar-out{display:flex;gap:8px;flex-wrap:wrap}
+.ar-done{display:grid;gap:6px;justify-items:start}
