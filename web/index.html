@@ -445,23 +445,20 @@
       <div class="field"><label for="au-name">Название</label><input id="au-name" type="text" maxlength="80" placeholder="Например, Договор купли-продажи"></div>
       <div class="field"><label for="au-emoji">Значок</label><input id="au-emoji" class="emo-input" type="text" maxlength="8" placeholder="⚡"></div>
     </div>
-    <div class="field" id="au-prompt-wrap"><label for="au-prompt" id="au-prompt-label">Задача</label><textarea id="au-prompt" rows="5" maxlength="20000" placeholder="Что сделать — своими словами. Например: «Найди главные новости о {{тема}} за последнюю неделю и сделай короткую сводку со ссылками»."></textarea>
-      <span class="hint">Слово в двойных фигурных скобках — <b>{{тема}}</b> — спрашивается при каждом запуске.</span></div>
-    <div class="field" id="au-ffields-wrap"><div class="line"><span class="label">Поля</span><button class="btn sm" type="button" id="au-fadd"><svg class="i i15"><use href="#i-plus"/></svg>Поле</button></div>
-      <span class="hint">Что взять из данных. Проверка ловит ошибку модели: неверное число цифр, несуществующую дату, неверную контрольную сумму.</span>
-      <div id="au-ffields" class="au-fields"></div></div>
+    <div class="line"><div><b>Конфиденциально</b><div class="small muted">Только модели на ПК. Без интернета, истории и журналов текста. Для персональных данных.</div></div><label class="switch"><input type="checkbox" id="au-private" aria-label="Конфиденциально"><span></span></label></div>
+    <div class="field"><label for="au-model">Модель</label><select id="au-model"></select><span class="hint" id="au-model-hint">Если не выбрана — модель, выбранная в чате. Для фото нужна модель со зрением.</span></div>
+    <div class="field"><span class="label">Шаги</span>
+      <span class="hint">Шаги выполняются по порядку. Каждый видит данные запуска и результаты предыдущих шагов. Слово в двойных фигурных скобках — <b>{{тема}}</b> — спрашивается при каждом запуске.</span>
+      <div id="au-steps" class="au-steps"></div>
+      <div class="au-sadd"><button class="btn sm" type="button" data-au-add="task"><svg class="i i15"><use href="#i-plus"/></svg>Шаг: задача</button><button class="btn sm" type="button" data-au-add="fields"><svg class="i i15"><use href="#i-plus"/></svg>Шаг: поля из данных</button></div></div>
     <div class="field" id="au-doc-wrap"><div class="line"><span class="label">Шаблон</span><a class="btn ghost sm" id="au-tpl" href="#" download hidden><svg class="i i15"><use href="#i-download"/></svg><span id="au-tpl-name"></span></a></div>
       <div class="line"><span class="label" id="au-fields-title">Поля</span><button class="btn sm" type="button" id="au-analyze"><svg class="i i15"><use href="#i-spark"/></svg>Найти поля моделью</button></div>
       <span class="hint" id="au-fields-hint">Модель прочитает шаблон и предложит места для заполнения. Метки вида {{ФИО}} становятся полями сами.</span>
       <div id="au-fields" class="au-fields"></div></div>
-    <div class="field"><label for="au-instr">Указания для модели</label><textarea id="au-instr" rows="3" maxlength="4000" placeholder="Например: даты пиши как «12» октября 2026 г.; ФИО полностью; ответ — списком."></textarea></div>
-    <div class="line"><div><b>Конфиденциально</b><div class="small muted">Только модель на ПК. Без интернета, истории и журналов текста. Для персональных данных.</div></div><label class="switch"><input type="checkbox" id="au-private" aria-label="Конфиденциально"><span></span></label></div>
-    <div class="field"><label for="au-model">Модель</label><select id="au-model"></select><span class="hint" id="au-model-hint">Если не выбрана — модель, выбранная в чате. Для фото нужна модель со зрением.</span></div>
-    <div class="line"><div><b>Поиск в интернете</b><div class="small muted" id="au-web-hint">Модель может искать в интернете, как в чате</div></div><label class="switch"><input type="checkbox" id="au-web" aria-label="Поиск в интернете"><span></span></label></div>
-    <div class="line"><div><b>Читать найденные страницы</b><div class="small muted">Открывать лучшие страницы целиком</div></div><label class="switch"><input type="checkbox" id="au-read" aria-label="Читать найденные страницы"><span></span></label></div>
+    <div class="field"><label for="au-instr">Указания для модели</label><textarea id="au-instr" rows="3" maxlength="4000" placeholder="Для всех шагов. Например: даты пиши как «12» октября 2026 г.; ФИО полностью; ответ — списком."></textarea></div>
     <div class="line"><div><b>Хранить историю запусков</b><div class="small muted">Результаты на ПК — столько, сколько хранятся чаты</div></div><label class="switch"><input type="checkbox" id="au-history" aria-label="Хранить историю"><span></span></label></div>
     <div class="field au-sched" id="au-sched-wrap">
-      <div class="line"><div><b>По расписанию</b><div class="small muted" id="au-sched-hint">Служба запустит задачу сама. Нужны история и выбранная модель; ПК должен быть включён, пропущенный запуск не повторяется.</div></div><label class="switch"><input type="checkbox" id="au-sched-on" aria-label="По расписанию"><span></span></label></div>
+      <div class="line"><div><b>По расписанию</b><div class="small muted" id="au-sched-hint">Служба запустит автоматизацию сама. Нужны история и выбранная модель; ПК должен быть включён, пропущенный запуск не повторяется.</div></div><label class="switch"><input type="checkbox" id="au-sched-on" aria-label="По расписанию"><span></span></label></div>
       <div class="au-sched-body" id="au-sched-body">
         <div class="row2"><div class="field"><label for="au-sched-every">Как часто</label><select id="au-sched-every"><option value="day">Каждый день</option><option value="week">По дням недели</option><option value="hours">Каждые несколько часов</option></select></div>
           <div class="field"><label for="au-sched-at" id="au-sched-at-label">Время</label><input id="au-sched-at" type="time" value="08:00"></div></div>
@@ -492,6 +489,7 @@
         <button class="btn primary" type="button" id="ar-go">Запустить</button></div>
       <span class="hint" id="ar-status" role="status"></span>
     </div>
+    <div class="stack8" id="ar-steps" hidden></div>
     <div class="stack8" id="ar-answer" hidden>
       <div class="md ar-md" id="ar-md"></div>
       <div id="ar-sources"></div>

@@ -103,7 +103,7 @@ func TestParseValues(t *testing.T) {
 	if len(vals) != 3 || vals[0].Value != "Петров Пётр" || vals[0].Field != "ФИО" || vals[0].Missing || vals[1].Warning == "" || !vals[2].Missing {
 		t.Fatalf("%+v", vals)
 	}
-	task := ValuesTask(Automation{Name: "Паспорт", Kind: KindFields, Prompt: "Распознай паспорт РФ на фото.", Instructions: "Даты — ДД.ММ.ГГГГ", Fields: fields})
+	task := ValuesTask(Automation{Name: "Паспорт", Instructions: "Даты — ДД.ММ.ГГГГ", Steps: []Step{{Kind: KindFields, Fields: fields}}}, 0, "Распознай паспорт РФ на фото.")
 	if !strings.HasPrefix(task, "Распознай паспорт РФ на фото.") || !strings.Contains(task, "- «Серия»") || !strings.Contains(task, "Даты — ДД.ММ.ГГГГ") {
 		t.Fatal(task)
 	}

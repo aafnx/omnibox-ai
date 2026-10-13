@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -221,5 +222,43 @@ func TestTaskAndFieldsAutomations(t *testing.T) {
 	}
 	if runs, _ := c.Automations.Runs(p.ID, 0, time.Now()); len(runs) != 0 {
 		t.Fatal("a private run was kept")
+	}
+	// Steps: the second reads what the first gave; a cloud model in a step of a private one is refused.
+	steps := `"steps":[{"kind":"fields","name":"Паспорт","fields":[{"name":"Серия"}]},{"kind":"task","name":"Письмо","prompt":"Напиши письмо {{кому}} с серией паспорта"%s}]`
+	if w := post(h, "/api/automations", `{"action":"create","name":"Письмо","private":true,`+fmt.Sprintf(steps, `,"model":"cloud:o/m"`)+`}`); w.Code != 400 {
+		t.Fatalf("cloud step in a private automation: %d %s", w.Code, w.Body)
+	}
+	w = post(h, "/api/automations", `{"action":"create","name":"Письмо","private":true,"model":"prismml:a.gguf",`+fmt.Sprintf(steps, "")+`}`)
+	var m struct {
+		ID, Kind string
+		Steps    []struct{ Kind string }
+	}
+	json.Unmarshal(w.Body.Bytes(), &m)
+	if w.Code != 200 || m.Kind != "task" || len(m.Steps) != 2 {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	answers = append(answers, `{"values":[{"field":"Серия","value":"9204"}]}`, "Уважаемый Иван, серия 9204.")
+	prompts = nil
+	w = post(h, "/api/automations", `{"action":"run","id":"`+m.ID+`","text":"Паспорт 9204 123456","vars":{"кому":"Ивану"}}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"text":"Уважаемый Иван, серия 9204."`) || !strings.Contains(w.Body.String(), `"name":"Паспорт","kind":"fields"`) {
+		t.Fatalf("steps: %d %s", w.Code, w.Body)
+	}
+	if len(prompts) != 2 || !strings.Contains(prompts[1], "Результаты предыдущих шагов") || !strings.Contains(prompts[1], "Серия: 9204") || !strings.Contains(prompts[1], "Ивану") || !strings.Contains(prompts[1], "Паспорт 9204 123456") {
+		t.Fatalf("%v", prompts)
+	}
+	// A step that fails ends the run with its name.
+	answers = append(answers, `{"values":[{"field":"Серия","value":"9204"}]}`)
+	run.Automation = func(ctx context.Context, session string, body []byte) *http.Response {
+		if len(answers) == 0 {
+			return &http.Response{StatusCode: 500, Body: io.NopCloser(strings.NewReader(`{"error":{"message":"boom"}}`))}
+		}
+		a := answers[0]
+		answers = answers[1:]
+		chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": a}}}})
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("data: " + string(chunk) + "\n\ndata: [DONE]\n\n"))}
+	}
+	w = post(h, "/api/automations", `{"action":"run","id":"`+m.ID+`","text":"Паспорт 9204","vars":{"кому":"Ивану"}}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"error":"Письмо: `) {
+		t.Fatalf("failed step: %d %s", w.Code, w.Body)
 	}
 }

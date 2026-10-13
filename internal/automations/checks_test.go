@@ -3,6 +3,7 @@ package automations
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -82,14 +83,68 @@ func TestPrivacyAndScheduleRules(t *testing.T) {
 	if err := check(&a); err != nil {
 		t.Fatal(err)
 	}
-	f := Automation{Name: "Паспорт", Kind: KindFields, Fields: []Field{{Name: "Серия", Check: "nonsense"}}}
+	f := Automation{Name: "Паспорт", Steps: []Step{{Kind: KindFields, Fields: []Field{{Name: "Серия", Check: "nonsense"}}}}}
 	if err := check(&f); err == nil {
 		t.Fatal("an unknown check is refused")
 	}
 	f.Schedule = &Schedule{Enabled: true, Every: "day", At: "08:00"}
-	f.Fields[0].Check, f.History, f.Model = "passport_series", true, "x"
-	if err := check(&f); err == nil || !strings.Contains(err.Error(), "только задачи") {
+	f.Steps[0].Fields[0].Check, f.History, f.Model = "passport_series", true, "x"
+	if err := check(&f); err == nil || !strings.Contains(err.Error(), "начинаются с задачи") {
 		t.Fatal(err)
+	}
+}
+
+// Steps: any number, each with its own search; a document only last; the automation's kind is
+// the last step's, and an automation kept before steps becomes its one step.
+func TestSteps(t *testing.T) {
+	a := Automation{Name: "Договор по паспорту", Private: true, Template: &Template{Fields: []Field{{Name: "ФИО", Places: []Place{{Find: "x"}}}}},
+		Steps: []Step{{Kind: KindFields, Web: true, Fields: []Field{{Name: "ФИО"}}}, {Kind: KindDocument}}}
+	if err := check(&a); err != nil || a.Kind != KindDocument || a.Steps[0].Web || a.Web || len(a.FieldList()) != 1 || a.StepFields(0)[0].Name != "ФИО" {
+		t.Fatalf("%v %+v", err, a)
+	}
+	a.Steps = []Step{{Kind: KindDocument}, {Kind: KindTask, Prompt: "Напиши письмо"}}
+	if err := check(&a); err == nil || !strings.Contains(err.Error(), "последний шаг") {
+		t.Fatal(err)
+	}
+	b := Automation{Name: "Новости", Steps: []Step{{Kind: KindTask, Prompt: "Найди новости о {{тема}}", Web: true, Read: true}, {Kind: KindTask, Name: "Перевод", Prompt: "Переведи на {{язык}}", Read: true}}}
+	if err := check(&b); err != nil || !b.Web || !b.Read || b.Steps[1].Read || b.Kind != KindTask || b.Template != nil {
+		t.Fatalf("%v %+v", err, b)
+	}
+	if v := b.VarNames(); len(v) != 2 || v[1] != "язык" || b.Steps[1].Title(1) != "Перевод" || b.Steps[0].Title(0) != "Шаг 1" {
+		t.Fatal(v)
+	}
+	b.Steps[1].Prompt = ""
+	if err := check(&b); err == nil || !strings.Contains(err.Error(), "Перевод") {
+		t.Fatal(err)
+	}
+	b.Steps[1].Prompt = "Переведи"
+	b.History, b.Schedule = true, &Schedule{Enabled: true, Every: "day", At: "08:00"}
+	b.Vars = map[string]string{"тема": "ИИ"}
+	b.Steps[0].Model = "cloud:a/b"
+	if err := check(&b); err == nil || !strings.Contains(err.Error(), "Перевод") {
+		t.Fatalf("each step needs a model on a schedule: %v", err)
+	}
+	b.Model = "cloud:o/m"
+	if err := check(&b); err != nil {
+		t.Fatal(err)
+	}
+	old := Automation{Name: "Старая", Kind: KindTask, Prompt: "Сделай", Web: true}
+	if err := check(&old); err != nil || len(old.Steps) != 1 || old.Steps[0].Prompt != "Сделай" || !old.Steps[0].Web || old.Prompt != "" {
+		t.Fatalf("%v %+v", err, old)
+	}
+	if err := check(&Automation{Name: "Пусто"}); err == nil {
+		t.Fatal("no steps")
+	}
+	// A list kept by 0.28 reads with steps.
+	st := &Store{Dir: filepath.Join(t.TempDir(), Dir)}
+	os.MkdirAll(st.Dir, 0o700)
+	os.WriteFile(st.listPath(), []byte(`{"automations":[{"id":"0123456789abcdef","name":"Договор","kind":"document","template":{"name":"Д.docx","fields":[]}}]}`), 0o600)
+	if list, err := st.List(); err != nil || len(list) != 1 || len(list[0].Steps) != 1 || list[0].Steps[0].Kind != KindDocument {
+		t.Fatalf("%v %+v", err, list)
+	}
+	vals := ValuesText([]Value{{Field: "Серия", Value: "9204"}, {Field: "Номер", Missing: true}})
+	if vals != "Серия: 9204\nНомер: (нет в данных)\n" {
+		t.Fatal(vals)
 	}
 }
 

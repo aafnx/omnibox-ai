@@ -43,6 +43,7 @@ type automationRequest struct {
 	Schedule     *automations.Schedule `json:"schedule"`
 	Vars         map[string]string     `json:"vars"`
 	Template     *automationFile       `json:"template"`
+	Steps        []automations.Step    `json:"steps"`
 	Fields       []automations.Field   `json:"fields"`
 	Text         string                `json:"text"`
 	Files        []automationFile      `json:"files"`
@@ -127,21 +128,45 @@ func (c *chatSide) automationList() (map[string]any, error) {
 	return map[string]any{"automations": list, "last": last, "next": next}, nil
 }
 
-// fromRequest is an automation as the panel edited it.
+// fromRequest is an automation as the panel edited it. A request without steps describes one
+// step of the kind given, as the panel of 0.29 sent it.
 func fromRequest(a automations.Automation, in automationRequest) automations.Automation {
 	a.Name, a.Emoji, a.Private, a.Model, a.Instructions = in.Name, in.Emoji, in.Private, in.Model, in.Instructions
-	a.Prompt, a.Web, a.Read, a.History, a.Schedule, a.Vars = in.Prompt, in.Web, in.Read, in.History, in.Schedule, in.Vars
-	if a.Kind == automations.KindFields {
-		a.Fields = in.Fields
+	a.History, a.Schedule, a.Vars = in.History, in.Schedule, in.Vars
+	if in.Steps != nil {
+		a.Steps = in.Steps
+		return a
 	}
+	kind := in.Kind
+	if kind == "" {
+		kind = a.Kind
+	}
+	st := automations.Step{Kind: kind, Prompt: in.Prompt, Web: in.Web, Read: in.Read}
+	if kind == automations.KindFields {
+		st.Fields = in.Fields
+	}
+	a.Steps = []automations.Step{st}
 	return a
+}
+
+// checkModels refuses a cloud model in a private automation, its own or a step's.
+func checkModels(in automationRequest) error {
+	if err := checkModel(in.Model, in.Private); err != nil {
+		return err
+	}
+	for _, st := range in.Steps {
+		if err := checkModel(st.Model, in.Private); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (c *chatSide) automationAction(ctx context.Context, run *chatrun.Runner, in automationRequest) (any, error) {
 	now := time.Now()
 	switch in.Action {
 	case "create":
-		if err := checkModel(in.Model, in.Private); err != nil {
+		if err := checkModels(in); err != nil {
 			return nil, err
 		}
 		if in.Kind != automations.KindDocument {
@@ -174,7 +199,7 @@ func (c *chatSide) automationAction(ctx context.Context, run *chatrun.Runner, in
 		if err != nil {
 			return nil, err
 		}
-		if err := checkModel(in.Model, in.Private); err != nil {
+		if err := checkModels(in); err != nil {
 			return nil, err
 		}
 		a = fromRequest(a, in)
@@ -248,8 +273,9 @@ func (c *chatSide) automationAction(ctx context.Context, run *chatrun.Runner, in
 	return nil, errors.New("Неизвестное действие.")
 }
 
-// execute runs an automation with the data given and keeps its result when its history is on.
-// A scheduled run comes here too, with no data and the saved values of the prompt's names.
+// execute runs an automation's steps with the data given and keeps the result when its history
+// is on. A scheduled run comes here too, with no data and the saved values of the prompts' names.
+// Each step gets the data and what the steps before it gave; a step that fails ends the run.
 func (c *chatSide) execute(ctx context.Context, run *chatrun.Runner, a automations.Automation, key string, in automationRequest, trigger string) (any, error) {
 	if a.Kind == automations.KindDocument && len(a.Template.Fields) == 0 {
 		return nil, errors.New("В шаблоне нет полей: найдите их в настройках автоматизации.")
@@ -258,47 +284,92 @@ func (c *chatSide) execute(ctx context.Context, run *chatrun.Runner, a automatio
 	if trigger == "schedule" {
 		vars = a.Vars
 	}
-	prompt, err := automations.FillVars(a.Prompt, vars)
-	if err != nil {
-		return nil, err
-	}
-	if key == "" {
-		return nil, errors.New("Выберите модель для автоматизации.")
-	}
-	model, _, err := run.Model(ctx, key)
-	if err != nil {
-		return nil, err
-	}
-	data, files, images, err := automationInputs(in, model.Caps.Vision, model.Name, a.Kind != automations.KindTask)
-	if err != nil {
-		return nil, err
-	}
-	task := chatrun.Task{Model: key, Private: a.Private, Session: "panel-auto-" + a.ID, Text: data, Files: files, Media: images, Web: a.Web, Read: a.Read}
-	if a.Kind == automations.KindTask {
-		task.Prompt = prompt
-		if strings.TrimSpace(a.Instructions) != "" {
-			task.Prompt += "\n\nУказания владельца: " + a.Instructions
+	prompts := make([]string, len(a.Steps))
+	keys := make([]string, len(a.Steps))
+	vision := make([]bool, len(a.Steps))
+	first := ""
+	// Every step's model is checked before the first runs: nothing is spent on a run that cannot end.
+	for i, st := range a.Steps {
+		p, err := automations.FillVars(st.Prompt, vars)
+		if err != nil {
+			return nil, err
 		}
-	} else {
-		b := a
-		b.Prompt = prompt
-		task.Prompt = automations.ValuesTask(b)
+		prompts[i], keys[i] = p, st.Model
+		if keys[i] == "" {
+			keys[i] = key
+		}
+		if keys[i] == "" {
+			return nil, errors.New("Выберите модель для автоматизации.")
+		}
+		if err := checkModel(keys[i], a.Private); err != nil {
+			return nil, err
+		}
+		model, _, err := run.Model(ctx, keys[i])
+		if err != nil {
+			return nil, err
+		}
+		vision[i] = model.Caps.Vision
+		if i == 0 {
+			first = model.Name
+		}
 	}
-	msg, err := run.Task(ctx, task)
+	data, files, images, err := automationInputs(in, vision[0], first, a.Steps[0].Kind != automations.KindTask)
 	if err != nil {
 		return nil, err
 	}
-	res := automations.Run{Automation: a.ID, Created: time.Now().UTC(), Trigger: trigger, Model: key, Input: in.Text, Error: msg.Error, Seen: trigger == "manual"}
+	res := automations.Run{Automation: a.ID, Created: time.Now().UTC(), Trigger: trigger, Model: keys[len(keys)-1], Input: in.Text, Seen: trigger == "manual"}
 	for _, f := range in.Files {
 		res.Files = append(res.Files, f.Name)
 	}
-	if msg.Meta != nil {
-		res.Sources, res.CostUSD = msg.Meta.Sources, msg.Meta.CostUSD
+	seen := map[string]bool{}
+	for i, st := range a.Steps {
+		task := chatrun.Task{Model: keys[i], Private: a.Private, Session: "panel-auto-" + a.ID, Text: stepData(data, res.Steps), Files: files, Web: st.Web, Read: st.Read}
+		// A model that cannot see gets the text only; the first step's model was checked to see.
+		if vision[i] {
+			task.Media = images
+		}
+		if st.Kind == automations.KindTask {
+			task.Prompt = prompts[i]
+			if strings.TrimSpace(a.Instructions) != "" {
+				task.Prompt += "\n\nУказания владельца: " + a.Instructions
+			}
+		} else {
+			task.Prompt = automations.ValuesTask(a, i, prompts[i])
+		}
+		msg, err := run.Task(ctx, task)
+		if err != nil {
+			if i == 0 {
+				return nil, err
+			}
+			msg.Error = err.Error()
+		}
+		step := automations.StepResult{Name: st.Title(i), Kind: st.Kind, Model: keys[i], Error: msg.Error}
+		if msg.Meta != nil {
+			res.CostUSD += msg.Meta.CostUSD
+			for _, s := range msg.Meta.Sources {
+				if !seen[s.URL] {
+					seen[s.URL] = true
+					res.Sources = append(res.Sources, s)
+				}
+			}
+		}
+		if st.Kind == automations.KindTask {
+			step.Text = msg.Text
+		} else if msg.Error == "" {
+			step.Values = automations.ParseValues(msg.Text, a.StepFields(i))
+		}
+		res.Steps = append(res.Steps, step)
+		res.Text, res.Values = step.Text, step.Values
+		if step.Error != "" {
+			res.Error = step.Error
+			if len(a.Steps) > 1 {
+				res.Error = step.Name + ": " + step.Error
+			}
+			break
+		}
 	}
-	if a.Kind == automations.KindTask {
-		res.Text = msg.Text
-	} else if msg.Error == "" {
-		res.Values = automations.ParseValues(msg.Text, a.FieldList())
+	if len(a.Steps) == 1 {
+		res.Steps = nil
 	}
 	if a.History && !a.Private {
 		if saved, err := c.Automations.SaveRun(res); err != nil {
@@ -308,6 +379,27 @@ func (c *chatSide) execute(ctx context.Context, run *chatrun.Runner, a automatio
 		}
 	}
 	return map[string]any{"kind": a.Kind, "run": res}, nil
+}
+
+// stepData is what a step reads: the run's data and the results of the steps before it.
+func stepData(data string, done []automations.StepResult) string {
+	if len(done) == 0 {
+		return data
+	}
+	var b strings.Builder
+	if data != "" {
+		b.WriteString(data + "\n\n")
+	}
+	b.WriteString("Результаты предыдущих шагов:\n")
+	for _, r := range done {
+		b.WriteString("\n### " + r.Name + "\n")
+		if r.Kind == automations.KindTask {
+			b.WriteString(r.Text + "\n")
+		} else {
+			b.WriteString(automations.ValuesText(r.Values))
+		}
+	}
+	return b.String()
 }
 
 // scheduled is a scheduled run: its result goes to the history, its failure too.

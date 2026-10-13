@@ -32,8 +32,20 @@ type Run struct {
 	Sources    []chats.Source `json:"sources,omitempty"`
 	Error      string         `json:"error,omitempty"`
 	CostUSD    float64        `json:"cost_usd,omitempty"`
+	// Steps are the results of every step when there are several; Text and Values are the last's.
+	Steps []StepResult `json:"steps,omitempty"`
 	// Seen is false for a scheduled result the owner has not opened.
 	Seen bool `json:"seen"`
+}
+
+// StepResult is what one step gave.
+type StepResult struct {
+	Name   string  `json:"name"`
+	Kind   string  `json:"kind"`
+	Model  string  `json:"model"`
+	Text   string  `json:"text,omitempty"`
+	Values []Value `json:"values,omitempty"`
+	Error  string  `json:"error,omitempty"`
 }
 
 const (
@@ -55,6 +67,9 @@ func (s *Store) SaveRun(r Run) (Run, error) {
 	}
 	r.Input = clip(r.Input, maxRunInput)
 	r.Text = clip(r.Text, maxRunResult)
+	for i := range r.Steps {
+		r.Steps[i].Text = clip(r.Steps[i].Text, maxRunResult)
+	}
 	dir := s.runsDir(r.Automation)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return Run{}, err

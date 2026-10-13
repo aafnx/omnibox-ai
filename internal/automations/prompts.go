@@ -171,11 +171,11 @@ type Value struct {
 	Warning string `json:"warning,omitempty"`
 }
 
-// ValuesTask is the task of a fields or document run: what to take from the data and the form
+// ValuesTask is the task of a fields or document step: what to take from the data and the form
 // of the answer. The data itself goes with the run.
-func ValuesTask(a Automation) string {
+func ValuesTask(a Automation, i int, prompt string) string {
 	var b strings.Builder
-	for _, f := range a.FieldList() {
+	for _, f := range a.StepFields(i) {
 		b.WriteString("- «" + f.Name + "»")
 		if f.Hint != "" {
 			b.WriteString(": " + f.Hint)
@@ -187,12 +187,12 @@ func ValuesTask(a Automation) string {
 		b.WriteString("\n")
 	}
 	task := "Возьми из данных значения полей"
-	if a.Kind == KindDocument {
+	if a.Steps[i].Kind == KindDocument {
 		task = "Заполни поля документа «" + a.Name + "» по данным. Значение — ровно то, что встанет на место в документе: с учётом предложения вокруг места — падеж, формат даты, единицы, как в образце"
 	}
 	out := ""
-	if a.Prompt != "" {
-		out = a.Prompt + "\n\n"
+	if prompt != "" {
+		out = prompt + "\n\n"
 	}
 	out += task + ". Поля:\n" + b.String() +
 		"\nДля каждого поля верни значение и откуда оно взято (source — например, «из паспорта на фото», «из текста сообщения»). Если в данных нет значения для поля — value пустое и missing true; ничего не придумывай. " +
@@ -202,6 +202,19 @@ func ValuesTask(a Automation) string {
 		out += "\n\nУказания владельца: " + a.Instructions
 	}
 	return out
+}
+
+// ValuesText is a step's values as the next step reads them: one «field: value» a line.
+func ValuesText(values []Value) string {
+	var b strings.Builder
+	for _, v := range values {
+		val := v.Value
+		if v.Missing {
+			val = "(нет в данных)"
+		}
+		b.WriteString(v.Field + ": " + val + "\n")
+	}
+	return b.String()
 }
 
 // ParseValues reads the model's values in the order of the fields and checks each; a field the
