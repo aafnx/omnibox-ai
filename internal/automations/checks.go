@@ -12,7 +12,14 @@ import (
 
 // Checks are the ways a field's value is verified after the model read it: a wrong digit in a
 // passport is caught here, not by the model's word.
-var Checks = []string{"", "digits", "date", "date_past", "passport_series", "passport_number", "division_code", "inn", "snils"}
+var Checks = []string{"", "digits", "number", "date", "date_past", "phone", "email", "passport_series", "passport_number", "division_code", "inn", "snils", "ogrn", "kpp", "bik", "account"}
+
+// CheckNames say what each check is, for the model that proposes a field's type.
+var CheckNames = map[string]string{
+	"": "текст", "digits": "только цифры", "number": "число или сумма", "date": "дата", "date_past": "дата не в будущем (рождения, выдачи)",
+	"phone": "телефон", "email": "email", "passport_series": "серия паспорта РФ", "passport_number": "номер паспорта РФ",
+	"division_code": "код подразделения", "inn": "ИНН", "snils": "СНИЛС", "ogrn": "ОГРН или ОГРНИП", "kpp": "КПП", "bik": "БИК", "account": "расчётный или корреспондентский счёт",
+}
 
 // CheckValue explains what is wrong with a value, "" when it passes or is empty.
 func CheckValue(check, value string) string {
@@ -25,6 +32,34 @@ func CheckValue(check, value string) string {
 	case "digits":
 		if digits != strings.ReplaceAll(v, " ", "") {
 			return "Должны быть только цифры."
+		}
+	case "number":
+		if !number.MatchString(strings.NewReplacer(" ", "", "\u00a0", "").Replace(v)) {
+			return "Должно быть число."
+		}
+	case "phone":
+		if n := len(digits); n < 10 || n > 15 || !phone.MatchString(v) {
+			return "Не похоже на телефон: 10–15 цифр."
+		}
+	case "email":
+		if !email.MatchString(v) {
+			return "Не похоже на email."
+		}
+	case "ogrn":
+		if !ogrnValid(digits) || len(digits) != countDigitsAndSpaces(v) {
+			return "ОГРН не сходится: 13 цифр (ОГРНИП — 15) с контрольной цифрой."
+		}
+	case "kpp":
+		if !kpp.MatchString(strings.ReplaceAll(v, " ", "")) {
+			return "КПП — 9 знаков: 4 цифры, 2 цифры или буквы, 3 цифры."
+		}
+	case "bik":
+		if len(digits) != 9 || len(digits) != countDigitsAndSpaces(v) || !strings.HasPrefix(digits, "0") {
+			return "БИК — 9 цифр, начинается с 0."
+		}
+	case "account":
+		if len(digits) != 20 || len(digits) != countDigitsAndSpaces(v) {
+			return "Счёт — 20 цифр."
 		}
 	case "date", "date_past":
 		d, ok := parseDate(v)
@@ -61,7 +96,31 @@ func CheckValue(check, value string) string {
 	return ""
 }
 
-var divisionCode = regexp.MustCompile(`^\d{3}-\d{3}$`)
+var (
+	divisionCode = regexp.MustCompile(`^\d{3}-\d{3}$`)
+	number       = regexp.MustCompile(`^-?\d+([.,]\d+)?$`)
+	phone        = regexp.MustCompile(`^\+?[\d\s()\-]+$`)
+	email        = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]{2,}$`)
+	kpp          = regexp.MustCompile(`^\d{4}[\dA-ZА-Я]{2}\d{3}$`)
+)
+
+// ogrnValid checks the control digit: the number without it modulo 11 (13 digits) or 13 (15).
+func ogrnValid(d string) bool {
+	var mod uint64
+	switch len(d) {
+	case 13:
+		mod = 11
+	case 15:
+		mod = 13
+	default:
+		return false
+	}
+	n, err := strconv.ParseUint(d[:len(d)-1], 10, 64)
+	if err != nil {
+		return false
+	}
+	return int(n%mod%10) == int(d[len(d)-1]-'0')
+}
 
 func onlyDigits(s string) string {
 	return strings.Map(func(r rune) rune {

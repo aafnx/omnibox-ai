@@ -65,7 +65,7 @@ func (r *Runner) run(ctx context.Context, t *turn, out *stream) {
 	start := r.now()
 	out.send("user", t.user)
 	a := &answer{subject: searchQuery(t.user.Text)}
-	t.native = t.web && t.model.Source == "chatgpt" && r.ChatGPTSearch != nil && r.ChatGPTSearch()
+	t.native = t.web && len(t.sites) == 0 && t.model.Source == "chatgpt" && r.ChatGPTSearch != nil && r.ChatGPTSearch()
 	messages := r.conversation(t)
 	tools := t.web && t.model.Caps.Tools && r.Search != nil
 	if t.web && r.Search != nil && !t.native {
@@ -85,7 +85,7 @@ func (r *Runner) run(ctx context.Context, t *turn, out *stream) {
 		var found strings.Builder
 		for _, q := range queries {
 			if ctx.Err() == nil {
-				found.WriteString(r.search(ctx, a, q, out))
+				found.WriteString(r.search(ctx, a, onSites(q, t.sites), out))
 			}
 		}
 		if found.Len() > 0 {
@@ -158,7 +158,7 @@ func (r *Runner) run(ctx context.Context, t *turn, out *stream) {
 				content = "Этот инструмент недоступен. Дай обычный текстовый ответ по уже полученным источникам; не вызывай браузер или другие инструменты."
 				finalOnly = true
 			} else if q := strings.TrimSpace(args.Query); q != "" && len(a.searches) < maxSearches {
-				content = r.search(ctx, a, anchored(a.subject, q), out)
+				content = r.search(ctx, a, onSites(anchored(a.subject, q), t.sites), out)
 			}
 			messages = append(messages, map[string]any{"role": "tool", "tool_call_id": id, "content": content})
 		}

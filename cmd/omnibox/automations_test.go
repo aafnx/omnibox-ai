@@ -89,6 +89,14 @@ func TestDocumentAutomation(t *testing.T) {
 	if tools := asked[0]["tools"]; tools != nil {
 		t.Fatal("an automation was offered tools")
 	}
+	// A text the owner types is found in the template; one not in it is refused.
+	w = post(h, "/api/automations", `{"action":"place","id":"`+a.ID+`","text":"Покупатель:"}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"find":"Покупатель:"`) || !strings.Contains(w.Body.String(), `"text":"`) {
+		t.Fatalf("place: %d %s", w.Code, w.Body)
+	}
+	if w := post(h, "/api/automations", `{"action":"place","id":"`+a.ID+`","text":"нет такого"}`); w.Code != 400 {
+		t.Fatalf("place not in the template: %d %s", w.Code, w.Body)
+	}
 	w = post(h, "/api/automations", `{"action":"save","id":"`+a.ID+`","name":"Договор купли-продажи","private":true,"fields":`+string(found.Fields)+`}`)
 	if w.Code != 200 {
 		t.Fatalf("save: %d %s", w.Code, w.Body)

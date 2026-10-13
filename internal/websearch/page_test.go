@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/netip"
+	"net/url"
 	"strings"
 	"testing"
 )
@@ -90,5 +91,16 @@ func TestReadPage(t *testing.T) {
 	}
 	if _, err := r.read(context.Background(), srv.URL+"/file"); err == nil || !strings.Contains(err.Error(), "не веб-страница") {
 		t.Fatalf("a zip read: %v", err)
+	}
+}
+
+// A page's links come resolved against its address, each once, without anchors and scripts.
+func TestHTMLLinks(t *testing.T) {
+	base, _ := url.Parse("https://sozd.duma.gov.ru/oz?q=1")
+	doc := `<a href="/bill/2-8">№ 2-8 <b>О связи</b></a><a href='https://sozd.duma.gov.ru/bill/2-8#top'>ещё раз</a>` +
+		`<a href="#top">наверх</a><a href="javascript:alert(1)">x</a><a href="mailto:a@b.ru">почта</a><a class="x" href="bill/3-8?x=1&amp;y=2">3-8</a>`
+	links := HTMLLinks(doc, base)
+	if len(links) != 2 || links[0] != (Link{Text: "№ 2-8 О связи", URL: "https://sozd.duma.gov.ru/bill/2-8"}) || links[1].URL != "https://sozd.duma.gov.ru/bill/3-8?x=1&y=2" {
+		t.Fatalf("%+v", links)
 	}
 }

@@ -45,9 +45,9 @@ func TestParseFields(t *testing.T) {
 	d := open(t)
 	answer := "Вот поля:\n```json\n" + `{"fields":[
 	 {"name":"ФИО покупателя","hint":"полностью, в именительном падеже","places":[{"para":1,"context":"Покупатель: Иванов Иван Иванович,","find":"Иванов Иван Иванович"}]},
-	 {"name":"Серия паспорта","places":[{"para":1,"context":"серии ____ №","find":"____"}]},
+	 {"name":"Серия паспорта","type":"passport_series","places":[{"para":1,"context":"серии ____ №","find":"____"}]},
 	 {"name":"Номер паспорта","places":[{"para":1,"context":"№ ______","find":"______"}]},
-	 {"name":"Подпись","places":[{"para":2,"context":"____________","find":"____________"}]},
+	 {"name":"Подпись","type":"signature","places":[{"para":2,"context":"____________","find":"____________"}]},
 	 {"name":"Выдумка","places":[{"para":7,"context":"нет","find":"нет"},{"para":1,"context":"чего нет","find":"нет"}]}
 	]}` + "\n```"
 	fields, dropped := ParseFields(answer, d)
@@ -61,11 +61,27 @@ func TestParseFields(t *testing.T) {
 	if p := fields[0].Places[0]; p.Context != "Покупатель: Иванов Иван Иванович," || p.All || fields[0].Hint == "" {
 		t.Fatalf("%+v", fields[0])
 	}
+	if fields[1].Check != "passport_series" || fields[3].Check != "" {
+		t.Fatalf("types: %q %q", fields[1].Check, fields[3].Check)
+	}
 	if p := fields[3].Places[0]; !p.All {
 		t.Fatal("a context found twice is filled in both places")
 	}
 	if p := fields[4].Places[0]; p.Para != 0 || p.Find != "{{Номер}}" {
 		t.Fatalf("placeholder %+v", p)
+	}
+	// A text the owner types is found wherever it stands; a text not in the template is nowhere.
+	if pl := FindPlaces(d, "____________"); len(pl) != 1 || pl[0].Para != 2 || !pl[0].All {
+		t.Fatalf("%+v", pl)
+	}
+	if pl := FindPlaces(d, "Иванов Иван"); len(pl) != 1 || pl[0].Para != 1 || pl[0].All {
+		t.Fatalf("%+v", pl)
+	}
+	if FindPlaces(d, "нет такого") != nil || FindPlaces(d, "  ") != nil {
+		t.Fatal("a text not in the template has no places")
+	}
+	if !strings.Contains(FieldsPrompt(d, "", time.Now())[0]["content"].(string), `"inn" (ИНН)`) {
+		t.Fatal("the model is told the types")
 	}
 	if f, _ := ParseFields("не JSON", d); len(f) != 1 {
 		t.Fatalf("without the model only the marks remain: %+v", f)

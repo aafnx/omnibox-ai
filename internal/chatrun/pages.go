@@ -16,7 +16,9 @@ import (
 // Pages read in full: the service opens only the pages the search found or the user named — a
 // page cannot send it elsewhere, and private addresses are refused by the reader.
 const (
-	maxPageReads = 5 // per answer, the model's own reads included
+	maxPageReads = 5  // per answer, the model's own reads included
+	maxSiteReads = 15 // when a task walks its own sites
+	maxSiteLinks = 40 // links of a page shown to a task that walks its sites
 	pageTimeout  = 12 * time.Second
 )
 
@@ -93,8 +95,8 @@ func (r *Runner) readInto(ctx context.Context, messages []map[string]any, a *ans
 	_, chars := pageBudget(t.context)
 	var b strings.Builder
 	got := 0
-	for len(urls) > 0 && got < want && len(a.pages) < maxPageReads && ctx.Err() == nil {
-		batch := urls[:min(want-got, maxPageReads-len(a.pages), len(urls))]
+	for len(urls) > 0 && got < want && len(a.pages) < t.pageLimit() && ctx.Err() == nil {
+		batch := urls[:min(want-got, t.pageLimit()-len(a.pages), len(urls))]
 		urls = urls[len(batch):]
 		pages := make([]*websearch.Page, len(batch))
 		var wg sync.WaitGroup
@@ -120,7 +122,7 @@ func (r *Runner) readInto(ctx context.Context, messages []map[string]any, a *ans
 			got++
 			n := a.source(batch[i], p.Title)
 			a.pages = append(a.pages, batch[i])
-			fmt.Fprintf(&b, "[%d] %s — %s\n%s\n\n", n, p.Title, batch[i], websearch.ClipText(p.Text, chars))
+			fmt.Fprintf(&b, "[%d] %s — %s\n%s\n%s\n", n, p.Title, batch[i], websearch.ClipText(p.Text, chars), siteLinks(p, t.sites))
 		}
 	}
 	if b.Len() == 0 {
@@ -134,16 +136,19 @@ func (r *Runner) readInto(ctx context.Context, messages []map[string]any, a *ans
 // readTool serves the model's read_page call: only a page of the results or one the user named.
 func (r *Runner) readTool(ctx context.Context, a *answer, t *turn, url string, out *stream) string {
 	url = strings.TrimSpace(url)
-	known := contains(linksIn(t.user.Text, 5), url)
+	known := contains(linksIn(t.user.Text, 5), url) || onSite(url, t.sites)
 	for _, s := range a.sources {
 		known = known || s.URL == url
 	}
 	switch {
 	case !known:
+		if len(t.sites) > 0 {
+			return "Эту страницу прочитать нельзя: доступны адреса из результатов поиска, из задачи и страницы сайтов " + strings.Join(t.sites, ", ") + "."
+		}
 		return "Эту страницу прочитать нельзя: доступны только адреса из результатов поиска и из вопроса пользователя."
 	case contains(a.pages, url):
 		return "Эта страница уже прочитана выше."
-	case len(a.pages) >= maxPageReads:
+	case len(a.pages) >= t.pageLimit():
 		return "Лимит чтения страниц для этого ответа исчерпан. Ответь по уже полученным данным."
 	}
 	out.send("read", map[string]string{"url": url})
@@ -156,7 +161,66 @@ func (r *Runner) readTool(ctx context.Context, a *answer, t *turn, url string, o
 	n := a.source(url, p.Title)
 	a.pages = append(a.pages, url)
 	out.send("sources", a.sources)
-	return fmt.Sprintf("[%d] %s — %s\n%s", n, p.Title, url, websearch.ClipText(p.Text, 6000))
+	return fmt.Sprintf("[%d] %s — %s\n%s\n%s", n, p.Title, url, websearch.ClipText(p.Text, 6000), siteLinks(&p, t.sites))
+}
+
+// pageLimit is how many pages an answer reads: more for a task that walks its own sites.
+func (t *turn) pageLimit() int {
+	if len(t.sites) > 0 {
+		return maxSiteReads
+	}
+	return maxPageReads
+}
+
+// onSite tells whether an address is on one of the sites or a subdomain of one.
+func onSite(raw string, sites []string) bool {
+	if _, err := websearch.CheckURL(raw); err != nil {
+		return false
+	}
+	h := strings.ToLower(websearch.Host(raw))
+	for _, s := range sites {
+		if h == s || strings.HasSuffix(h, "."+s) {
+			return true
+		}
+	}
+	return false
+}
+
+// onSites keeps a query on the sites: search engines take the site: operator.
+func onSites(q string, sites []string) string {
+	switch len(sites) {
+	case 0:
+		return q
+	case 1:
+		return q + " site:" + sites[0]
+	}
+	parts := make([]string, len(sites))
+	for i, s := range sites {
+		parts[i] = "site:" + s
+	}
+	return q + " (" + strings.Join(parts, " OR ") + ")"
+}
+
+// siteLinks lists a page's links that stay on the sites, for the task to open with read_page.
+func siteLinks(p *websearch.Page, sites []string) string {
+	if len(sites) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	n := 0
+	for _, l := range p.Links {
+		if n == maxSiteLinks {
+			break
+		}
+		if l.URL != p.URL && onSite(l.URL, sites) && l.Text != "" {
+			fmt.Fprintf(&b, "- %s — %s\n", l.Text, l.URL)
+			n++
+		}
+	}
+	if n == 0 {
+		return ""
+	}
+	return "Ссылки на этой странице (их можно открыть инструментом read_page):\n" + b.String()
 }
 
 // source is the number of a page among the answer's sources, added when new.

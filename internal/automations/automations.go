@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -95,6 +96,9 @@ type Step struct {
 	Read bool `json:"read,omitempty"`
 	// Fields are what a fields step takes from the data; a document step's are its template's.
 	Fields []Field `json:"fields,omitempty"`
+	// Sites are the owner's sites for the step: the search stays on them and their pages and the
+	// links between them are read. Never when private.
+	Sites []string `json:"sites,omitempty"`
 }
 
 // Title is how the step is named to the owner and to the next steps.
@@ -391,9 +395,18 @@ func check(a *Automation) error {
 		if err := checkFields(fields, st.Kind); err != nil {
 			return err
 		}
+		sites, err := cleanSites(st.Sites)
+		if err != nil {
+			return fmt.Errorf("%s: %v", st.Title(i), err)
+		}
+		st.Sites = sites
+		// Sites are searched and read: listing one turns both on.
+		if len(st.Sites) > 0 {
+			st.Web, st.Read = true, true
+		}
 		// Private means nothing leaves the PC.
 		if a.Private {
-			st.Web = false
+			st.Web, st.Sites = false, nil
 		}
 		if !st.Web {
 			st.Read = false
@@ -443,6 +456,38 @@ func check(a *Automation) error {
 		}
 	}
 	return nil
+}
+
+var siteName = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$`)
+
+const maxSites = 10
+
+// cleanSites turns what the owner wrote — a site, an address on it — into site names.
+func cleanSites(list []string) ([]string, error) {
+	var out []string
+	for _, s := range list {
+		s = strings.ToLower(strings.TrimSpace(s))
+		if s == "" {
+			continue
+		}
+		if i := strings.Index(s, "://"); i >= 0 {
+			s = s[i+3:]
+		}
+		if i := strings.IndexAny(s, "/?#"); i >= 0 {
+			s = s[:i]
+		}
+		s = strings.TrimPrefix(strings.TrimSuffix(s, "."), "www.")
+		if !siteName.MatchString(s) || len(s) > 253 {
+			return nil, fmt.Errorf("«%s» — не адрес сайта. Пишите так: sozd.duma.gov.ru (русские домены — в виде xn--…).", s)
+		}
+		if !slices.Contains(out, s) {
+			out = append(out, s)
+		}
+	}
+	if len(out) > maxSites {
+		return nil, fmt.Errorf("не больше %d сайтов", maxSites)
+	}
+	return out, nil
 }
 
 // checkFields validates a step's fields: names, hints, checks, and a template's places.

@@ -532,6 +532,21 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   // A long model name in a list does not widen a drawer past a phone's screen: the drawer's column
   // and every list may shrink.
   assert.ok(/\.drawer \.scroll\{[^}]*grid-template-columns:minmax\(0,1fr\)/.test(css)&&/(^|\n)select\{min-width:0;max-width:100%/.test(css));
+  // A template's fields have types the owner changes; a field the model missed is added by its text.
+  run(`openAuto({id:'d1',kind:'document',name:'Договор',private:true,template:{name:'Д.docx',fields:[{name:'Цена',check:'number',places:[]}]},steps:[{kind:'document'}]})`);
+  assert.ok(nodes['au-fields'].innerHTML.includes('<option value="number" selected>Число, сумма</option>'),nodes['au-fields'].innerHTML);assert.equal(nodes['au-tadd'].hidden,false);
+  nodes['au-fields'].listeners.change[0]({target:{dataset:{auFcheck:'0'},value:'date'}});assert.equal(J('A.cur.template.fields[0].check'),'date');
+  nodes['au-tadd-name'].value='ФИО';nodes['au-tadd-text'].value='Иванов И. И.';nodes['au-tadd-check'].value='';
+  const posted=[];context.fetch=async(p,o)=>{posted.push(JSON.parse(o.body));return {ok:true,json:async()=>({places:[{para:2,context:'Иванов И. И.',find:'Иванов И. И.',text:'Покупатель Иванов И. И.'}]})};};
+  await nodes['au-tadd-go'].listeners.click[0]();context.fetch=oldFetch;
+  assert.deepEqual(posted[0],{action:'place',id:'d1',text:'Иванов И. И.'});assert.deepEqual(J('A.cur.template.fields.map(f=>[f.name,f.places.length])'),[['Цена',0],['ФИО',1]]);
+  // A step's sites: an address becomes its site, and search and reading come with them.
+  run(`openAuto(JSON.parse(JSON.stringify(AU_PRESETS.duma)))`);
+  assert.ok(nodes['au-steps'].innerHTML.includes('value="sozd.duma.gov.ru"'),nodes['au-steps'].innerHTML);
+  nodes['au-steps'].listeners.input[0]({target:{type:'text',tagName:'INPUT',dataset:{st:'1',k:'sites'},value:'https://www.Duma.gov.ru/news/, sozd.duma.gov.ru'}});
+  const duma=J('auForm()');assert.deepEqual(duma.steps[0].sites,['sozd.duma.gov.ru']);assert.deepEqual(duma.steps[1].sites,['duma.gov.ru','sozd.duma.gov.ru']);
+  assert.equal(duma.steps[1].web,true);assert.equal(duma.steps[1].read,true);
+  assert.equal(run("auPolicy({history:true,steps:[{sites:['sozd.duma.gov.ru']},{kind:'task'}]})"),'поиск на sozd.duma.gov.ru · история хранится');
   // A model on the PC that is not running is named with a button; the run itself never starts it.
   run(`S.library={models:[{key:'prismml:b.gguf',source:'local',name:'Bonsai',caps:{}},{key:'cloud:o/m',source:'cloud',name:'Облачная',favorite:true,caps:{}}]};A.list=[];openRun({id:'t',name:'Тест',kind:'task',model:'prismml:b.gguf',steps:[{kind:'task',prompt:'x'}]})`);
   assert.equal(nodes['ar-need'].hidden,false);assert.ok(nodes['ar-need'].innerHTML.includes('Модель Bonsai не запущена')&&nodes['ar-need'].innerHTML.includes('data-ar-start="prismml:b.gguf"'),nodes['ar-need'].innerHTML);

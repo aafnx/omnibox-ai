@@ -220,6 +220,9 @@ type turn struct {
 	read      bool // pages of the results are read in full
 	effort    string
 	private   bool // an automation's request: Automation instead of Local
+	// sites are an automation step's own sites: the search stays on them, their pages and the
+	// links between them are read.
+	sites []string
 	// result takes the answer of an automation's task instead of the chat.
 	result *chats.Message
 }

@@ -4,7 +4,8 @@
 // A run's data and values live in this page only while the run is open; closing it forgets them.
 const A={list:null,last:{},next:{},cur:null,file:null,run:null};
 const AU_KIND={task:'Задача',fields:'Поля из данных',document:'Документ по шаблону'};
-const AU_CHECKS={'':'Без проверки',digits:'Только цифры',date:'Дата',date_past:'Дата не в будущем',passport_series:'Серия паспорта',passport_number:'Номер паспорта',division_code:'Код подразделения',inn:'ИНН',snils:'СНИЛС'};
+const AU_CHECKS={'':'Текст',digits:'Только цифры',number:'Число, сумма',date:'Дата',date_past:'Дата не в будущем',phone:'Телефон',email:'Email',passport_series:'Серия паспорта',passport_number:'Номер паспорта',division_code:'Код подразделения',inn:'ИНН',snils:'СНИЛС',ogrn:'ОГРН / ОГРНИП',kpp:'КПП',bik:'БИК',account:'Расчётный счёт'};
+const auCheckOptions=v=>Object.entries(AU_CHECKS).map(([k,l])=>`<option value="${k}"${k===(v||'')?' selected':''}>${esc(l)}</option>`).join('');
 const AU_DAYS=['Пн','Вт','Ср','Чт','Пт','Сб','Вс'];
 // Presets are only a start: everything in them can be changed.
 const AU_PRESETS={
@@ -16,11 +17,18 @@ const AU_PRESETS={
         {name:'Код подразделения',hint:'в виде 123-456',check:'division_code'},{name:'Адрес регистрации',hint:'со страницы регистрации, если она есть'}]}]},
   news:{name:'Сводка новостей',emoji:'📰',private:false,history:true,instructions:'',
     steps:[{kind:'task',name:'Поиск',web:true,read:true,prompt:'Найди главные новости о {{тема}} за последнюю неделю — и на русском, и на английском. Для каждой: что произошло, дата, ссылка на источник.'},
-      {kind:'task',name:'Сводка',prompt:'Сделай из найденного сводку на русском из 5–10 пунктов: что произошло и почему это важно, со ссылками на источники. Убери повторы.'}]}};
+      {kind:'task',name:'Сводка',prompt:'Сделай из найденного сводку на русском из 5–10 пунктов: что произошло и почему это важно, со ссылками на источники. Убери повторы.'}]},
+  // The State Duma's bills: the search stays on its site, the bill cards are opened.
+  duma:{name:'Законопроекты Госдумы',emoji:'🏛️',private:false,history:true,instructions:'',
+    steps:[{kind:'task',name:'Поиск в СОЗД',web:true,read:true,sites:['sozd.duma.gov.ru'],prompt:'Найди на сайте Госдумы sozd.duma.gov.ru законопроекты по теме: {{тема}}. Открой карточки найденных законопроектов (адреса вида sozd.duma.gov.ru/bill/…). Для каждого выпиши: номер, название, кто внёс, дату внесения, текущую стадию и последнее событие с датой, ссылку на карточку.'},
+      {kind:'task',name:'Сводка',prompt:'Сделай из найденного сводку на русском: сначала законопроекты, по которым за последний месяц были события (внесение, чтения, принятие, подписание), затем остальные. Для каждого — 2–3 предложения: что меняет и на какой стадии, со ссылкой на карточку. Если ничего не найдено — так и скажи.'}]}};
 const auSteps=a=>a.steps?.length?a.steps:[{kind:a.kind,prompt:a.prompt,web:a.web,read:a.read,fields:a.fields}];
-const auWeb=a=>auSteps(a).some(s=>s.web);
+const auWeb=a=>auSteps(a).some(s=>s.web||s.sites?.length);
+const auSites=a=>[...new Set(auSteps(a).flatMap(s=>s.sites||[]))];
 const auPolicy=a=>a.private?'Только ПК · без интернета · без истории · файлы не хранятся':
-  [auWeb(a)?'с поиском в интернете':'без интернета',a.history?'история хранится':'без истории'].join(' · ');
+  [auSites(a).length?`поиск на ${auSites(a).join(', ')}`+(auSteps(a).some(s=>s.web&&!s.sites?.length)?' и в интернете':''):auWeb(a)?'с поиском в интернете':'без интернета',a.history?'история хранится':'без истории'].join(' · ');
+// What the owner wrote in a step's sites: a site per word, an address cut to its site.
+const auSiteList=v=>[...new Set(String(v||'').split(/[\s,;]+/).map(x=>x.trim().toLowerCase().replace(/^[a-z]+:\/\//,'').replace(/[/?#].*$/,'').replace(/^www\./,'')).filter(Boolean))];
 const auEmoji=a=>`<span class="av emo">${emojiSVG(a.emoji||'⚡')}</span>`;
 const auWhen=t=>new Date(t).toLocaleString('ru-RU',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'});
 const auVarPattern=/\{\{\s*([^{}]{1,80}?)\s*\}\}/g;
@@ -63,7 +71,7 @@ byId('au-new').addEventListener('change',async e=>{const f=e.target.files?.[0];e
 
 // ── settings drawer ──
 function openAuto(a,file){A.cur=JSON.parse(JSON.stringify(a));A.file=file||null;const d=A.cur;
-  d.steps=auSteps(d).map(s=>({kind:s.kind,name:s.name||'',prompt:s.prompt||'',model:s.model||'',web:!!s.web,read:!!s.read,fields:s.fields||[]}));
+  d.steps=auSteps(d).map(s=>({kind:s.kind,name:s.name||'',prompt:s.prompt||'',model:s.model||'',web:!!s.web,read:!!s.read,fields:s.fields||[],sites:(s.sites||[]).join(', ')}));
   d.schedule=d.schedule||{enabled:false,every:'day',at:'08:00',days:[1,2,3,4,5],hours:4};d.vars=d.vars||{};
   byId('au-title').textContent=d.id?d.name:'Новая автоматизация';
   byId('au-name').value=d.name||'';byId('au-emoji').value=d.emoji||'';byId('au-instr').value=d.instructions||'';
@@ -95,18 +103,26 @@ function renderAuSteps(){const st=A.cur.steps,priv=byId('au-private').checked,n=
     const ph=s.kind==='task'?(i===0?'Что сделать — своими словами. Например: «Найди главные новости о {{тема}} за последнюю неделю».':'Что сделать с результатом предыдущих шагов. Например: «Переведи на английский».'):'Что сделать (необязательно). Например: «Распознай паспорт на фото».';
     const fields=s.kind==='fields'?`<div class="au-fields">${s.fields.map((x,j)=>`<div class="au-field"><div class="au-frow"><input type="text" data-au-ff="${i}:${j}" data-k="name" maxlength="80" value="${esc(x.name||'')}" placeholder="Поле, например «Серия»" aria-label="Название поля">`+
       `<button class="btn ghost sm" type="button" data-au-ffdel="${i}:${j}" aria-label="Убрать поле" title="Убрать поле"><svg class="i i15"><use href="#i-x"/></svg></button></div>`+
-      `<div class="au-frow"><input type="text" data-au-ff="${i}:${j}" data-k="hint" maxlength="300" value="${esc(x.hint||'')}" placeholder="Подсказка: в каком виде" aria-label="Подсказка"><select data-au-ff="${i}:${j}" data-k="check" aria-label="Проверка">${opts(x.check)}</select></div></div>`).join('')}</div>`+
+      `<div class="au-frow"><input type="text" data-au-ff="${i}:${j}" data-k="hint" maxlength="300" value="${esc(x.hint||'')}" placeholder="Подсказка: в каком виде" aria-label="Подсказка"><select data-au-ff="${i}:${j}" data-k="check" aria-label="Тип">${opts(x.check)}</select></div></div>`).join('')}</div>`+
       `<div><button class="btn sm" type="button" data-au-fadd="${i}"><svg class="i i15"><use href="#i-plus"/></svg>Поле</button></div>`:'';
+    // Sites keep the search on them and let the step walk their pages: search and reading are on.
+    const onSites=!priv&&auSiteList(s.sites).length>0;
     const tools=`<div class="au-sopts"><select data-st="${i}" data-k="model" aria-label="Модель шага">${auModelOptions(s.model,priv,'Модель автоматизации')}</select>`+
-      `<label class="au-tog"><input type="checkbox" data-st="${i}" data-k="web"${s.web?' checked':''}${priv?' disabled':''}>Поиск в интернете</label>`+
-      `<label class="au-tog"><input type="checkbox" data-st="${i}" data-k="read"${s.read?' checked':''}${priv||!s.web?' disabled':''}>Читать страницы</label></div>`;
+      `<label class="au-tog"><input type="checkbox" data-st="${i}" data-k="web"${s.web||onSites?' checked':''}${priv||onSites?' disabled':''}>Поиск в интернете</label>`+
+      `<label class="au-tog"><input type="checkbox" data-st="${i}" data-k="read"${s.read||onSites?' checked':''}${priv||onSites||!s.web?' disabled':''}>Читать страницы</label>`+
+      `<label class="au-sites"><span class="small muted" title="Шаг ищет только на этих сайтах и открывает их страницы и ссылки между ними">Сайты</span><input type="text" data-st="${i}" data-k="sites" maxlength="600" value="${esc(s.sites)}" placeholder="любые; или, например, sozd.duma.gov.ru"${priv?' disabled':''} aria-label="Сайты шага"></label></div>`;
     return `<div class="au-step">${head}<textarea data-st="${i}" data-k="prompt" rows="${s.kind==='task'?4:2}" maxlength="20000" placeholder="${esc(ph)}">${esc(s.prompt)}</textarea>${fields}${tools}${doc?'<span class="hint">Поля шаблона — ниже. Значения вы проверяете перед сборкой документа, поэтому этот шаг последний.</span>':''}</div>`;}).join('');
   $$('#au-drawer [data-au-add]').forEach(b=>b.disabled=n>=20);}
+// A step's switches follow its sites in place: redrawing the steps would take the focus away.
+function auSyncSites(i){const s=A.cur.steps[i],on=!byId('au-private').checked&&auSiteList(s.sites).length>0,box=byId('au-steps');
+  const web=box.querySelector(`[data-st="${i}"][data-k="web"]`),read=box.querySelector(`[data-st="${i}"][data-k="read"]`);
+  if(web){web.checked=s.web||on;web.disabled=on;}if(read){read.checked=s.read||on;read.disabled=on||!s.web;}}
 function auStepEdit(t){
   if(t.dataset.st!==undefined){const s=A.cur.steps[+t.dataset.st],k=t.dataset.k;s[k]=t.type==='checkbox'?t.checked:t.value;
     if(k==='kind'){if(s.kind==='fields'&&!s.fields.length)s.fields=[{name:'',hint:'',check:''}];renderAuSteps();renderAuSched();}
     else if(k==='web'){if(!s.web)s.read=false;renderAuSteps();}
     else if(k==='prompt')renderAuSched();
+    else if(k==='sites')auSyncSites(+t.dataset.st);
     return;}
   if(t.dataset.auFf!==undefined){const [i,j]=t.dataset.auFf.split(':').map(Number);A.cur.steps[i].fields[j][t.dataset.k]=t.value;}}
 // Text is kept as it is typed; switches and lists redraw the steps when they change.
@@ -130,11 +146,23 @@ function auPlace(p){const t=p.text||'',c=t.indexOf(p.context),f=c<0?-1:c+p.conte
   return `<div class="au-place"><span class="small faint">${esc(p.where||'абзац '+(p.para+1))}${p.all?' · во всех совпадениях':''}</span><span class="au-ptext">${body}</span></div>`;}
 function renderAuFields(){if(!A.cur.steps.some(s=>s.kind==='document'))return;const f=A.cur.template?.fields||[],saved=!!A.cur.id;
   byId('au-fields-title').textContent=`Поля · ${f.length}`;byId('au-analyze').disabled=!saved;
-  byId('au-fields-hint').textContent=saved?'Модель прочитает шаблон и предложит места для заполнения. Метки вида {{ФИО}} — поля сразу. Лишнее уберите, названия поправьте.':'Сохраните — OmniBox прочитает шаблон, а модель найдёт поля.';
+  byId('au-fields-hint').textContent=saved?'Модель прочитала шаблон и предложила поля, их места и типы. Поправьте названия, подсказки и типы, лишнее уберите; чего не хватает — добавьте ниже. Метки вида {{ФИО}} — поля сразу.':'Сохраните — OmniBox прочитает шаблон, а модель найдёт поля и их типы.';
+  byId('au-tadd').hidden=!saved;
   byId('au-fields').innerHTML=f.map((x,i)=>`<div class="au-field"><div class="au-frow"><input type="text" data-au-fname="${i}" maxlength="80" value="${esc(x.name)}" aria-label="Название поля"><button class="btn ghost sm" type="button" data-au-fdel="${i}" aria-label="Убрать поле" title="Убрать поле"><svg class="i i15"><use href="#i-x"/></svg></button></div>`+
-    `<input type="text" data-au-fhint="${i}" maxlength="300" value="${esc(x.hint||'')}" placeholder="Что вписать и в каком виде" aria-label="Подсказка модели">${(x.places||[]).map(auPlace).join('')}</div>`).join('');}
-byId('au-fields').addEventListener('input',e=>{const f=A.cur.template.fields,t=e.target;
-  if(t.dataset.auFname!==undefined)f[+t.dataset.auFname].name=t.value;if(t.dataset.auFhint!==undefined)f[+t.dataset.auFhint].hint=t.value;});
+    `<div class="au-frow"><input type="text" data-au-fhint="${i}" maxlength="300" value="${esc(x.hint||'')}" placeholder="Что вписать и в каком виде" aria-label="Подсказка модели"><select data-au-fcheck="${i}" aria-label="Тип">${auCheckOptions(x.check)}</select></div>${(x.places||[]).map(auPlace).join('')}</div>`).join('');}
+const auTField=e=>{const f=A.cur.template.fields,t=e.target;
+  if(t.dataset.auFname!==undefined)f[+t.dataset.auFname].name=t.value;if(t.dataset.auFhint!==undefined)f[+t.dataset.auFhint].hint=t.value;
+  if(t.dataset.auFcheck!==undefined)f[+t.dataset.auFcheck].check=t.value;};
+byId('au-fields').addEventListener('input',auTField);byId('au-fields').addEventListener('change',auTField);
+// A field the model missed: the owner types the text as it stands in the template, OmniBox finds
+// its places; a name that is there already gets the places added.
+byId('au-tadd-go').addEventListener('click',async()=>{const name=byId('au-tadd-name').value.trim(),text=byId('au-tadd-text').value;
+  if(!name||!text.trim()){notice('Впишите название поля и текст, который оно заменит в шаблоне.',true);return;}
+  const b=byId('au-tadd-go');b.disabled=true;
+  try{const d=await api('/api/automations',{action:'place',id:A.cur.id,text});const f=A.cur.template.fields,same=f.find(x=>x.name.toLowerCase()===name.toLowerCase());
+    if(same)same.places=[...(same.places||[]),...d.places.filter(p=>!(same.places||[]).some(q=>q.para===p.para&&q.find===p.find))];else f.push({name,hint:'',check:byId('au-tadd-check').value,places:d.places});
+    byId('au-tadd-name').value='';byId('au-tadd-text').value='';renderAuFields();notice(`Мест в шаблоне: ${d.places.length}. Сохраните автоматизацию.`);}
+  catch(x){fail(x);}finally{b.disabled=false;}});
 byId('au-fields').addEventListener('click',e=>{const b=e.target.closest('[data-au-fdel]');if(!b)return;A.cur.template.fields.splice(+b.dataset.auFdel,1);renderAuFields();});
 // The schedule: its kind's inputs and the values of the steps' {{names}} it runs with.
 function renderAuSched(){if(!A.cur)return;const ok=auSchedulable(A.cur.steps);byId('au-sched-wrap').hidden=!ok;if(!ok)return;
@@ -149,7 +177,8 @@ byId('au-sched-days').addEventListener('click',e=>{const b=e.target.closest('[da
   s.days=(s.days||[]).includes(d)?s.days.filter(x=>x!==d):[...(s.days||[]),d].sort();renderAuSched();});
 byId('au-vars').addEventListener('input',e=>{const t=e.target;if(t.dataset.auVar!==undefined)A.cur.vars[t.dataset.auVar]=t.value;});
 function auForm(){const d=A.cur,s=d.schedule;
-  const steps=d.steps.map(x=>{const o={kind:x.kind,name:x.name.trim(),prompt:x.prompt,model:x.model,web:x.web,read:x.web&&x.read};if(x.kind==='fields')o.fields=x.fields.filter(f=>f.name.trim());return o;});
+  const steps=d.steps.map(x=>{const sites=auSiteList(x.sites),o={kind:x.kind,name:x.name.trim(),prompt:x.prompt,model:x.model,web:x.web||sites.length>0,read:(x.web&&x.read)||sites.length>0};
+    if(sites.length)o.sites=sites;if(x.kind==='fields')o.fields=x.fields.filter(f=>f.name.trim());return o;});
   const f={kind:steps.at(-1).kind,name:byId('au-name').value.trim(),emoji:byId('au-emoji').value.trim(),private:byId('au-private').checked,model:byId('au-model').value,
     instructions:byId('au-instr').value,history:byId('au-history').checked,steps};
   if(auSchedulable(steps)){f.schedule={enabled:byId('au-sched-on').checked,every:byId('au-sched-every').value,at:byId('au-sched-at').value,days:s.days||[],hours:+byId('au-sched-hours').value||0};
