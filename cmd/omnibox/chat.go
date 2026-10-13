@@ -52,6 +52,8 @@ type chatSide struct {
 	// Automations are the owner's saved scenarios; Results the documents they built, in memory.
 	Automations *automations.Store
 	Results     *automations.Results
+	// Jobs are the runs started from the panel, going on in the service while it follows them.
+	Jobs autoJobs
 	// Scheduler runs the scheduled tasks; it is made with the routes and started with the service.
 	Scheduler *automations.Scheduler
 	Logf      func(format string, args ...any)

@@ -269,4 +269,38 @@ func TestTaskAndFieldsAutomations(t *testing.T) {
 	if w.Code != 200 || !strings.Contains(w.Body.String(), `"error":"Письмо: `) {
 		t.Fatalf("failed step: %d %s", w.Code, w.Body)
 	}
+	// From the panel a run goes on in the service: the panel follows its trace, then its result.
+	answers = append(answers, `{"values":[{"field":"Серия","value":"9204"}]}`, "Письмо готово.")
+	w = post(h, "/api/automations", `{"action":"run","background":true,"id":"`+m.ID+`","text":"Паспорт 9204","vars":{"кому":"Ивану"}}`)
+	var job struct{ Job string }
+	json.Unmarshal(w.Body.Bytes(), &job)
+	if w.Code != 200 || job.Job == "" {
+		t.Fatalf("background: %d %s", w.Code, w.Body)
+	}
+	var state struct {
+		Done  bool
+		Trace []string
+		Run   struct {
+			Text  string
+			Steps []struct{ Trace []string }
+		}
+	}
+	for i := 0; i < 200 && !state.Done; i++ {
+		time.Sleep(10 * time.Millisecond)
+		w = post(h, "/api/automations", `{"action":"job","job":"`+job.Job+`"}`)
+		json.Unmarshal(w.Body.Bytes(), &state)
+	}
+	if !state.Done || state.Run.Text != "Письмо готово." || len(state.Run.Steps) != 2 || len(state.Run.Steps[1].Trace) == 0 {
+		t.Fatalf("job: %s", w.Body)
+	}
+	if tr := strings.Join(state.Trace, "\n"); !strings.Contains(tr, "Паспорт · 0:00 Модель Gemma отвечает") || !strings.Contains(tr, "Письмо · 0:00 Модель ответила") {
+		t.Fatalf("trace: %s", tr)
+	}
+	// A run that needs what it was not given is refused at once, not in the background.
+	if w := post(h, "/api/automations", `{"action":"run","background":true,"id":"`+m.ID+`","text":"x"}`); w.Code != 400 || !strings.Contains(w.Body.String(), "кому") {
+		t.Fatalf("missing value: %d %s", w.Code, w.Body)
+	}
+	if w := post(h, "/api/automations", `{"action":"job","job":"0000"}`); w.Code != 400 {
+		t.Fatalf("unknown job: %d %s", w.Code, w.Body)
+	}
 }

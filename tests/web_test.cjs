@@ -1,4 +1,6 @@
 // Execute the real UI code against a small DOM adapter; no browser/rendering claim.
+// A test awaiting something that never comes would end the process quietly with code 0: it fails.
+let finished=false;process.on('exit',c=>{if(!finished&&c===0){console.error('web_test: did not finish');process.exitCode=1;}});
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const html=fs.readFileSync('web/index.html','utf8');
 const files=['app.js','chat.js','models.js','server.js','settings.js','automations.js'];
@@ -554,6 +556,16 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   await nodes['ar-need'].listeners.click[0]({target:{closest:s=>s==='[data-ar-start]'?{dataset:{arStart:'prismml:b.gguf'}}:null}});
   assert.deepEqual(J('started'),['prismml:b.gguf']);assert.equal(nodes['ar-need'].hidden,true);
   run(`openRun({id:'t',name:'Тест',kind:'task',model:'cloud:o/m',steps:[{kind:'task',prompt:'x'}]})`);assert.equal(nodes['ar-need'].hidden,true);
+  // A run goes on in the service: the window follows its trace, then shows the result.
+  run(`AR_POLL=1;A.list=[];openRun({id:'s1',name:'Законы',kind:'task',history:false,model:'cloud:o/m',steps:[{kind:'task',prompt:'x',sites:['sozd.duma.gov.ru']}]})`);
+  const calls=[];let polls=0;context.fetch=async(p,o)=>{const b=JSON.parse(o.body);calls.push(b.action);
+    const body=b.action==='run'?{job:'j1'}:++polls<2?{done:false,trace:['0:01 Поиск «x»: найдено 3']}:{done:true,trace:['0:01 Поиск «x»: найдено 3','0:40 Модель ответила'],run:{text:'Итог',trace:['0:40 Модель ответила']}};
+    return {ok:true,json:async()=>body};};
+  const fakeTimeout=context.setTimeout;context.setTimeout=(f,ms)=>setTimeout(f,ms);
+  await nodes['ar-go'].listeners.click[0]();context.fetch=oldFetch;context.setTimeout=fakeTimeout;
+  assert.deepEqual(calls,['run','job','job']);assert.equal(nodes['ar-trace'].hidden,false);assert.ok(nodes['ar-trace-list'].innerHTML.includes('Модель ответила'));
+  assert.ok(nodes['ar-md'].innerHTML.includes('Итог'));assert.equal(nodes['ar-stop'].hidden,true);
+  assert.ok(run(`auTraceHTML(['0:01 a','0:02 b'])`).includes('<li>0:02 b</li>'));
   // A run of several steps shows each step folded, the last as the result.
   run(`A.run={a:{id:'n',name:'Новости',kind:'task',steps:[{kind:'task'},{kind:'task'}]},files:[]};showResult({text:'Итог',steps:[{name:'Поиск',kind:'task',text:'**найдено**'},{name:'Сводка',kind:'task',text:'Итог'}]})`);
   assert.equal(nodes['ar-steps'].hidden,false);assert.ok(nodes['ar-steps'].innerHTML.includes('1. Поиск')&&nodes['ar-steps'].innerHTML.includes('<b>найдено</b>')&&!nodes['ar-steps'].innerHTML.includes('Сводка'),nodes['ar-steps'].innerHTML);
@@ -579,6 +591,6 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   run("hideAll()");assert.equal(run('A.run'),null);assert.equal(nodes['ar-values'].innerHTML,'');
   winListeners.DOMContentLoaded.forEach(fn=>fn());await new Promise(r=>setTimeout(r,10));
   assert.ok(requests.includes('/api/session'));assert.equal(nodes.login.hidden,false);assert.equal(nodes.app.hidden,true);
-  console.log('web_test: ok');
+  finished=true;console.log('web_test: ok');
 })().catch(e=>{console.error(e);process.exit(1);});
 

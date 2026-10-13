@@ -59,6 +59,7 @@ func (r *Runner) planSearch(ctx context.Context, t *turn, a *answer, out *stream
 		return fallback
 	}
 	out.send("status", map[string]string{"text": "Составляю поисковый запрос…"})
+	out.note("Модель составляет поисковые запросы")
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
 	text, cost, err := r.aside(ctx, t.chat, settings.FollowUpModel, t.model.Key, planPrompt(t.history, t.user, r.now()))
@@ -66,6 +67,7 @@ func (r *Runner) planSearch(ctx context.Context, t *turn, a *answer, out *stream
 	out.send("status", map[string]string{"text": ""})
 	if err != nil {
 		r.logf("chat: search queries not planned: %v", err)
+		out.note("Запросы не составлены (%v): ищу по самому вопросу", err)
 		return fallback
 	}
 	p, ok := parsePlan(text)
