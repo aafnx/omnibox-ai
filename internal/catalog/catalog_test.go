@@ -82,9 +82,12 @@ func ggufBytes(n int, fill byte) []byte {
 
 func sum(b []byte) string { s := sha256.Sum256(b); return hex.EncodeToString(s[:]) }
 
+// download sets a generous idle limit: it only keeps a broken test from hanging. A second was
+// too short for a busy Windows runner to answer a resumed request, and a normal resume was
+// reported as a stall; the stall test sets its own short limit.
 func (f *fileServer) download(t *testing.T, dir, path string, content []byte) *Download {
 	u, _ := url.Parse(f.srv.URL + path)
-	return &Download{URL: u, Dir: dir, Filename: "author-model-Q4_K_M.gguf", SHA256: sum(content), Size: int64(len(content)), HTTP: f.srv.Client(), Idle: time.Second}
+	return &Download{URL: u, Dir: dir, Filename: "author-model-Q4_K_M.gguf", SHA256: sum(content), Size: int64(len(content)), HTTP: f.srv.Client(), Idle: 10 * time.Second}
 }
 
 const pinned = "/author/model/resolve/0123456789abcdef0123456789abcdef01234567/model-Q4_K_M.gguf"

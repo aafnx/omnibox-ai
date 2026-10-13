@@ -318,7 +318,7 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 		SearchContent:  func(q, session string) any { return api.SearchContent(q, session) },
 		ExportSession:  api.ExportSession,
 		Logs:           func(engine string) any { return status.Logs(*data, current(), engine) },
-		Handlers:       side.handlers(api.Chat),
+		Handlers:       side.handlers(api.Chat, api.Automation),
 	})
 	if err != nil {
 		return err

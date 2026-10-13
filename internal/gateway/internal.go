@@ -13,8 +13,19 @@ import (
 // chat's requests in the activity list. The response streams as the engine answers; the caller
 // closes its body, which also ends the request.
 func (g *Gateway) Chat(ctx context.Context, session string, body []byte) *http.Response {
+	return g.internal(ctx, "chat", session, body)
+}
+
+// Automation sends an automation's request the same way, but its text is never written to the
+// content log, whatever the log setting: a contract's personal data stays out of the journals.
+// The activity list still shows that a request ran, with its tokens and time.
+func (g *Gateway) Automation(ctx context.Context, session string, body []byte) *http.Response {
+	return g.internal(ctx, "automation", session, body)
+}
+
+func (g *Gateway) internal(ctx context.Context, client, session string, body []byte) *http.Response {
 	ctx, cancel := context.WithCancel(ctx)
-	req, _ := http.NewRequestWithContext(context.WithValue(ctx, internalRequest{}, "chat"), http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
+	req, _ := http.NewRequestWithContext(context.WithValue(ctx, internalRequest{}, client), http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Omnibox-Session", session)
 	req.ContentLength = int64(len(body))

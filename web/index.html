@@ -40,6 +40,8 @@
     <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5M6 11l6-6 6 6"/></symbol>
     <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
     <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+    <symbol id="i-flow" viewBox="0 0 24 24"><path d="M13 3 5 13.5h6L10 21l8-10.5h-6L13 3z"/></symbol>
+    <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></symbol>
     <symbol id="i-arrow-down" viewBox="0 0 24 24"><path d="M12 5v14M6 13l6 6 6-6"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
     <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6"/><path d="m20 20-4.5-4.5"/></symbol>
@@ -72,6 +74,7 @@
     <div class="brand"><svg viewBox="0 0 512 512" aria-hidden="true"><circle cx="256" cy="256" r="200" fill="none" stroke="url(#g)" stroke-width="34"/><circle cx="256" cy="256" r="146" fill="none" stroke="url(#g)" stroke-width="6" opacity=".55"/></svg><span class="lbl">OMNIBOX AI</span><button type="button" class="navfold" id="nav-fold" aria-expanded="true" aria-controls="app" title="Свернуть меню" aria-label="Свернуть меню"><svg class="i"><use href="#i-fold"/></svg></button></div>
     <ul>
       <li><a href="#chat" data-go="chat" aria-current="page" title="Чат"><svg class="i"><use href="#i-chat"/></svg><span class="lbl">Чат</span></a></li>
+      <li><a href="#auto" data-go="auto" title="Автоматизации"><svg class="i"><use href="#i-flow"/></svg><span class="lbl"><span class="lbl-l">Автоматизации</span><span class="lbl-s">Авто</span></span></a></li>
       <li><a href="#models" data-go="models" title="Модели"><svg class="i"><use href="#i-models"/></svg><span class="lbl">Модели</span></a></li>
       <li><a href="#server" data-go="server" title="Сервер"><svg class="i"><use href="#i-server"/></svg><span class="lbl">Сервер</span></a></li>
       <li><a href="#settings" data-go="settings" title="Настройки"><svg class="i"><use href="#i-settings"/></svg><span class="lbl">Настройки</span></a></li>
@@ -150,6 +153,15 @@
       </div>
       <div class="ops" id="models-ops" hidden></div>
       <div class="models" id="model-list"><div class="banner">Загружаем список моделей…</div></div>
+    </section>
+
+    <!-- ── AUTOMATIONS ── -->
+    <section id="auto" class="page" data-page hidden>
+      <div class="head">
+        <div><h1>Автоматизации</h1><p>Готовые сценарии на ваших данных. Документ по шаблону Word: модель находит поля, по вашим данным предлагает значения, вы проверяете — OmniBox собирает файл, не меняя оформления шаблона.</p></div>
+        <label class="btn primary filelabel"><svg class="i"><use href="#i-plus"/></svg>Из шаблона Word<input type="file" id="au-new" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden></label>
+      </div>
+      <div id="au-list" class="au-list"><div class="banner">Загружаем автоматизации…</div></div>
     </section>
 
     <!-- ── SERVER ── -->
@@ -414,6 +426,59 @@
   <footer><button class="btn ghost sm danger-text sp-right" type="button" id="ae-delete">Удалить</button><button class="btn" type="button" data-close>Отмена</button><button class="btn primary" type="button" id="ae-save">Сохранить</button></footer>
 </aside>
 
+<!-- automation settings -->
+<aside class="drawer au-drawer" id="au-drawer" hidden aria-label="Автоматизация">
+  <header class="relh">
+    <button class="btn ghost sm x" type="button" data-close aria-label="Закрыть"><svg class="i"><use href="#i-x"/></svg></button>
+    <span class="label">Автоматизация · документ по шаблону</span><h1 id="au-title" class="dh1">Новая автоматизация</h1>
+  </header>
+  <div class="scroll">
+    <div class="row2">
+      <div class="field"><label for="au-name">Название</label><input id="au-name" type="text" maxlength="80" placeholder="Например, Договор купли-продажи"></div>
+      <div class="field"><label for="au-emoji">Значок</label><input id="au-emoji" class="emo-input" type="text" maxlength="8" placeholder="📄"></div>
+    </div>
+    <div class="line"><div><b>Конфиденциально</b><div class="small muted">Только модель на ПК. Без интернета, без журналов текста, файлы не хранятся. Для персональных данных.</div></div><label class="switch"><input type="checkbox" id="au-private" aria-label="Конфиденциально"><span></span></label></div>
+    <div class="field"><label for="au-model">Модель</label><select id="au-model"></select><span class="hint" id="au-model-hint">Если не выбрана — модель, выбранная в чате. Для фото нужна модель со зрением.</span></div>
+    <div class="field"><label for="au-instr">Указания для модели</label><textarea id="au-instr" rows="3" maxlength="4000" placeholder="Например: даты пиши как «12» октября 2026 г.; ФИО полностью; суммы цифрами и прописью."></textarea></div>
+    <div class="field"><div class="line"><span class="label">Шаблон</span><a class="btn ghost sm" id="au-tpl" href="#" download hidden><svg class="i i15"><use href="#i-download"/></svg><span id="au-tpl-name"></span></a></div></div>
+    <div class="field"><div class="line"><span class="label" id="au-fields-title">Поля</span><button class="btn sm" type="button" id="au-analyze"><svg class="i i15"><use href="#i-spark"/></svg>Найти поля моделью</button></div>
+      <span class="hint" id="au-fields-hint">Модель прочитает шаблон и предложит места для заполнения. Метки вида {{ФИО}} становятся полями сами.</span>
+      <div id="au-fields" class="au-fields"></div></div>
+  </div>
+  <footer><button class="btn ghost sm danger-text sp-right" type="button" id="au-delete">Удалить</button><button class="btn" type="button" data-close>Отмена</button><button class="btn primary" type="button" id="au-save">Сохранить</button></footer>
+</aside>
+
+<!-- automation run -->
+<div class="dialog au-run" id="au-run" hidden role="dialog" aria-labelledby="ar-title">
+  <header>
+    <button class="btn ghost sm x" type="button" data-close aria-label="Закрыть"><svg class="i"><use href="#i-x"/></svg></button>
+    <h1 class="dh1s" id="ar-title">Запуск</h1>
+    <div class="small muted" id="ar-policy"></div>
+  </header>
+  <div class="scroll">
+    <div class="stack8" id="ar-input">
+      <textarea id="ar-text" rows="4" placeholder="Данные для заполнения: текстом, или приложите фото, Word, Excel, CSV."></textarea>
+      <div class="ar-files" id="ar-files"></div>
+      <div class="line ar-actions"><label class="btn ghost sm filelabel"><svg class="i i15"><use href="#i-clip"/></svg>Приложить<input type="file" id="ar-file" multiple accept="image/*,.docx,.xlsx,.csv,.txt,.md" hidden></label>
+        <select id="ar-model" class="sel-auto" aria-label="Модель"></select>
+        <button class="btn primary" type="button" id="ar-go">Распознать</button></div>
+      <span class="hint" id="ar-status" role="status"></span>
+    </div>
+    <div class="stack8" id="ar-result" hidden>
+      <span class="label">Проверьте значения — их можно поправить</span>
+      <div id="ar-values" class="ar-values"></div>
+      <span class="label">Получить</span>
+      <div class="ar-out" role="group" aria-label="Формат">
+        <button class="btn primary" type="button" id="ar-build"><svg class="i i15"><use href="#i-file"/></svg>Документ Word</button>
+        <button class="btn" type="button" data-ar-out="text">Текстом</button>
+        <button class="btn" type="button" data-ar-out="csv">Таблица CSV</button>
+        <button class="btn" type="button" data-ar-out="json">JSON</button>
+      </div>
+      <div id="ar-done" class="ar-done" hidden></div>
+    </div>
+  </div>
+</div>
+
 <!-- add model dialog -->
 <div class="dialog" id="add" hidden role="dialog" aria-label="Добавить модель">
   <header>
@@ -441,5 +506,6 @@
 <script src="/models.js"></script>
 <script src="/server.js"></script>
 <script src="/settings.js"></script>
+<script src="/automations.js"></script>
 </body>
 </html>

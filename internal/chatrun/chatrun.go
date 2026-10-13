@@ -48,6 +48,8 @@ type Runner struct {
 	Model func(ctx context.Context, key string) (library.Model, int, error)
 	// Local sends a request to the running local model through /v1 and its queue.
 	Local func(ctx context.Context, session string, body []byte) *http.Response
+	// Automation is Local for automations: the request's text is never written to the content log.
+	Automation func(ctx context.Context, session string, body []byte) *http.Response
 	// Cloud returns the OpenRouter client with the saved key.
 	Cloud func() (*openrouter.Client, error)
 	Spend *openrouter.Spend
@@ -217,6 +219,7 @@ type turn struct {
 	native    bool // the model searches itself (ChatGPT with OpenAI's web search)
 	read      bool // pages of the results are read in full
 	effort    string
+	private   bool // an automation's request: Automation instead of Local
 }
 
 func (r *Runner) prepare(ctx context.Context, in Request) (*turn, error) {

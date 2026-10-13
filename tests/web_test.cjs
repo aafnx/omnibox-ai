@@ -1,7 +1,7 @@
 // Execute the real UI code against a small DOM adapter; no browser/rendering claim.
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const html=fs.readFileSync('web/index.html','utf8');
-const files=['app.js','chat.js','models.js','server.js','settings.js'];
+const files=['app.js','chat.js','models.js','server.js','settings.js','automations.js'];
 const sources=files.map(f=>fs.readFileSync('web/'+f,'utf8'));
 // The page and every script are loaded in this order.
 files.forEach(f=>assert.ok(html.includes(`<script src="/${f}"></script>`),`index.html loads ${f}`));
@@ -476,6 +476,29 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.deepEqual(ops[0],{action:'self-update',version:'0.22.0'});run('waiting.clear()');context.fetch=oldFetch;
 
   // Logged out: the API answers 401 and the login form is shown.
+  // Automations: the list says what each may use; a private one offers only the models on the PC.
+  run("A.list=[];renderAuto()");assert.ok(nodes['au-list'].innerHTML.includes('Пока нет автоматизаций'));
+  run(`A.list=[{id:'a1',name:'Договор',emoji:'📄',kind:'document',private:true,model:'',template:{name:'Договор.docx',fields:[{name:'ФИО',places:[]},{name:'Дата',places:[]}]}}];renderAuto()`);
+  assert.ok(nodes['au-list'].innerHTML.includes('2 поля')&&nodes['au-list'].innerHTML.includes('Только ПК · без интернета')&&nodes['au-list'].innerHTML.includes('data-au-run="a1"'),nodes['au-list'].innerHTML);
+  run(`S.library={models:[{key:'prismml:a.gguf',source:'local',name:'Gemma',caps:{vision:true}},{key:'cloud:o/m',source:'cloud',name:'Облачная',favorite:true,caps:{}}]}`);
+  run("auModels(document.getElementById('au-model'),'',true,'Модель чата')");assert.ok(nodes['au-model'].innerHTML.includes('Gemma · видит фото')&&!nodes['au-model'].innerHTML.includes('Облачная'),nodes['au-model'].innerHTML);
+  run("auModels(document.getElementById('au-model'),'',false,'Модель чата')");assert.ok(nodes['au-model'].innerHTML.includes('Облачная · облако'));
+  // A place is shown in its sentence with the text to replace marked, escaped.
+  const aupl=run(`auPlace({para:1,context:'серии ____ №',find:'____',text:'паспорт <серии> серии ____ № ______',where:''})`);
+  assert.ok(aupl.includes('паспорт &lt;серии&gt; серии <mark>____</mark> № ______')&&aupl.includes('абзац 2'),aupl);
+  // The editor keeps the owner's edits of the fields; removing a field removes it.
+  run(`openAuto({id:'a1',name:'Договор',private:true,model:'',instructions:'',template:{name:'Договор.docx',fields:[{name:'ФИО',hint:'',places:[{para:1,context:'x',find:'x',text:'x'}]},{name:'Лишнее',places:[]}]}})`);
+  assert.equal(nodes['au-drawer'].hidden,false);assert.ok(nodes['au-fields'].innerHTML.includes('data-au-fname="1"'));
+  nodes['au-fields'].listeners.input[0]({target:{dataset:{auFname:'0'},value:'ФИО покупателя'}});
+  nodes['au-fields'].listeners.click[0]({target:{closest:()=>({dataset:{auFdel:'1'}})}});
+  assert.deepEqual(J("A.cur.template.fields.map(f=>f.name)"),['ФИО покупателя']);
+  // A run's values come in other formats in the browser; closing the run forgets them.
+  run(`A.run={a:{id:'a1',name:'Договор'},files:[],values:[{field:'ФИО',value:'Иванов; "Иван"',source:'из текста',missing:false},{field:'Дата',value:'',missing:true}]};renderValues()`);
+  assert.ok(nodes['ar-values'].innerHTML.includes('Нет в данных')&&nodes['ar-result'].hidden===false);
+  const savedBlobs=[];context.URL={createObjectURL:b=>{savedBlobs.push(b);return 'blob:x';},revokeObjectURL:()=>{}};context.Blob=function(parts){this.text=parts.join('');};
+  assert.equal(run("auOut('csv')"),'﻿ФИО;Дата\r\n"Иванов; ""Иван""";\r\n');
+  assert.equal(run("auOut('json')"),'{\n  "ФИО": "Иванов; \\"Иван\\"",\n  "Дата": ""\n}');
+  run("hideAll()");assert.equal(run('A.run'),null);assert.equal(nodes['ar-values'].innerHTML,'');
   winListeners.DOMContentLoaded.forEach(fn=>fn());await new Promise(r=>setTimeout(r,10));
   assert.ok(requests.includes('/api/session'));assert.equal(nodes.login.hidden,false);assert.equal(nodes.app.hidden,true);
   console.log('web_test: ok');
