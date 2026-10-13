@@ -26,6 +26,7 @@ const (
 	Text  = "text"
 	Word  = "word"
 	Excel = "excel"
+	PDF   = "pdf"
 )
 
 // MaxFile is the largest attachment; MaxText bounds the text taken from one file.
@@ -38,7 +39,7 @@ var extensions = map[string]string{
 	"png": Image, "jpg": Image, "jpeg": Image, "webp": Image, "gif": Image,
 	"mp4": Video, "mov": Video, "webm": Video, "mkv": Video, "avi": Video,
 	"mp3": Audio, "wav": Audio, "m4a": Audio, "ogg": Audio, "flac": Audio, "opus": Audio,
-	"docx": Word, "xlsx": Excel, "csv": Excel,
+	"docx": Word, "xlsx": Excel, "csv": Excel, "pdf": PDF,
 	"txt": Text, "md": Text, "json": Text, "log": Text, "yaml": Text, "yml": Text, "xml": Text, "html": Text,
 	"go": Text, "py": Text, "js": Text, "ts": Text, "ps1": Text, "sh": Text, "ini": Text, "conf": Text,
 }
@@ -115,6 +116,8 @@ func ExtractText(name string, data []byte) (string, error) {
 		text, err = plain(name, data)
 	case Word:
 		text, err = docx(data)
+	case PDF:
+		text, err = pdfText(data)
 	case Excel:
 		if strings.EqualFold(path.Ext(name), ".csv") {
 			text, err = csvText(data)

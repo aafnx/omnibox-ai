@@ -132,7 +132,7 @@ func (r *Runner) aside(ctx context.Context, chat *chats.Chat, chosen, answered s
 	if steps := reasoning.Steps(model.Reasoning); len(steps) > 0 {
 		effort = steps[0]
 	}
-	t := &turn{chat: chat, model: model, context: ctxLen, effort: effort}
+	t := &turn{chat: chat, model: model, context: ctxLen, effort: effort, private: chat.Temporary}
 	ctx, cancel := context.WithTimeout(ctx, followUpTimeout)
 	defer cancel()
 	a := &answer{}

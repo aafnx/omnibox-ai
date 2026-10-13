@@ -150,6 +150,7 @@ func New(opt Options) (*Server, error) {
 		"/":                {"index.html", "text/html; charset=utf-8"},
 		"/app.js":          {"app.js", "text/javascript; charset=utf-8"},
 		"/chat.js":         {"chat.js", "text/javascript; charset=utf-8"},
+		"/projects.js":     {"projects.js", "text/javascript; charset=utf-8"},
 		"/models.js":       {"models.js", "text/javascript; charset=utf-8"},
 		"/server.js":       {"server.js", "text/javascript; charset=utf-8"},
 		"/settings.js":     {"settings.js", "text/javascript; charset=utf-8"},

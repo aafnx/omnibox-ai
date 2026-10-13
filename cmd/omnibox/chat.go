@@ -45,6 +45,8 @@ type chatSide struct {
 	Spend      *openrouter.Spend
 	Chats      *chats.Store
 	Assistants *chats.Assistants
+	// Projects group chats with shared instructions and documents.
+	Projects *chats.Projects
 	// GPT is the ChatGPT subscription through Codex's app-server.
 	GPT *chatgpt.Service
 	// SearchKeys are the keys of Perplexity, Tavily and Brave Search, encrypted.
@@ -64,7 +66,8 @@ func newChatSide(data string, store *config.Store, services platform.Services, c
 		Keys:       openrouter.KeyStore{Path: filepath.Join(data, filepath.FromSlash(openrouter.KeyFile))},
 		Spend:      &openrouter.Spend{Path: filepath.Join(data, filepath.FromSlash(openrouter.SpendFile))},
 		Chats:      &chats.Store{Dir: filepath.Join(data, "chats")},
-		Assistants: &chats.Assistants{Path: filepath.Join(data, "assistants.json")}}
+		Assistants: &chats.Assistants{Path: filepath.Join(data, "assistants.json")},
+		Projects:   &chats.Projects{Dir: filepath.Join(data, "projects")}}
 	c.Catalog = &openrouter.Catalog{Path: filepath.Join(data, filepath.FromSlash(openrouter.CatalogFile)), Client: c.client}
 	c.SearchKeys = websearch.Keys{Path: filepath.Join(data, filepath.FromSlash(websearch.KeyFile))}
 	c.Automations, c.Results = &automations.Store{Dir: filepath.Join(data, automations.Dir)}, &automations.Results{}
@@ -196,7 +199,7 @@ func (c *chatSide) logf(format string, args ...any) {
 
 // runner answers chat messages.
 func (c *chatSide) runner(local func(ctx context.Context, session string, body []byte) *http.Response) *chatrun.Runner {
-	return &chatrun.Runner{Chats: c.Chats, Assistants: c.Assistants, Config: c.Store.Get, Model: c.modelInfo, Local: local, Spend: c.Spend, Logf: c.logf,
+	return &chatrun.Runner{Chats: c.Chats, Assistants: c.Assistants, Projects: c.Projects, Config: c.Store.Get, Model: c.modelInfo, Local: local, Spend: c.Spend, Logf: c.logf,
 		Cloud: func() (*openrouter.Client, error) {
 			if cl := c.client(); cl != nil {
 				return cl, nil
@@ -276,7 +279,7 @@ func (c *chatSide) searchEngines(s config.Chat) map[string]bool {
 
 // handlers are the panel's routes of this side.
 func (c *chatSide) handlers(local, automation func(ctx context.Context, session string, body []byte) *http.Response) map[string]http.Handler {
-	history := &chats.Handler{Chats: c.Chats, Assistants: c.Assistants, Logf: c.logf,
+	history := &chats.Handler{Chats: c.Chats, Assistants: c.Assistants, Projects: c.Projects, Logf: c.logf,
 		KeepHours: func() int { return c.Store.Get().ChatSettings().RetentionHours }}
 	run := c.runner(local)
 	run.Automation = automation
@@ -285,6 +288,7 @@ func (c *chatSide) handlers(local, automation func(ctx context.Context, session 
 	return map[string]http.Handler{
 		"/api/chats":            history,
 		"/api/assistants":       history,
+		"/api/projects":         history,
 		"/api/chat/send":        run,
 		"/api/chat/followups":   http.HandlerFunc(run.FollowUps),
 		"/api/chat/title":       http.HandlerFunc(run.Title),
@@ -775,8 +779,12 @@ func (c *chatSide) serveSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		out["search_ms"] = took.Milliseconds()
 	case "delete-all-data":
-		// Chats, journals and request texts; models and settings stay.
+		// Chats, projects with their documents, journals and request texts; models and settings
+		// stay.
 		n, err := c.Chats.DeleteAll(false)
+		if err == nil {
+			err = c.Projects.DeleteAll()
+		}
 		if err != nil {
 			replyError(w, err)
 			return

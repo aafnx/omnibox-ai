@@ -342,7 +342,7 @@ func TestSearch(t *testing.T) {
 	clk.Add(time.Second)
 	mustCreate(t, s, "Другое", 0)
 
-	hits, err := s.Search("  борщ ")
+	hits, err := s.Search("  борщ ", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,16 +356,16 @@ func TestSearch(t *testing.T) {
 	if hits[1].MessageID != "" || hits[1].Snippet != "Рецепт борща" {
 		t.Fatalf("title hit %+v", hits[1])
 	}
-	if hits, _ := s.Search("нет такого"); hits == nil || len(hits) != 0 {
+	if hits, _ := s.Search("нет такого", ""); hits == nil || len(hits) != 0 {
 		t.Fatalf("no hits %v", hits)
 	}
-	if _, err := s.Search(strings.Repeat("x", maxQuery+1)); !isInput(err) {
+	if _, err := s.Search(strings.Repeat("x", maxQuery+1), ""); !isInput(err) {
 		t.Fatalf("long query: %v", err)
 	}
 	for i := 0; i < maxSearchHits+5; i++ {
 		mustCreate(t, s, "борщ", 0)
 	}
-	if hits, _ := s.Search("борщ"); len(hits) != maxSearchHits {
+	if hits, _ := s.Search("борщ", ""); len(hits) != maxSearchHits {
 		t.Fatalf("limit: %d", len(hits))
 	}
 }

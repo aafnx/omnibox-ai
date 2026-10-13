@@ -3,7 +3,7 @@
 let finished=false;process.on('exit',c=>{if(!finished&&c===0){console.error('web_test: did not finish');process.exitCode=1;}});
 const fs=require('fs'),vm=require('vm'),assert=require('node:assert/strict');
 const html=fs.readFileSync('web/index.html','utf8');
-const files=['app.js','chat.js','models.js','server.js','settings.js','automations.js'];
+const files=['app.js','chat.js','projects.js','models.js','server.js','settings.js','automations.js'];
 const sources=files.map(f=>fs.readFileSync('web/'+f,'utf8'));
 // The page and every script are loaded in this order.
 files.forEach(f=>assert.ok(html.includes(`<script src="/${f}"></script>`),`index.html loads ${f}`));
@@ -589,6 +589,36 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   assert.equal(J('A.run.a.id'),'d1');assert.deepEqual(J('A.run.values.map(v=>[v.field,v.value,v.missing])'),[['фио','Иванов; "Иван"',false],['Адрес','',true]]);
   assert.equal(nodes['ar-build'].hidden,false);
   run("hideAll()");assert.equal(run('A.run'),null);assert.equal(nodes['ar-values'].innerHTML,'');
+  // Projects: on top of the list; their chats live in the project, not in the common list.
+  run(`hideAll();C.view='';C.hits=null;C.chat=null;C.temp=false;C.projects=[{id:'p1',name:'Дача',emoji:'🏡',instructions:'Кратко.',files:[{id:'f1',name:'смета.pdf',kind:'pdf',size:2048,chars:21}]}];
+    C.threads=[{id:'pa',title:'Смета крыши',project_id:'p1',created:'${iso(-1)}',updated:'${iso(0)}'},{id:'pb',title:'Отдельный',created:'${iso(-1)}',updated:'${iso(0)}'}];renderThreads()`);
+  let tl=nodes['thread-list'].innerHTML;
+  assert.ok(tl.includes('data-proj="p1"')&&tl.includes('Дача')&&tl.includes('1 чат · 1 документ')&&tl.includes('data-thread="pb"')&&!tl.includes('data-thread="pa"'),tl);
+  run("openProjectView('p1')");tl=nodes['thread-list'].innerHTML;
+  assert.ok(tl.includes('data-proj-back')&&tl.includes('data-proj-chat="p1"')&&tl.includes('data-thread="pa"')&&!tl.includes('data-thread="pb"'),tl);
+  assert.equal(nodes['thread-search'].placeholder,'Поиск в проекте');
+  run('newChat()');assert.equal(nodes['proj-chip'].hidden,false);assert.ok(nodes['proj-chip'].innerHTML.includes('Дача'));
+  assert.ok(nodes['message-list'].innerHTML.includes('Чат в проекте «Дача»'),nodes['message-list'].innerHTML);
+  run("openProjectView('')");assert.equal(nodes['proj-chip'].hidden,true);
+  // Moving a chat: the menu lists the projects; the answer updates the list.
+  run("moveMenu('pb')");assert.ok(nodes['thread-menu'].innerHTML.includes('data-move-to="p1"')&&!nodes['thread-menu'].innerHTML.includes('Убрать из проекта'));
+  const moved=[];context.fetch=async(p,o)=>{moved.push([p,JSON.parse(o.body)]);return {ok:true,json:async()=>({id:'pb',title:'Отдельный',project_id:'p1',created:iso(-1),updated:iso(0)})};};
+  await run("moveChat('pb','p1')");assert.deepEqual(moved,[['/api/chats',{action:'project',id:'pb',project_id:'p1'}]]);
+  assert.ok(!nodes['thread-list'].innerHTML.includes('data-thread="pb"'),'a moved chat leaves the common list');
+  // The editor shows the project and its documents; a picture is not a document.
+  run("openProject('p1')");assert.equal(nodes['proj-drawer'].hidden,false);assert.equal(nodes['pj-name'].value,'Дача');assert.ok(nodes['pj-files'].innerHTML.includes('смета.pdf')&&nodes['pj-files'].innerHTML.includes('21 знак'));
+  moved.length=0;await run("addProjectFiles([{name:'фото.png',size:10}])");assert.equal(moved.length,0,'a picture is not sent');
+  context.fetch=async(p,o)=>{moved.push(JSON.parse(o.body));return {ok:true,json:async()=>({project:{id:'p1',name:'Дача у озера',files:[]},projects:[{id:'p1',name:'Дача у озера',files:[]}]})};};
+  nodes['pj-name'].value='Дача у озера';nodes['pj-instr'].value='Кратко.';await run('saveProject()');
+  assert.deepEqual(moved[0],{action:'save',name:'Дача у озера',emoji:'🏡',instructions:'Кратко.',id:'p1'});assert.equal(J("C.projects[0].name"),'Дача у озера');
+  context.fetch=oldFetch;run('hideAll()');
+  // Temporary chat: the switch is for a new chat; leaving a started one deletes it at once.
+  run("C.chat=null;C.temp=false;renderChat()");nodes['temp-btn'].listeners.click[0]();
+  assert.equal(run('C.temp'),true);assert.equal(nodes['temp-btn'].attributes['aria-pressed'],'true');assert.ok(nodes['message-list'].innerHTML.includes('Временный чат')&&nodes['message-list'].innerHTML.includes('Не сохраняется на ПК'));
+  const gone=[];context.fetch=async(p,o)=>{gone.push(JSON.parse(o.body));return {ok:true,json:async()=>({ok:true})};};
+  run("C.chat={id:'tmp',title:'Т',temporary:true,messages:[{id:'m',role:'user',text:'тайна'}]};renderChat()");assert.equal(nodes['temp-btn'].disabled,true);assert.equal(nodes['temp-btn'].hidden,false);
+  run('newChat()');await new Promise(r=>setTimeout(r,0));assert.deepEqual(gone,[{action:'delete',id:'tmp'}]);assert.equal(run('C.temp'),false);assert.equal(run('C.chat'),null);
+  context.fetch=oldFetch;run("C.projects=[];C.threads=[]");
   winListeners.DOMContentLoaded.forEach(fn=>fn());await new Promise(r=>setTimeout(r,10));
   assert.ok(requests.includes('/api/session'));assert.equal(nodes.login.hidden,false);assert.equal(nodes.app.hidden,true);
   finished=true;console.log('web_test: ok');

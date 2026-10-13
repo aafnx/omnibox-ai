@@ -2,3 +2,5 @@
 # Bootstrap scripts run in Windows PowerShell, which expects CRLF.
 *.ps1 text eol=crlf
 *.cmd text eol=crlf
+# Test fixtures that are files of other programs stay byte for byte.
+*.pdf binary
