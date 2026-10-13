@@ -529,6 +529,9 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   nodes['au-steps'].listeners.click[0](pick('[data-au-fadd]',{auFadd:'0'}));nodes['au-steps'].listeners.input[0]({target:{type:'text',tagName:'INPUT',dataset:{auFf:'0:1',k:'name'},value:'Номер'}});
   nodes['au-steps'].listeners.change[0]({target:{tagName:'SELECT',dataset:{auFf:'0:1',k:'check'},value:'passport_number'}});nodes['au-steps'].listeners.click[0](pick('[data-au-fadd]',{auFadd:'0'}));
   assert.deepEqual(J('auForm().steps[0].fields'),[{name:'Серия',check:'passport_series'},{name:'Номер',hint:'',check:'passport_number'}]);
+  // A long model name in a list does not widen a drawer past a phone's screen: the drawer's column
+  // and every list may shrink.
+  assert.ok(/\.drawer \.scroll\{[^}]*grid-template-columns:minmax\(0,1fr\)/.test(css)&&/(^|\n)select\{min-width:0;max-width:100%/.test(css));
   // A run of several steps shows each step folded, the last as the result.
   run(`A.run={a:{id:'n',name:'Новости',kind:'task',steps:[{kind:'task'},{kind:'task'}]},files:[]};showResult({text:'Итог',steps:[{name:'Поиск',kind:'task',text:'**найдено**'},{name:'Сводка',kind:'task',text:'Итог'}]})`);
   assert.equal(nodes['ar-steps'].hidden,false);assert.ok(nodes['ar-steps'].innerHTML.includes('1. Поиск')&&nodes['ar-steps'].innerHTML.includes('<b>найдено</b>')&&!nodes['ar-steps'].innerHTML.includes('Сводка'),nodes['ar-steps'].innerHTML);
