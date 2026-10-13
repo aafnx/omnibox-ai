@@ -368,7 +368,7 @@ main{overflow-x:hidden}
 .scrim{position:fixed;inset:0;background:#0a0c1f66;z-index:40}
 .drawer{position:fixed;top:0;right:0;bottom:0;width:min(480px,100%);background:var(--surface);border-left:1px solid var(--line);z-index:41;display:flex;flex-direction:column;box-shadow:var(--shadow)}
 .drawer header{padding:20px 22px 14px;border-bottom:1px solid var(--line);display:grid;gap:8px}
-.drawer .scroll{flex:1;overflow:auto;padding:18px 22px;display:grid;gap:22px;align-content:start}
+.drawer .scroll{flex:1;overflow:auto;padding:18px 22px;display:grid;grid-template-columns:minmax(0,1fr);gap:22px;align-content:start}
 .drawer footer{padding:14px 22px;border-top:1px solid var(--line);display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .x{position:absolute;right:14px;top:14px}
 .capsx{display:grid;gap:10px}
@@ -933,3 +933,6 @@ svg[id^="mmd"] .pieCircle{stroke:var(--surface);stroke-width:2px}
 .au-sadd{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
 .au-sres>summary{font-size:13px}
 #ar-steps .label{margin-bottom:-2px}
+
+select{min-width:0;max-width:100%;text-overflow:ellipsis}
+.field,.au-step,.au-steps,.au-sopts,.au-shead{min-width:0}
