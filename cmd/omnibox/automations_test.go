@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/aafnx/omnibox-ai/internal/library"
 )
@@ -58,11 +59,11 @@ func TestDocumentAutomation(t *testing.T) {
 	}
 	h := c.serveAutomations(run)
 	tpl := base64.StdEncoding.EncodeToString(contractDocx())
-	w := post(h, "/api/automations", `{"action":"create","name":"Договор","private":true,"model":"cloud:openai/gpt-5","template":{"name":"Договор.docx","data":"`+tpl+`"}}`)
+	w := post(h, "/api/automations", `{"action":"create","kind":"document","name":"Договор","private":true,"model":"cloud:openai/gpt-5","template":{"name":"Договор.docx","data":"`+tpl+`"}}`)
 	if w.Code != 400 || !strings.Contains(w.Body.String(), "только с моделью на ПК") {
 		t.Fatalf("a private automation took a cloud model: %d %s", w.Code, w.Body)
 	}
-	w = post(h, "/api/automations", `{"action":"create","name":"Договор","emoji":"📄","private":true,"template":{"name":"Договор.docx","data":"`+tpl+`"}}`)
+	w = post(h, "/api/automations", `{"action":"create","kind":"document","name":"Договор","emoji":"📄","private":true,"template":{"name":"Договор.docx","data":"`+tpl+`"}}`)
 	var a struct {
 		ID       string `json:"id"`
 		Template struct {
@@ -140,4 +141,85 @@ func listFiles(t *testing.T, dir string) string {
 		return nil
 	})
 	return b.String()
+}
+
+// A task of the owner's own: its {{names}} are asked at the run, its result kept in the history
+// when that is on; a scheduled run uses the saved values and marks its result unseen. Fields are
+// checked after the model read them.
+func TestTaskAndFieldsAutomations(t *testing.T) {
+	c, _ := chatRig(t)
+	run := c.runner(nil)
+	answers := []string{}
+	var prompts []string
+	local := library.Model{Key: "prismml:a.gguf", Source: "local", Engine: "prismml", Name: "Gemma", Alias: "gemma", Running: true, Caps: library.Caps{Vision: true}}
+	run.Model = func(ctx context.Context, key string) (library.Model, int, error) { return local, 32768, nil }
+	run.Automation = func(ctx context.Context, session string, body []byte) *http.Response {
+		var b struct {
+			Messages []struct {
+				Content any `json:"content"`
+			} `json:"messages"`
+		}
+		json.Unmarshal(body, &b)
+		last, _ := json.Marshal(b.Messages[len(b.Messages)-1].Content)
+		prompts = append(prompts, string(last))
+		a := answers[0]
+		answers = answers[1:]
+		chunk, _ := json.Marshal(map[string]any{"choices": []any{map[string]any{"delta": map[string]any{"content": a}}}})
+		return &http.Response{StatusCode: 200, Body: io.NopCloser(strings.NewReader("data: " + string(chunk) + "\n\ndata: [DONE]\n\n"))}
+	}
+	h := c.serveAutomations(run)
+	w := post(h, "/api/automations", `{"action":"create","kind":"task","name":"Сводка","prompt":"Сводка новостей о {{тема}}","history":true,"model":"prismml:a.gguf"}`)
+	var a struct{ ID string }
+	json.Unmarshal(w.Body.Bytes(), &a)
+	if w.Code != 200 || a.ID == "" {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	if w := post(h, "/api/automations", `{"action":"run","id":"`+a.ID+`"}`); w.Code != 400 || !strings.Contains(w.Body.String(), "тема") {
+		t.Fatalf("a name left empty: %d %s", w.Code, w.Body)
+	}
+	answers = append(answers, "Главное за неделю: …")
+	w = post(h, "/api/automations", `{"action":"run","id":"`+a.ID+`","vars":{"тема":"ИИ"}}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"text":"Главное за неделю: …"`) || !strings.Contains(prompts[0], "Сводка новостей о ИИ") {
+		t.Fatalf("run: %d %s %v", w.Code, w.Body, prompts)
+	}
+	// A scheduled run: saved values, an unseen result in the list until the history is opened.
+	w = post(h, "/api/automations", `{"action":"save","id":"`+a.ID+`","name":"Сводка","prompt":"Сводка новостей о {{тема}}","history":true,"model":"prismml:a.gguf","vars":{"тема":"роботах"},"schedule":{"enabled":true,"every":"day","at":"08:00"}}`)
+	if w.Code != 200 {
+		t.Fatalf("save: %s", w.Body)
+	}
+	answers = append(answers, "Роботы: …")
+	saved, _ := c.Automations.Get(a.ID)
+	c.scheduled(run)(context.Background(), saved)
+	list, _ := c.automationList()
+	if s := list["last"].(map[string]runSummary)[a.ID]; s.Trigger != "schedule" || s.Unseen != 1 || !strings.Contains(prompts[1], "роботах") {
+		t.Fatalf("%+v %v", s, prompts)
+	}
+	if _, ok := list["next"].(map[string]time.Time)[a.ID]; !ok {
+		t.Fatal("no next run")
+	}
+	w = post(h, "/api/automations", `{"action":"runs","id":"`+a.ID+`"}`)
+	if !strings.Contains(w.Body.String(), "Роботы: …") || !strings.Contains(w.Body.String(), "Главное за неделю") {
+		t.Fatalf("runs: %s", w.Body)
+	}
+	if list, _ := c.automationList(); list["last"].(map[string]runSummary)[a.ID].Unseen != 0 {
+		t.Fatal("opened history still unseen")
+	}
+	// A private one keeps no history whatever was asked.
+	w = post(h, "/api/automations", `{"action":"create","kind":"fields","name":"Паспорт","private":true,"history":true,"prompt":"Распознай паспорт РФ на фото.","fields":[{"name":"Серия","check":"passport_series"},{"name":"Номер","check":"passport_number"}]}`)
+	var p struct {
+		ID      string
+		History bool
+	}
+	json.Unmarshal(w.Body.Bytes(), &p)
+	if w.Code != 200 || p.History {
+		t.Fatalf("%d %s", w.Code, w.Body)
+	}
+	answers = append(answers, `{"values":[{"field":"Серия","value":"9204","source":"с фото"},{"field":"Номер","value":"12345","source":"с фото"}]}`)
+	w = post(h, "/api/automations", `{"action":"run","id":"`+p.ID+`","model":"prismml:a.gguf","files":[{"name":"паспорт.jpg","data":"AAAA"}]}`)
+	if w.Code != 200 || !strings.Contains(w.Body.String(), `"warning":"Номер паспорта — 6 цифр."`) || strings.Contains(w.Body.String(), `"field":"Серия","value":"9204","source":"с фото","missing":false,"warning"`) {
+		t.Fatalf("fields: %d %s", w.Code, w.Body)
+	}
+	if runs, _ := c.Automations.Runs(p.ID, 0, time.Now()); len(runs) != 0 {
+		t.Fatal("a private run was kept")
+	}
 }

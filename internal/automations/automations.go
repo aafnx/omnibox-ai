@@ -35,10 +35,16 @@ const (
 	maxNotes       = 4000
 )
 
-// Kinds of automation.
+// Kinds of automation: a task answered in text, fields taken from the data, or a Word template
+// filled with them.
 const (
+	KindTask     = "task"
+	KindFields   = "fields"
 	KindDocument = "document"
 )
+
+// maxPrompt bounds a task's own words.
+const maxPrompt = 20000
 
 // Automation is one saved scenario.
 type Automation struct {
@@ -46,15 +52,27 @@ type Automation struct {
 	Name  string `json:"name"`
 	Emoji string `json:"emoji"`
 	Kind  string `json:"kind"`
-	// Private keeps everything on the PC: a local model only. No automation ever searches the web.
+	// Private keeps everything on the PC: a local model only, no search, no history, no schedule.
 	Private bool `json:"private"`
 	// Model is the model key it runs with; "" means the model chosen in the chat.
 	Model string `json:"model"`
+	// Prompt is the task in the owner's words; {{name}} in it is asked at each run (Vars).
+	Prompt string `json:"prompt,omitempty"`
 	// Instructions are the owner's notes for the model: formats, names, what to leave blank.
-	Instructions string    `json:"instructions"`
-	Template     *Template `json:"template,omitempty"`
-	Created      time.Time `json:"created"`
-	Updated      time.Time `json:"updated"`
+	Instructions string `json:"instructions"`
+	// Web lets the run search the web; Read lets it open the pages found. Never when private.
+	Web  bool `json:"web,omitempty"`
+	Read bool `json:"read,omitempty"`
+	// Fields are what a fields automation takes from the data.
+	Fields   []Field   `json:"fields,omitempty"`
+	Template *Template `json:"template,omitempty"`
+	// History keeps the runs' results on the PC, for as long as chats are kept. Never when private.
+	History bool `json:"history,omitempty"`
+	// Schedule runs a task by itself; Vars are its values of the prompt's {{names}}.
+	Schedule *Schedule         `json:"schedule,omitempty"`
+	Vars     map[string]string `json:"vars,omitempty"`
+	Created  time.Time         `json:"created"`
+	Updated  time.Time         `json:"updated"`
 }
 
 // Template is the Word file of a document automation and its fields.
@@ -68,7 +86,9 @@ type Template struct {
 type Field struct {
 	Name   string  `json:"name"`
 	Hint   string  `json:"hint"`
-	Places []Place `json:"places"`
+	Places []Place `json:"places,omitempty"`
+	// Check is how a value is verified: one of Checks.
+	Check string `json:"check,omitempty"`
 }
 
 // Place is where a field's value goes: Find inside Context in paragraph Para. All fills every
@@ -86,7 +106,15 @@ type Place struct {
 // Store keeps the automations' list and their templates, readable only by the service.
 type Store struct {
 	Dir string
-	mu  sync.Mutex
+	// OnChange is told after an automation is saved or deleted: the schedule is set again.
+	OnChange func()
+	mu       sync.Mutex
+}
+
+func (s *Store) changed() {
+	if s.OnChange != nil {
+		s.OnChange()
+	}
 }
 
 type file struct {
@@ -171,6 +199,7 @@ func (s *Store) Save(a Automation, template []byte, now time.Time) (Automation, 
 	if err := check(&a); err != nil {
 		return Automation{}, err
 	}
+	defer s.changed()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := s.load()
@@ -210,6 +239,7 @@ func (s *Store) Save(a Automation, template []byte, now time.Time) (Automation, 
 
 // Delete removes an automation and its template at once, without a copy.
 func (s *Store) Delete(id string) error {
+	defer s.changed()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := s.load()
@@ -227,10 +257,22 @@ func (s *Store) Delete(id string) error {
 	if err := os.Remove(s.templatePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("Шаблон не удалён: %v", err)
 	}
+	if err := os.RemoveAll(s.runsDir(id)); err != nil {
+		return fmt.Errorf("История не удалена: %v", err)
+	}
 	return nil
 }
 
-// check validates what the panel sent; the fields are checked against the template elsewhere.
+// FieldList are the fields a run fills: a fields automation's own, a document's template's.
+func (a Automation) FieldList() []Field {
+	if a.Kind == KindDocument && a.Template != nil {
+		return a.Template.Fields
+	}
+	return a.Fields
+}
+
+// check validates what the panel sent and applies the rules of privacy; the places of a
+// template's fields are checked against it elsewhere.
 func check(a *Automation) error {
 	a.Name = strings.TrimSpace(a.Name)
 	if a.Name == "" || utf8.RuneCountInString(a.Name) > maxName {
@@ -239,21 +281,41 @@ func check(a *Automation) error {
 	if utf8.RuneCountInString(a.Emoji) > 8 {
 		return errors.New("Значок — один эмодзи.")
 	}
-	if a.Kind != KindDocument {
-		return errors.New("Неизвестный вид автоматизации.")
-	}
 	if utf8.RuneCountInString(a.Instructions) > maxNotes {
 		return fmt.Errorf("Указания для модели: не больше %d символов.", maxNotes)
 	}
-	if a.Template == nil {
-		return errors.New("Загрузите шаблон Word.")
+	a.Prompt = strings.TrimSpace(a.Prompt)
+	if utf8.RuneCountInString(a.Prompt) > maxPrompt {
+		return fmt.Errorf("Задача: не больше %d символов.", maxPrompt)
 	}
-	if len(a.Template.Fields) > maxFields {
+	var fields []Field
+	switch a.Kind {
+	case KindTask:
+		if a.Prompt == "" {
+			return errors.New("Опишите задачу: что модель должна сделать.")
+		}
+		a.Fields, a.Template = nil, nil
+	case KindFields:
+		if len(a.Fields) == 0 {
+			return errors.New("Добавьте хотя бы одно поле.")
+		}
+		a.Template = nil
+		fields = a.Fields
+	case KindDocument:
+		if a.Template == nil {
+			return errors.New("Загрузите шаблон Word.")
+		}
+		a.Fields = nil
+		fields = a.Template.Fields
+	default:
+		return errors.New("Неизвестный вид автоматизации.")
+	}
+	if len(fields) > maxFields {
 		return fmt.Errorf("Не больше %d полей.", maxFields)
 	}
 	seen := map[string]bool{}
-	for i := range a.Template.Fields {
-		f := &a.Template.Fields[i]
+	for i := range fields {
+		f := &fields[i]
 		f.Name = strings.TrimSpace(f.Name)
 		if f.Name == "" || utf8.RuneCountInString(f.Name) > maxName {
 			return fmt.Errorf("Название поля: от 1 до %d символов.", maxName)
@@ -265,8 +327,52 @@ func check(a *Automation) error {
 		if utf8.RuneCountInString(f.Hint) > maxHint {
 			f.Hint = string([]rune(f.Hint)[:maxHint])
 		}
-		if len(f.Places) == 0 || len(f.Places) > maxPlaces {
+		if !slices.Contains(Checks, f.Check) {
+			return fmt.Errorf("Поле «%s»: неизвестная проверка.", f.Name)
+		}
+		if a.Kind == KindDocument && (len(f.Places) == 0 || len(f.Places) > maxPlaces) {
 			return fmt.Errorf("Поле «%s»: от 1 до %d мест в документе.", f.Name, maxPlaces)
+		}
+		if a.Kind == KindFields {
+			f.Places = nil
+		}
+	}
+	// Private means nothing leaves the PC and nothing of a run stays on it.
+	if a.Private {
+		a.Web, a.Read, a.History = false, false, false
+		if a.Schedule != nil {
+			a.Schedule.Enabled = false
+		}
+	}
+	if !a.Web {
+		a.Read = false
+	}
+	if len(a.Vars) > 20 {
+		return errors.New("Не больше 20 переменных.")
+	}
+	for k, v := range a.Vars {
+		if utf8.RuneCountInString(k) > maxName || utf8.RuneCountInString(v) > maxHint {
+			return errors.New("Значение переменной слишком длинное.")
+		}
+	}
+	if a.Schedule != nil {
+		if err := a.Schedule.check(); err != nil {
+			return err
+		}
+		if a.Schedule.Enabled {
+			switch {
+			case a.Kind != KindTask:
+				return errors.New("По расписанию запускаются только задачи: полям и документам нужны данные при запуске.")
+			case !a.History:
+				return errors.New("Для запуска по расписанию включите историю запусков: результат нужно где-то сохранить.")
+			case a.Model == "":
+				return errors.New("Для запуска по расписанию выберите модель: в это время в чате может быть выбрана любая.")
+			}
+			for _, v := range Vars(a.Prompt) {
+				if strings.TrimSpace(a.Vars[v]) == "" {
+					return fmt.Errorf("Для запуска по расписанию задайте значение «%s».", v)
+				}
+			}
 		}
 	}
 	return nil

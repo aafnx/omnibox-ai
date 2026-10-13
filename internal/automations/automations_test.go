@@ -98,14 +98,14 @@ func TestEditsFillTheTemplate(t *testing.T) {
 }
 
 func TestParseValues(t *testing.T) {
-	tpl := &Template{Fields: []Field{{Name: "ФИО"}, {Name: "Серия"}, {Name: "Дата"}}}
-	vals := ParseValues(`{"values":[{"field":"фио","value":" Петров Пётр ","source":"из паспорта на фото"},{"field":"Серия","value":"","missing":true},{"field":"Лишнее","value":"x"}]}`, tpl)
-	if len(vals) != 3 || vals[0].Value != "Петров Пётр" || vals[0].Field != "ФИО" || vals[0].Missing || !vals[1].Missing || !vals[2].Missing {
+	fields := []Field{{Name: "ФИО"}, {Name: "Серия", Check: "passport_series"}, {Name: "Дата"}}
+	vals := ParseValues(`{"values":[{"field":"фио","value":" Петров Пётр ","source":"из паспорта на фото"},{"field":"Серия","value":"92 0"},{"field":"Лишнее","value":"x"}]}`, fields)
+	if len(vals) != 3 || vals[0].Value != "Петров Пётр" || vals[0].Field != "ФИО" || vals[0].Missing || vals[1].Warning == "" || !vals[2].Missing {
 		t.Fatalf("%+v", vals)
 	}
-	msgs := ValuesPrompt(Automation{Name: "Договор", Instructions: "Даты пиши словами", Template: tpl}, "Паспорт", []map[string]any{{"type": "image_url"}}, time.Now())
-	if parts, ok := msgs[1]["content"].([]map[string]any); !ok || len(parts) != 2 || !strings.Contains(msgs[0]["content"].(string), "Даты пиши словами") {
-		t.Fatalf("%v", msgs)
+	task := ValuesTask(Automation{Name: "Паспорт", Kind: KindFields, Prompt: "Распознай паспорт РФ на фото.", Instructions: "Даты — ДД.ММ.ГГГГ", Fields: fields})
+	if !strings.HasPrefix(task, "Распознай паспорт РФ на фото.") || !strings.Contains(task, "- «Серия»") || !strings.Contains(task, "Даты — ДД.ММ.ГГГГ") {
+		t.Fatal(task)
 	}
 }
 

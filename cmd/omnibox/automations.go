@@ -16,6 +16,7 @@ import (
 	"github.com/aafnx/omnibox-ai/internal/attach"
 	"github.com/aafnx/omnibox-ai/internal/automations"
 	"github.com/aafnx/omnibox-ai/internal/chatrun"
+	"github.com/aafnx/omnibox-ai/internal/chats"
 	"github.com/aafnx/omnibox-ai/internal/config"
 	"github.com/aafnx/omnibox-ai/internal/docx"
 )
@@ -27,31 +28,38 @@ type automationFile struct {
 }
 
 type automationRequest struct {
-	Action       string              `json:"action"`
-	ID           string              `json:"id"`
-	Name         string              `json:"name"`
-	Emoji        string              `json:"emoji"`
-	Private      bool                `json:"private"`
-	Model        string              `json:"model"`
-	Instructions string              `json:"instructions"`
-	Template     *automationFile     `json:"template"`
-	Fields       []automations.Field `json:"fields"`
-	Text         string              `json:"text"`
-	Files        []automationFile    `json:"files"`
-	Values       map[string]string   `json:"values"`
+	Action       string                `json:"action"`
+	ID           string                `json:"id"`
+	Kind         string                `json:"kind"`
+	Name         string                `json:"name"`
+	Emoji        string                `json:"emoji"`
+	Private      bool                  `json:"private"`
+	Model        string                `json:"model"`
+	Prompt       string                `json:"prompt"`
+	Instructions string                `json:"instructions"`
+	Web          bool                  `json:"web"`
+	Read         bool                  `json:"read"`
+	History      bool                  `json:"history"`
+	Schedule     *automations.Schedule `json:"schedule"`
+	Vars         map[string]string     `json:"vars"`
+	Template     *automationFile       `json:"template"`
+	Fields       []automations.Field   `json:"fields"`
+	Text         string                `json:"text"`
+	Files        []automationFile      `json:"files"`
+	Values       map[string]string     `json:"values"`
 }
 
-// serveAutomations is the automations' API. Nothing a run receives is written to disk: the data
-// is read from the request, and the document is kept in memory for an hour.
+// serveAutomations is the automations' API. A run's data is read from the request and never
+// written to disk; its result is kept only in an automation whose history is on.
 func (c *chatSide) serveAutomations(run *chatrun.Runner) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
-			list, err := c.Automations.List()
+			out, err := c.automationList()
 			if err != nil {
 				replyError(w, err)
 				return
 			}
-			reply(w, http.StatusOK, map[string]any{"automations": list})
+			reply(w, http.StatusOK, out)
 			return
 		}
 		if r.Method != http.MethodPost {
@@ -78,10 +86,67 @@ func (c *chatSide) serveAutomations(run *chatrun.Runner) http.HandlerFunc {
 	}
 }
 
+// runSummary is what the list shows of an automation's last result.
+type runSummary struct {
+	Created time.Time `json:"created"`
+	Trigger string    `json:"trigger"`
+	Error   string    `json:"error,omitempty"`
+	Unseen  int       `json:"unseen"`
+}
+
+func (c *chatSide) keepRuns() time.Duration {
+	return time.Duration(c.Store.Get().ChatSettings().RetentionHours) * time.Hour
+}
+
+func (c *chatSide) automationList() (map[string]any, error) {
+	list, err := c.Automations.List()
+	if err != nil {
+		return nil, err
+	}
+	last, next := map[string]runSummary{}, map[string]time.Time{}
+	now := time.Now()
+	for _, a := range list {
+		if t, ok := a.Schedule.Next(now); ok {
+			next[a.ID] = t
+		}
+		if !a.History {
+			continue
+		}
+		runs, err := c.Automations.Runs(a.ID, c.keepRuns(), now)
+		if err != nil || len(runs) == 0 {
+			continue
+		}
+		s := runSummary{Created: runs[0].Created, Trigger: runs[0].Trigger, Error: runs[0].Error}
+		for _, r := range runs {
+			if !r.Seen {
+				s.Unseen++
+			}
+		}
+		last[a.ID] = s
+	}
+	return map[string]any{"automations": list, "last": last, "next": next}, nil
+}
+
+// fromRequest is an automation as the panel edited it.
+func fromRequest(a automations.Automation, in automationRequest) automations.Automation {
+	a.Name, a.Emoji, a.Private, a.Model, a.Instructions = in.Name, in.Emoji, in.Private, in.Model, in.Instructions
+	a.Prompt, a.Web, a.Read, a.History, a.Schedule, a.Vars = in.Prompt, in.Web, in.Read, in.History, in.Schedule, in.Vars
+	if a.Kind == automations.KindFields {
+		a.Fields = in.Fields
+	}
+	return a
+}
+
 func (c *chatSide) automationAction(ctx context.Context, run *chatrun.Runner, in automationRequest) (any, error) {
 	now := time.Now()
 	switch in.Action {
 	case "create":
+		if err := checkModel(in.Model, in.Private); err != nil {
+			return nil, err
+		}
+		if in.Kind != automations.KindDocument {
+			return c.Automations.Save(fromRequest(automations.Automation{Kind: in.Kind}, in), nil, now)
+		}
 		if in.Template == nil {
 			return nil, errors.New("Загрузите шаблон Word (.docx).")
 		}
@@ -96,28 +161,28 @@ func (c *chatSide) automationAction(ctx context.Context, run *chatrun.Runner, in
 		if err != nil {
 			return nil, err
 		}
-		if err := checkModel(in.Model, in.Private); err != nil {
-			return nil, err
-		}
 		// The author's {{marks}} are fields at once; the model finds the rest on "analyze".
 		fields, _ := automations.ParseFields("", d)
 		tpl := &automations.Template{Name: clipName(in.Template.Name), Size: int64(len(data)), Fields: fields}
 		if err := automations.Verify(tpl, d); err != nil {
 			return nil, err
 		}
-		a := automations.Automation{Name: in.Name, Emoji: in.Emoji, Kind: automations.KindDocument, Private: in.Private,
-			Model: in.Model, Instructions: in.Instructions, Template: tpl}
+		a := fromRequest(automations.Automation{Kind: automations.KindDocument, Template: tpl}, in)
 		return c.Automations.Save(a, data, now)
 	case "save":
-		a, d, err := c.automation(in.ID)
+		a, err := c.Automations.Get(in.ID)
 		if err != nil {
 			return nil, err
 		}
 		if err := checkModel(in.Model, in.Private); err != nil {
 			return nil, err
 		}
-		a.Name, a.Emoji, a.Private, a.Model, a.Instructions = in.Name, in.Emoji, in.Private, in.Model, in.Instructions
-		if in.Fields != nil {
+		a = fromRequest(a, in)
+		if a.Kind == automations.KindDocument && in.Fields != nil {
+			_, d, err := c.automation(in.ID)
+			if err != nil {
+				return nil, err
+			}
 			tpl := *a.Template
 			tpl.Fields = in.Fields
 			if err := automations.Verify(&tpl, d); err != nil {
@@ -148,28 +213,11 @@ func (c *chatSide) automationAction(ctx context.Context, run *chatrun.Runner, in
 		}
 		return map[string]any{"fields": tpl.Fields, "dropped": dropped, "cost_usd": cost}, nil
 	case "run":
-		a, _, err := c.automation(in.ID)
+		a, err := c.Automations.Get(in.ID)
 		if err != nil {
 			return nil, err
 		}
-		if len(a.Template.Fields) == 0 {
-			return nil, errors.New("В шаблоне нет полей: найдите их в настройках автоматизации.")
-		}
-		key := modelFor(in.Model, a)
-		model, _, err := run.Model(ctx, key)
-		if err != nil {
-			return nil, err
-		}
-		data, images, err := automationInputs(in, model.Caps.Vision, model.Name)
-		if err != nil {
-			return nil, err
-		}
-		text, cost, err := run.Ask(ctx, chatrun.Ask{Model: key, Private: a.Private, Session: "panel-auto-" + a.ID,
-			Messages: automations.ValuesPrompt(a, data, images, now)})
-		if err != nil {
-			return nil, err
-		}
-		return map[string]any{"values": automations.ParseValues(text, a.Template), "cost_usd": cost, "model": key}, nil
+		return c.execute(ctx, run, a, modelFor(in.Model, a), in, "manual")
 	case "build":
 		a, d, err := c.automation(in.ID)
 		if err != nil {
@@ -181,8 +229,97 @@ func (c *chatSide) automationAction(ctx context.Context, run *chatrun.Runner, in
 		}
 		name := automations.FileName(a.Name, now)
 		return map[string]string{"result": c.Results.Put(name, out), "name": name}, nil
+	case "runs":
+		if _, err := c.Automations.Get(in.ID); err != nil {
+			return nil, err
+		}
+		runs, err := c.Automations.Runs(in.ID, c.keepRuns(), now)
+		if err != nil {
+			return nil, err
+		}
+		_ = c.Automations.MarkSeen(in.ID)
+		return map[string]any{"runs": runs}, nil
+	case "runs-delete":
+		if err := c.Automations.DeleteRuns(in.ID); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"deleted": true}, nil
 	}
 	return nil, errors.New("Неизвестное действие.")
+}
+
+// execute runs an automation with the data given and keeps its result when its history is on.
+// A scheduled run comes here too, with no data and the saved values of the prompt's names.
+func (c *chatSide) execute(ctx context.Context, run *chatrun.Runner, a automations.Automation, key string, in automationRequest, trigger string) (any, error) {
+	if a.Kind == automations.KindDocument && len(a.Template.Fields) == 0 {
+		return nil, errors.New("В шаблоне нет полей: найдите их в настройках автоматизации.")
+	}
+	vars := in.Vars
+	if trigger == "schedule" {
+		vars = a.Vars
+	}
+	prompt, err := automations.FillVars(a.Prompt, vars)
+	if err != nil {
+		return nil, err
+	}
+	if key == "" {
+		return nil, errors.New("Выберите модель для автоматизации.")
+	}
+	model, _, err := run.Model(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	data, files, images, err := automationInputs(in, model.Caps.Vision, model.Name, a.Kind != automations.KindTask)
+	if err != nil {
+		return nil, err
+	}
+	task := chatrun.Task{Model: key, Private: a.Private, Session: "panel-auto-" + a.ID, Text: data, Files: files, Media: images, Web: a.Web, Read: a.Read}
+	if a.Kind == automations.KindTask {
+		task.Prompt = prompt
+		if strings.TrimSpace(a.Instructions) != "" {
+			task.Prompt += "\n\nУказания владельца: " + a.Instructions
+		}
+	} else {
+		b := a
+		b.Prompt = prompt
+		task.Prompt = automations.ValuesTask(b)
+	}
+	msg, err := run.Task(ctx, task)
+	if err != nil {
+		return nil, err
+	}
+	res := automations.Run{Automation: a.ID, Created: time.Now().UTC(), Trigger: trigger, Model: key, Input: in.Text, Error: msg.Error, Seen: trigger == "manual"}
+	for _, f := range in.Files {
+		res.Files = append(res.Files, f.Name)
+	}
+	if msg.Meta != nil {
+		res.Sources, res.CostUSD = msg.Meta.Sources, msg.Meta.CostUSD
+	}
+	if a.Kind == automations.KindTask {
+		res.Text = msg.Text
+	} else if msg.Error == "" {
+		res.Values = automations.ParseValues(msg.Text, a.FieldList())
+	}
+	if a.History && !a.Private {
+		if saved, err := c.Automations.SaveRun(res); err != nil {
+			c.logf("automation: result not kept: %v", err)
+		} else {
+			res.ID = saved.ID
+		}
+	}
+	return map[string]any{"kind": a.Kind, "run": res}, nil
+}
+
+// scheduled is a scheduled run: its result goes to the history, its failure too.
+func (c *chatSide) scheduled(run *chatrun.Runner) func(ctx context.Context, a automations.Automation) {
+	return func(ctx context.Context, a automations.Automation) {
+		if _, err := c.execute(ctx, run, a, a.Model, automationRequest{}, "schedule"); err != nil {
+			c.logf("automation %s: scheduled run: %v", a.ID, err)
+			if a.History && !a.Private {
+				_, _ = c.Automations.SaveRun(automations.Run{Automation: a.ID, Created: time.Now().UTC(), Trigger: "schedule", Model: a.Model, Error: err.Error()})
+			}
+		}
+	}
 }
 
 // automation is a saved automation with its opened template.
@@ -225,47 +362,45 @@ func checkModel(key string, private bool) error {
 
 // automationInputs turns the owner's data into the model's: the message and the text of the
 // documents, and the pictures for a model that sees.
-func automationInputs(in automationRequest, vision bool, model string) (string, []map[string]any, error) {
+func automationInputs(in automationRequest, vision bool, model string, need bool) (string, []chats.Attachment, []map[string]any, error) {
 	if utf8.RuneCountInString(in.Text) > chatrun.MaxText {
-		return "", nil, fmt.Errorf("Текст длиннее %d символов: приложите его файлом.", chatrun.MaxText)
+		return "", nil, nil, fmt.Errorf("Текст длиннее %d символов: приложите его файлом.", chatrun.MaxText)
 	}
 	if len(in.Files) > chatrun.MaxFiles {
-		return "", nil, fmt.Errorf("Не больше %d файлов за раз.", chatrun.MaxFiles)
+		return "", nil, nil, fmt.Errorf("Не больше %d файлов за раз.", chatrun.MaxFiles)
 	}
-	var b strings.Builder
-	if t := strings.TrimSpace(in.Text); t != "" {
-		b.WriteString("Сообщение пользователя:\n" + t + "\n\n")
-	}
+	var files []chats.Attachment
 	var images []map[string]any
 	total := 0
 	for _, f := range in.Files {
 		data, err := decodeFile(f, attach.MaxFile)
 		if err != nil {
-			return "", nil, err
+			return "", nil, nil, err
 		}
 		if total += len(data); total > chatrun.MaxFilesBytes {
-			return "", nil, errors.New("Файлы за раз: не больше 75 МБ суммарно.")
+			return "", nil, nil, errors.New("Файлы за раз: не больше 75 МБ суммарно.")
 		}
-		switch attach.KindOf(f.Name) {
+		switch kind := attach.KindOf(f.Name); kind {
 		case attach.Image:
 			if !vision {
-				return "", nil, fmt.Errorf("%s не видит изображения — «%s» не прочитать. Выберите модель со зрением.", model, f.Name)
+				return "", nil, nil, fmt.Errorf("%s не видит изображения — «%s» не прочитать. Выберите модель со зрением.", model, f.Name)
 			}
 			images = append(images, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:" + attach.MIME(f.Name) + ";base64," + f.Data}})
 		case attach.Audio, attach.Video, "":
-			return "", nil, fmt.Errorf("«%s»: в автоматизацию можно дать текст, фото, Word, Excel и CSV.", f.Name)
+			return "", nil, nil, fmt.Errorf("«%s»: в автоматизацию можно дать текст, фото, Word, Excel и CSV.", f.Name)
 		default:
 			text, err := attach.ExtractText(f.Name, data)
 			if err != nil {
-				return "", nil, err
+				return "", nil, nil, err
 			}
-			b.WriteString("Файл «" + f.Name + "»:\n" + text + "\n\n")
+			files = append(files, chats.Attachment{Name: clipName(f.Name), Kind: kind, Text: text})
 		}
 	}
-	if b.Len() == 0 && len(images) == 0 {
-		return "", nil, errors.New("Дайте данные для заполнения: текст, фото или файл.")
+	text := strings.TrimSpace(in.Text)
+	if need && text == "" && len(files) == 0 && len(images) == 0 {
+		return "", nil, nil, errors.New("Дайте данные для заполнения: текст, фото или файл.")
 	}
-	return b.String(), images, nil
+	return text, files, images, nil
 }
 
 func decodeFile(f automationFile, limit int) ([]byte, error) {

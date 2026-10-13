@@ -324,6 +324,8 @@ func serveContext(ctx context.Context, args []string, stdout io.Writer, services
 		return err
 	}
 	side.Logf = handler.Logf
+	// One timer to the nearest scheduled automation, if any; it ends with the service.
+	side.Scheduler.Start(ctx)
 	// The ai command reaches the service through a local socket only administrators can open.
 	localLn, err := local.Listen(*data)
 	if err != nil {

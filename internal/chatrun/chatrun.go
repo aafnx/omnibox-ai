@@ -220,6 +220,8 @@ type turn struct {
 	read      bool // pages of the results are read in full
 	effort    string
 	private   bool // an automation's request: Automation instead of Local
+	// result takes the answer of an automation's task instead of the chat.
+	result *chats.Message
 }
 
 func (r *Runner) prepare(ctx context.Context, in Request) (*turn, error) {
