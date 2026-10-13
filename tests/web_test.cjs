@@ -487,17 +487,70 @@ sources.forEach((s,i)=>vm.runInContext(s,context,{filename:files[i]}));
   const aupl=run(`auPlace({para:1,context:'серии ____ №',find:'____',text:'паспорт <серии> серии ____ № ______',where:''})`);
   assert.ok(aupl.includes('паспорт &lt;серии&gt; серии <mark>____</mark> № ______')&&aupl.includes('абзац 2'),aupl);
   // The editor keeps the owner's edits of the fields; removing a field removes it.
-  run(`openAuto({id:'a1',name:'Договор',private:true,model:'',instructions:'',template:{name:'Договор.docx',fields:[{name:'ФИО',hint:'',places:[{para:1,context:'x',find:'x',text:'x'}]},{name:'Лишнее',places:[]}]}})`);
+  run(`openAuto({id:'a1',kind:'document',name:'Договор',private:true,model:'',instructions:'',template:{name:'Договор.docx',fields:[{name:'ФИО',hint:'',places:[{para:1,context:'x',find:'x',text:'x'}]},{name:'Лишнее',places:[]}]}})`);
   assert.equal(nodes['au-drawer'].hidden,false);assert.ok(nodes['au-fields'].innerHTML.includes('data-au-fname="1"'));
   nodes['au-fields'].listeners.input[0]({target:{dataset:{auFname:'0'},value:'ФИО покупателя'}});
   nodes['au-fields'].listeners.click[0]({target:{closest:()=>({dataset:{auFdel:'1'}})}});
   assert.deepEqual(J("A.cur.template.fields.map(f=>f.name)"),['ФИО покупателя']);
+  assert.equal(nodes['au-doc-wrap'].hidden,false);assert.equal(nodes['au-sched-wrap'].hidden,true);
+  assert.ok(nodes['au-steps'].innerHTML.includes('<span class="pill">Документ</span>')&&nodes['au-steps'].innerHTML.includes('data-au-sdel="0" aria-label="Убрать шаг" title="Убрать шаг" disabled'),nodes['au-steps'].innerHTML);
+  // A step before the document goes before it; a document cannot move.
+  const pick=(sel,data)=>({target:{closest:s=>s===sel?{dataset:data}:null}});
+  nodes['au-drawer'].listeners.click.forEach(fn=>fn(pick('[data-au-add]',{auAdd:'task'})));
+  assert.deepEqual(J('A.cur.steps.map(s=>s.kind)'),['task','document']);assert.equal(J('auForm().kind'),'document');
+  nodes['au-steps'].listeners.click[0](pick('[data-au-smove]',{auSmove:'0:1'}));assert.deepEqual(J('A.cur.steps.map(s=>s.kind)'),['task','document']);
+  // Steps: each with its words, model and search; private switches off the web, history and schedule.
+  run(`openAuto({kind:'task',name:'Новости',prompt:'Новости о {{тема}} за {{ период }}',web:true,read:true,history:true,private:false,schedule:{enabled:true,every:'week',at:'09:15',days:[1,3]},vars:{'тема':'ИИ'}})`);
+  assert.equal(nodes['au-doc-wrap'].hidden,true);assert.equal(nodes['au-sched-wrap'].hidden,false);assert.equal(nodes['au-sched-body'].hidden,false);
+  assert.ok(nodes['au-steps'].innerHTML.includes('data-k="web" checked>')&&nodes['au-steps'].innerHTML.includes('data-k="read" checked>'),nodes['au-steps'].innerHTML);
+  assert.ok(nodes['au-sched-days'].innerHTML.includes('aria-pressed="true" data-au-day="3"')&&nodes['au-sched-days'].innerHTML.includes('aria-pressed="false" data-au-day="2"'));
+  nodes['au-drawer'].listeners.click.forEach(fn=>fn(pick('[data-au-add]',{auAdd:'task'})));
+  nodes['au-steps'].listeners.input[0]({target:{type:'textarea',tagName:'TEXTAREA',dataset:{st:'1',k:'prompt'},value:'Переведи на {{язык}}'}});
+  nodes['au-steps'].listeners.input[0]({target:{type:'text',tagName:'INPUT',dataset:{st:'1',k:'name'},value:'Перевод'}});
+  nodes['au-steps'].listeners.change[0]({target:{tagName:'SELECT',dataset:{st:'1',k:'model'},value:'cloud:o/m'}});
+  assert.ok(nodes['au-vars'].innerHTML.includes('data-au-var="тема"')&&nodes['au-vars'].innerHTML.includes('value="ИИ"')&&nodes['au-vars'].innerHTML.includes('data-au-var="период"')&&nodes['au-vars'].innerHTML.includes('data-au-var="язык"'),nodes['au-vars'].innerHTML);
+  nodes['au-vars'].listeners.input[0]({target:{dataset:{auVar:'период'},value:'неделю'}});
+  nodes['au-sched-days'].listeners.click[0]({target:{closest:()=>({dataset:{auDay:'5'}})}});
+  const auf=J('auForm()');assert.deepEqual(auf.schedule,{enabled:true,every:'week',at:'09:15',days:[1,3,5],hours:4});assert.deepEqual(auf.vars,{'тема':'ИИ','период':'неделю'});
+  assert.deepEqual(auf.steps,[{kind:'task',name:'',prompt:'Новости о {{тема}} за {{ период }}',model:'',web:true,read:true},{kind:'task',name:'Перевод',prompt:'Переведи на {{язык}}',model:'cloud:o/m',web:false,read:false}]);
+  assert.equal(auf.history,true);assert.equal(nodes['au-kind'].textContent,'Автоматизация · 2 шага');
+  // Moving the second step up, then a step that starts with fields cannot run on a schedule.
+  nodes['au-steps'].listeners.click[0](pick('[data-au-smove]',{auSmove:'1:-1'}));assert.equal(J('A.cur.steps[0].name'),'Перевод');
+  nodes['au-steps'].listeners.change[0]({target:{tagName:'SELECT',dataset:{st:'0',k:'kind'},value:'fields'}});
+  assert.equal(nodes['au-sched-wrap'].hidden,true);assert.equal(run('auForm().schedule'),undefined);assert.deepEqual(J('A.cur.steps[0].fields'),[{name:'',hint:'',check:''}]);
+  nodes['au-steps'].listeners.click[0](pick('[data-au-sdel]',{auSdel:'0'}));assert.equal(J('A.cur.steps.length'),1);assert.equal(nodes['au-sched-wrap'].hidden,false);
+  nodes['au-private'].checked=true;nodes['au-private'].listeners.change[0]();
+  assert.equal(J('A.cur.steps[0].web'),false);assert.ok(nodes['au-steps'].innerHTML.includes('data-k="web" disabled>'));assert.equal(nodes['au-history'].checked,false);assert.equal(nodes['au-sched-on'].checked,false);
+  assert.equal(nodes['au-sched-body'].hidden,true);assert.equal(J('auForm()').schedule.enabled,false);
+  assert.equal(run("auSchedText({enabled:true,every:'hours',hours:3,at:'07:00'})"),'каждые 3 ч от 07:00');
+  // The fields of a step: name, hint and a check for each field; empty names are not sent.
+  run(`openAuto({kind:'fields',name:'Паспорт',private:true,fields:[{name:'Серия',check:'passport_series'}]})`);
+  assert.ok(nodes['au-steps'].innerHTML.includes('<option value="passport_series" selected>Серия паспорта</option>'),nodes['au-steps'].innerHTML);
+  nodes['au-steps'].listeners.click[0](pick('[data-au-fadd]',{auFadd:'0'}));nodes['au-steps'].listeners.input[0]({target:{type:'text',tagName:'INPUT',dataset:{auFf:'0:1',k:'name'},value:'Номер'}});
+  nodes['au-steps'].listeners.change[0]({target:{tagName:'SELECT',dataset:{auFf:'0:1',k:'check'},value:'passport_number'}});nodes['au-steps'].listeners.click[0](pick('[data-au-fadd]',{auFadd:'0'}));
+  assert.deepEqual(J('auForm().steps[0].fields'),[{name:'Серия',check:'passport_series'},{name:'Номер',hint:'',check:'passport_number'}]);
+  // A run of several steps shows each step folded, the last as the result.
+  run(`A.run={a:{id:'n',name:'Новости',kind:'task',steps:[{kind:'task'},{kind:'task'}]},files:[]};showResult({text:'Итог',steps:[{name:'Поиск',kind:'task',text:'**найдено**'},{name:'Сводка',kind:'task',text:'Итог'}]})`);
+  assert.equal(nodes['ar-steps'].hidden,false);assert.ok(nodes['ar-steps'].innerHTML.includes('1. Поиск')&&nodes['ar-steps'].innerHTML.includes('<b>найдено</b>')&&!nodes['ar-steps'].innerHTML.includes('Сводка'),nodes['ar-steps'].innerHTML);
+  assert.equal(nodes['ar-md'].innerHTML.includes('Итог'),true);
+  // A card shows the schedule, the next run and new results.
+  run(`A.list=[{id:'t1',name:'Новости',kind:'task',web:true,history:true,schedule:{enabled:true,every:'day',at:'08:00'}}];A.next={t1:'2026-10-14T08:00:00+03:00'};A.last={t1:{created:'2026-10-13T08:00:00+03:00',trigger:'schedule',unseen:2}};renderAuto()`);
+  const auc=nodes['au-list'].innerHTML;assert.ok(auc.includes('каждый день в 08:00')&&auc.includes('следующий:')&&auc.includes('новых: 2')&&auc.includes('data-au-hist="t1"')&&auc.includes('по расписанию'),auc);
+  // History: values or the answer of each run; an error is shown as is.
+  run(`renderHistory([{id:'r2',created:'2026-10-13T08:00:00Z',trigger:'schedule',text:'**Сводка**',seen:false},{id:'r1',created:'2026-10-12T08:00:00Z',trigger:'manual',error:'Модель не ответила.',seen:true}])`);
+  const auh=nodes['ar-history'].innerHTML;assert.ok(auh.includes('<b>Сводка</b>')&&auh.includes('Модель не ответила.')&&auh.includes('новое')&&auh.includes('ar-hdel'),auh);
   // A run's values come in other formats in the browser; closing the run forgets them.
   run(`A.run={a:{id:'a1',name:'Договор'},files:[],values:[{field:'ФИО',value:'Иванов; "Иван"',source:'из текста',missing:false},{field:'Дата',value:'',missing:true}]};renderValues()`);
   assert.ok(nodes['ar-values'].innerHTML.includes('Нет в данных')&&nodes['ar-result'].hidden===false);
   const savedBlobs=[];context.URL={createObjectURL:b=>{savedBlobs.push(b);return 'blob:x';},revokeObjectURL:()=>{}};context.Blob=function(parts){this.text=parts.join('');};
   assert.equal(run("auOut('csv')"),'﻿ФИО;Дата\r\n"Иванов; ""Иван""";\r\n');
   assert.equal(run("auOut('json')"),'{\n  "ФИО": "Иванов; \\"Иван\\"",\n  "Дата": ""\n}');
+  // Fields go into a document automation by their names.
+  run(`A.list=[{id:'p1',name:'Паспорт',kind:'fields',fields:[]},{id:'d1',name:'Договор',kind:'document',template:{fields:[{name:'фио'},{name:'Адрес'}]}}];A.run.a=A.list[0];renderValues()`);
+  assert.equal(nodes['ar-todoc'].hidden,false);assert.equal(nodes['ar-build'].hidden,true);assert.ok(nodes['ar-todoc'].innerHTML.includes('В документ: Договор'));
+  nodes['ar-todoc'].listeners.change[0]({target:{value:'d1'}});
+  assert.equal(J('A.run.a.id'),'d1');assert.deepEqual(J('A.run.values.map(v=>[v.field,v.value,v.missing])'),[['фио','Иванов; "Иван"',false],['Адрес','',true]]);
+  assert.equal(nodes['ar-build'].hidden,false);
   run("hideAll()");assert.equal(run('A.run'),null);assert.equal(nodes['ar-values'].innerHTML,'');
   winListeners.DOMContentLoaded.forEach(fn=>fn());await new Promise(r=>setTimeout(r,10));
   assert.ok(requests.includes('/api/session'));assert.equal(nodes.login.hidden,false);assert.equal(nodes.app.hidden,true);

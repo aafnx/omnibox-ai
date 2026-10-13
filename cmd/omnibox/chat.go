@@ -52,7 +52,9 @@ type chatSide struct {
 	// Automations are the owner's saved scenarios; Results the documents they built, in memory.
 	Automations *automations.Store
 	Results     *automations.Results
-	Logf        func(format string, args ...any)
+	// Scheduler runs the scheduled tasks; it is made with the routes and started with the service.
+	Scheduler *automations.Scheduler
+	Logf      func(format string, args ...any)
 }
 
 func newChatSide(data string, store *config.Store, services platform.Services, controller *control.Controller, estimates estimator) *chatSide {
@@ -276,6 +278,8 @@ func (c *chatSide) handlers(local, automation func(ctx context.Context, session 
 		KeepHours: func() int { return c.Store.Get().ChatSettings().RetentionHours }}
 	run := c.runner(local)
 	run.Automation = automation
+	c.Scheduler = &automations.Scheduler{Store: c.Automations, Run: c.scheduled(run), Logf: c.logf}
+	c.Automations.OnChange = c.Scheduler.Reset
 	return map[string]http.Handler{
 		"/api/chats":            history,
 		"/api/assistants":       history,

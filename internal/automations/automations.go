@@ -1,8 +1,8 @@
-// Package automations keeps the owner's automations: a Word template with the places to fill,
-// the model that fills them and what the automation may use. A run reads the owner's data,
-// proposes a value for each field, and after the owner's approval builds the document. Nothing
-// of a run is written to disk: the data comes with the request and the document stays in memory
-// until it is downloaded or an hour passes.
+// Package automations keeps the owner's automations: steps run one after another — a task in the
+// owner's words, fields taken from the data, a Word template filled with them — each with its
+// model and what it may use. A run's data comes with the request and is not written to disk; its
+// result is kept only in an automation whose history is on, and a built document stays in memory
+// until it is downloaded again or an hour passes.
 package automations
 
 import (
@@ -33,28 +33,76 @@ const (
 	maxName        = 80
 	maxHint        = 300
 	maxNotes       = 4000
+	maxSteps       = 20
 )
 
-// Kinds of automation.
+// Kinds of automation: a task answered in text, fields taken from the data, or a Word template
+// filled with them.
 const (
+	KindTask     = "task"
+	KindFields   = "fields"
 	KindDocument = "document"
 )
+
+// maxPrompt bounds a task's own words.
+const maxPrompt = 20000
 
 // Automation is one saved scenario.
 type Automation struct {
 	ID    string `json:"id"`
 	Name  string `json:"name"`
 	Emoji string `json:"emoji"`
-	Kind  string `json:"kind"`
-	// Private keeps everything on the PC: a local model only. No automation ever searches the web.
+	// Kind is the last step's kind: what the run gives back. Set from the steps.
+	Kind string `json:"kind"`
+	// Private keeps everything on the PC: a local model only, no search, no history, no schedule.
 	Private bool `json:"private"`
-	// Model is the model key it runs with; "" means the model chosen in the chat.
+	// Model is the model key the steps run with unless a step has its own; "" means the model
+	// chosen in the chat.
 	Model string `json:"model"`
-	// Instructions are the owner's notes for the model: formats, names, what to leave blank.
-	Instructions string    `json:"instructions"`
-	Template     *Template `json:"template,omitempty"`
-	Created      time.Time `json:"created"`
-	Updated      time.Time `json:"updated"`
+	// Steps run in order; each sees the run's data and the results of the steps before it.
+	Steps []Step `json:"steps"`
+	// Prompt and Fields are a one-step automation as 0.29 sent and kept it before steps: they
+	// become its step when it is read or saved.
+	Prompt string  `json:"prompt,omitempty"`
+	Fields []Field `json:"fields,omitempty"`
+	// Instructions are the owner's notes for the model, for every step: formats, names, what to
+	// leave blank.
+	Instructions string `json:"instructions"`
+	// Web and Read tell whether any step searches the web or opens the pages found. Set from the
+	// steps.
+	Web      bool      `json:"web,omitempty"`
+	Read     bool      `json:"read,omitempty"`
+	Template *Template `json:"template,omitempty"`
+	// History keeps the runs' results on the PC, for as long as chats are kept. Never when private.
+	History bool `json:"history,omitempty"`
+	// Schedule runs a task by itself; Vars are its values of the prompt's {{names}}.
+	Schedule *Schedule         `json:"schedule,omitempty"`
+	Vars     map[string]string `json:"vars,omitempty"`
+	Created  time.Time         `json:"created"`
+	Updated  time.Time         `json:"updated"`
+}
+
+// Step is one stage of an automation.
+type Step struct {
+	Kind string `json:"kind"`
+	Name string `json:"name,omitempty"`
+	// Prompt is the step's task in the owner's words; {{name}} in it is asked at each run (Vars).
+	Prompt string `json:"prompt,omitempty"`
+	// Model is the step's own model; "" means the automation's.
+	Model string `json:"model,omitempty"`
+	// Web lets the step search the web; Read lets it open the pages found. Never when private.
+	Web  bool `json:"web,omitempty"`
+	Read bool `json:"read,omitempty"`
+	// Fields are what a fields step takes from the data; a document step's are its template's.
+	Fields []Field `json:"fields,omitempty"`
+}
+
+// Title is how the step is named to the owner and to the next steps.
+func (s Step) Title(i int) string {
+	if s.Name != "" {
+		return s.Name
+	}
+	return fmt.Sprintf("Шаг %d", i+1)
 }
 
 // Template is the Word file of a document automation and its fields.
@@ -68,7 +116,9 @@ type Template struct {
 type Field struct {
 	Name   string  `json:"name"`
 	Hint   string  `json:"hint"`
-	Places []Place `json:"places"`
+	Places []Place `json:"places,omitempty"`
+	// Check is how a value is verified: one of Checks.
+	Check string `json:"check,omitempty"`
 }
 
 // Place is where a field's value goes: Find inside Context in paragraph Para. All fills every
@@ -86,7 +136,15 @@ type Place struct {
 // Store keeps the automations' list and their templates, readable only by the service.
 type Store struct {
 	Dir string
-	mu  sync.Mutex
+	// OnChange is told after an automation is saved or deleted: the schedule is set again.
+	OnChange func()
+	mu       sync.Mutex
+}
+
+func (s *Store) changed() {
+	if s.OnChange != nil {
+		s.OnChange()
+	}
 }
 
 type file struct {
@@ -110,6 +168,9 @@ func (s *Store) load() (file, error) {
 	}
 	if json.Unmarshal(data, &f) != nil {
 		return f, errors.New("Список автоматизаций повреждён.")
+	}
+	for i := range f.Automations {
+		f.Automations[i].oneStep()
 	}
 	return f, nil
 }
@@ -171,6 +232,7 @@ func (s *Store) Save(a Automation, template []byte, now time.Time) (Automation, 
 	if err := check(&a); err != nil {
 		return Automation{}, err
 	}
+	defer s.changed()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := s.load()
@@ -210,6 +272,7 @@ func (s *Store) Save(a Automation, template []byte, now time.Time) (Automation, 
 
 // Delete removes an automation and its template at once, without a copy.
 func (s *Store) Delete(id string) error {
+	defer s.changed()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	f, err := s.load()
@@ -227,10 +290,52 @@ func (s *Store) Delete(id string) error {
 	if err := os.Remove(s.templatePath(id)); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("Шаблон не удалён: %v", err)
 	}
+	if err := os.RemoveAll(s.runsDir(id)); err != nil {
+		return fmt.Errorf("История не удалена: %v", err)
+	}
 	return nil
 }
 
-// check validates what the panel sent; the fields are checked against the template elsewhere.
+// StepFields are the fields a step fills: a fields step's own, a document step's template's.
+func (a Automation) StepFields(i int) []Field {
+	if a.Steps[i].Kind == KindDocument && a.Template != nil {
+		return a.Template.Fields
+	}
+	return a.Steps[i].Fields
+}
+
+// FieldList are the fields of the last step: what the run gives back.
+func (a Automation) FieldList() []Field {
+	if len(a.Steps) == 0 {
+		return nil
+	}
+	return a.StepFields(len(a.Steps) - 1)
+}
+
+// VarNames are the {{names}} of all the steps, each once, in order.
+func (a Automation) VarNames() []string {
+	var out []string
+	for _, s := range a.Steps {
+		for _, v := range Vars(s.Prompt) {
+			if !contains(out, v) {
+				out = append(out, v)
+			}
+		}
+	}
+	return out
+}
+
+// oneStep turns an automation kept before steps into its one step.
+func (a *Automation) oneStep() {
+	if len(a.Steps) > 0 || a.Kind == "" {
+		return
+	}
+	a.Steps = []Step{{Kind: a.Kind, Prompt: a.Prompt, Web: a.Web, Read: a.Read, Fields: a.Fields}}
+	a.Prompt, a.Fields = "", nil
+}
+
+// check validates what the panel sent and applies the rules of privacy; the places of a
+// template's fields are checked against it elsewhere.
 func check(a *Automation) error {
 	a.Name = strings.TrimSpace(a.Name)
 	if a.Name == "" || utf8.RuneCountInString(a.Name) > maxName {
@@ -239,21 +344,115 @@ func check(a *Automation) error {
 	if utf8.RuneCountInString(a.Emoji) > 8 {
 		return errors.New("Значок — один эмодзи.")
 	}
-	if a.Kind != KindDocument {
-		return errors.New("Неизвестный вид автоматизации.")
-	}
 	if utf8.RuneCountInString(a.Instructions) > maxNotes {
 		return fmt.Errorf("Указания для модели: не больше %d символов.", maxNotes)
 	}
-	if a.Template == nil {
-		return errors.New("Загрузите шаблон Word.")
+	a.oneStep()
+	if len(a.Steps) == 0 || len(a.Steps) > maxSteps {
+		return fmt.Errorf("Шагов: от 1 до %d.", maxSteps)
 	}
-	if len(a.Template.Fields) > maxFields {
+	a.Web, a.Read = false, false
+	document := false
+	for i := range a.Steps {
+		st := &a.Steps[i]
+		st.Name = strings.TrimSpace(st.Name)
+		if utf8.RuneCountInString(st.Name) > maxName {
+			return fmt.Errorf("Название шага: не больше %d символов.", maxName)
+		}
+		st.Prompt = strings.TrimSpace(st.Prompt)
+		if utf8.RuneCountInString(st.Prompt) > maxPrompt {
+			return fmt.Errorf("%s: задача не больше %d символов.", st.Title(i), maxPrompt)
+		}
+		var fields []Field
+		switch st.Kind {
+		case KindTask:
+			if st.Prompt == "" {
+				return fmt.Errorf("%s: опишите задачу — что модель должна сделать.", st.Title(i))
+			}
+			st.Fields = nil
+		case KindFields:
+			if len(st.Fields) == 0 {
+				return fmt.Errorf("%s: добавьте хотя бы одно поле.", st.Title(i))
+			}
+			fields = st.Fields
+		case KindDocument:
+			// The owner checks the values before the document is built: nothing comes after it.
+			if i != len(a.Steps)-1 {
+				return errors.New("Документ по шаблону — последний шаг: его значения вы проверяете перед сборкой.")
+			}
+			if a.Template == nil {
+				return errors.New("Загрузите шаблон Word.")
+			}
+			st.Fields, document = nil, true
+			fields = a.Template.Fields
+		default:
+			return errors.New("Неизвестный вид шага.")
+		}
+		if err := checkFields(fields, st.Kind); err != nil {
+			return err
+		}
+		// Private means nothing leaves the PC.
+		if a.Private {
+			st.Web = false
+		}
+		if !st.Web {
+			st.Read = false
+		}
+		a.Web, a.Read = a.Web || st.Web, a.Read || st.Read
+	}
+	if !document {
+		a.Template = nil
+	}
+	a.Kind = a.Steps[len(a.Steps)-1].Kind
+	// Private means nothing of a run stays on the PC either.
+	if a.Private {
+		a.History = false
+		if a.Schedule != nil {
+			a.Schedule.Enabled = false
+		}
+	}
+	if len(a.Vars) > 20 {
+		return errors.New("Не больше 20 переменных.")
+	}
+	for k, v := range a.Vars {
+		if utf8.RuneCountInString(k) > maxName || utf8.RuneCountInString(v) > maxHint {
+			return errors.New("Значение переменной слишком длинное.")
+		}
+	}
+	if a.Schedule != nil {
+		if err := a.Schedule.check(); err != nil {
+			return err
+		}
+		if a.Schedule.Enabled {
+			switch {
+			case a.Steps[0].Kind != KindTask || document:
+				return errors.New("По расписанию запускаются автоматизации, которые начинаются с задачи и не собирают документ: полям нужны данные, документу — ваша проверка.")
+			case !a.History:
+				return errors.New("Для запуска по расписанию включите историю запусков: результат нужно где-то сохранить.")
+			}
+			for i, st := range a.Steps {
+				if st.Model == "" && a.Model == "" {
+					return fmt.Errorf("Для запуска по расписанию выберите модель (%s): в это время в чате может быть выбрана любая.", st.Title(i))
+				}
+			}
+			for _, v := range a.VarNames() {
+				if strings.TrimSpace(a.Vars[v]) == "" {
+					return fmt.Errorf("Для запуска по расписанию задайте значение «%s».", v)
+				}
+			}
+		}
+	}
+	return nil
+}
+
+// checkFields validates a step's fields: names, hints, checks, and a template's places.
+func checkFields(fields []Field, kind string) error {
+	if len(fields) > maxFields {
 		return fmt.Errorf("Не больше %d полей.", maxFields)
 	}
 	seen := map[string]bool{}
-	for i := range a.Template.Fields {
-		f := &a.Template.Fields[i]
+	for i := range fields {
+		f := &fields[i]
 		f.Name = strings.TrimSpace(f.Name)
 		if f.Name == "" || utf8.RuneCountInString(f.Name) > maxName {
 			return fmt.Errorf("Название поля: от 1 до %d символов.", maxName)
@@ -265,8 +464,14 @@ func check(a *Automation) error {
 		if utf8.RuneCountInString(f.Hint) > maxHint {
 			f.Hint = string([]rune(f.Hint)[:maxHint])
 		}
-		if len(f.Places) == 0 || len(f.Places) > maxPlaces {
+		if !slices.Contains(Checks, f.Check) {
+			return fmt.Errorf("Поле «%s»: неизвестная проверка.", f.Name)
+		}
+		if kind == KindDocument && (len(f.Places) == 0 || len(f.Places) > maxPlaces) {
 			return fmt.Errorf("Поле «%s»: от 1 до %d мест в документе.", f.Name, maxPlaces)
+		}
+		if kind == KindFields {
+			f.Places = nil
 		}
 	}
 	return nil

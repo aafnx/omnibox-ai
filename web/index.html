@@ -158,8 +158,16 @@
     <!-- ── AUTOMATIONS ── -->
     <section id="auto" class="page" data-page hidden>
       <div class="head">
-        <div><h1>Автоматизации</h1><p>Готовые сценарии на ваших данных. Документ по шаблону Word: модель находит поля, по вашим данным предлагает значения, вы проверяете — OmniBox собирает файл, не меняя оформления шаблона.</p></div>
-        <label class="btn primary filelabel"><svg class="i"><use href="#i-plus"/></svg>Из шаблона Word<input type="file" id="au-new" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden></label>
+        <div><h1>Автоматизации</h1><p>Свои задачи для моделей: разовые и по расписанию, с поиском в интернете или конфиденциально — только на ПК. Поля из текста, фото и файлов с проверкой; документы по шаблону Word без изменения оформления.</p></div>
+        <div class="au-newwrap"><button class="btn primary" type="button" id="au-new-btn" aria-haspopup="true" aria-expanded="false"><svg class="i"><use href="#i-plus"/></svg>Новая автоматизация</button>
+          <div class="menu au-new-menu" id="au-new-menu" hidden>
+            <button type="button" data-au-new="task"><b>Задача</b><span>Своими словами: что сделать. С поиском в интернете или без, разово или по расписанию</span></button>
+            <button type="button" data-au-new="fields"><b>Поля из данных</b><span>Взять из текста, фото или файла нужные поля и проверить их</span></button>
+            <label class="mitem"><b>Документ по шаблону Word</b><span>Модель заполняет шаблон .docx, оформление не меняется</span><input type="file" id="au-new" accept=".docx,application/vnd.openxmlformats-officedocument.wordprocessingml.document" hidden></label>
+            <div class="mhead">Заготовки — можно поменять как угодно</div>
+            <button type="button" data-au-preset="passport"><b>🪪 Паспорт РФ</b><span>Поля паспорта с фото, с проверкой серии, номера, дат и кода подразделения</span></button>
+            <button type="button" data-au-preset="news"><b>📰 Сводка новостей</b><span>Новости по теме за период, с поиском в интернете</span></button>
+          </div></div>
       </div>
       <div id="au-list" class="au-list"><div class="banner">Загружаем автоматизации…</div></div>
     </section>
@@ -430,20 +438,35 @@
 <aside class="drawer au-drawer" id="au-drawer" hidden aria-label="Автоматизация">
   <header class="relh">
     <button class="btn ghost sm x" type="button" data-close aria-label="Закрыть"><svg class="i"><use href="#i-x"/></svg></button>
-    <span class="label">Автоматизация · документ по шаблону</span><h1 id="au-title" class="dh1">Новая автоматизация</h1>
+    <span class="label" id="au-kind">Автоматизация</span><h1 id="au-title" class="dh1">Новая автоматизация</h1>
   </header>
   <div class="scroll">
     <div class="row2">
       <div class="field"><label for="au-name">Название</label><input id="au-name" type="text" maxlength="80" placeholder="Например, Договор купли-продажи"></div>
-      <div class="field"><label for="au-emoji">Значок</label><input id="au-emoji" class="emo-input" type="text" maxlength="8" placeholder="📄"></div>
+      <div class="field"><label for="au-emoji">Значок</label><input id="au-emoji" class="emo-input" type="text" maxlength="8" placeholder="⚡"></div>
     </div>
-    <div class="line"><div><b>Конфиденциально</b><div class="small muted">Только модель на ПК. Без интернета, без журналов текста, файлы не хранятся. Для персональных данных.</div></div><label class="switch"><input type="checkbox" id="au-private" aria-label="Конфиденциально"><span></span></label></div>
+    <div class="line"><div><b>Конфиденциально</b><div class="small muted">Только модели на ПК. Без интернета, истории и журналов текста. Для персональных данных.</div></div><label class="switch"><input type="checkbox" id="au-private" aria-label="Конфиденциально"><span></span></label></div>
     <div class="field"><label for="au-model">Модель</label><select id="au-model"></select><span class="hint" id="au-model-hint">Если не выбрана — модель, выбранная в чате. Для фото нужна модель со зрением.</span></div>
-    <div class="field"><label for="au-instr">Указания для модели</label><textarea id="au-instr" rows="3" maxlength="4000" placeholder="Например: даты пиши как «12» октября 2026 г.; ФИО полностью; суммы цифрами и прописью."></textarea></div>
-    <div class="field"><div class="line"><span class="label">Шаблон</span><a class="btn ghost sm" id="au-tpl" href="#" download hidden><svg class="i i15"><use href="#i-download"/></svg><span id="au-tpl-name"></span></a></div></div>
-    <div class="field"><div class="line"><span class="label" id="au-fields-title">Поля</span><button class="btn sm" type="button" id="au-analyze"><svg class="i i15"><use href="#i-spark"/></svg>Найти поля моделью</button></div>
+    <div class="field"><span class="label">Шаги</span>
+      <span class="hint">Шаги выполняются по порядку. Каждый видит данные запуска и результаты предыдущих шагов. Слово в двойных фигурных скобках — <b>{{тема}}</b> — спрашивается при каждом запуске.</span>
+      <div id="au-steps" class="au-steps"></div>
+      <div class="au-sadd"><button class="btn sm" type="button" data-au-add="task"><svg class="i i15"><use href="#i-plus"/></svg>Шаг: задача</button><button class="btn sm" type="button" data-au-add="fields"><svg class="i i15"><use href="#i-plus"/></svg>Шаг: поля из данных</button></div></div>
+    <div class="field" id="au-doc-wrap"><div class="line"><span class="label">Шаблон</span><a class="btn ghost sm" id="au-tpl" href="#" download hidden><svg class="i i15"><use href="#i-download"/></svg><span id="au-tpl-name"></span></a></div>
+      <div class="line"><span class="label" id="au-fields-title">Поля</span><button class="btn sm" type="button" id="au-analyze"><svg class="i i15"><use href="#i-spark"/></svg>Найти поля моделью</button></div>
       <span class="hint" id="au-fields-hint">Модель прочитает шаблон и предложит места для заполнения. Метки вида {{ФИО}} становятся полями сами.</span>
       <div id="au-fields" class="au-fields"></div></div>
+    <div class="field"><label for="au-instr">Указания для модели</label><textarea id="au-instr" rows="3" maxlength="4000" placeholder="Для всех шагов. Например: даты пиши как «12» октября 2026 г.; ФИО полностью; ответ — списком."></textarea></div>
+    <div class="line"><div><b>Хранить историю запусков</b><div class="small muted">Результаты на ПК — столько, сколько хранятся чаты</div></div><label class="switch"><input type="checkbox" id="au-history" aria-label="Хранить историю"><span></span></label></div>
+    <div class="field au-sched" id="au-sched-wrap">
+      <div class="line"><div><b>По расписанию</b><div class="small muted" id="au-sched-hint">Служба запустит автоматизацию сама. Нужны история и выбранная модель; ПК должен быть включён, пропущенный запуск не повторяется.</div></div><label class="switch"><input type="checkbox" id="au-sched-on" aria-label="По расписанию"><span></span></label></div>
+      <div class="au-sched-body" id="au-sched-body">
+        <div class="row2"><div class="field"><label for="au-sched-every">Как часто</label><select id="au-sched-every"><option value="day">Каждый день</option><option value="week">По дням недели</option><option value="hours">Каждые несколько часов</option></select></div>
+          <div class="field"><label for="au-sched-at" id="au-sched-at-label">Время</label><input id="au-sched-at" type="time" value="08:00"></div></div>
+        <div class="seg au-days" id="au-sched-days" role="group" aria-label="Дни недели"></div>
+        <div class="field" id="au-sched-hours-wrap"><label for="au-sched-hours">Интервал, часов</label><input id="au-sched-hours" type="number" min="1" max="24" value="4"></div>
+        <div id="au-vars" class="stack8"></div>
+      </div>
+    </div>
   </div>
   <footer><button class="btn ghost sm danger-text sp-right" type="button" id="au-delete">Удалить</button><button class="btn" type="button" data-close>Отмена</button><button class="btn primary" type="button" id="au-save">Сохранить</button></footer>
 </aside>
@@ -454,15 +477,23 @@
     <button class="btn ghost sm x" type="button" data-close aria-label="Закрыть"><svg class="i"><use href="#i-x"/></svg></button>
     <h1 class="dh1s" id="ar-title">Запуск</h1>
     <div class="small muted" id="ar-policy"></div>
+    <div class="seg" role="group" aria-label="Вид" id="ar-tabs"><button type="button" aria-pressed="true" data-ar-tab="run">Запуск</button><button type="button" aria-pressed="false" data-ar-tab="history">История</button></div>
   </header>
   <div class="scroll">
     <div class="stack8" id="ar-input">
-      <textarea id="ar-text" rows="4" placeholder="Данные для заполнения: текстом, или приложите фото, Word, Excel, CSV."></textarea>
+      <div id="ar-vars" class="stack8"></div>
+      <textarea id="ar-text" rows="4" placeholder="Данные: текстом, или приложите фото, Word, Excel, CSV."></textarea>
       <div class="ar-files" id="ar-files"></div>
       <div class="line ar-actions"><label class="btn ghost sm filelabel"><svg class="i i15"><use href="#i-clip"/></svg>Приложить<input type="file" id="ar-file" multiple accept="image/*,.docx,.xlsx,.csv,.txt,.md" hidden></label>
         <select id="ar-model" class="sel-auto" aria-label="Модель"></select>
-        <button class="btn primary" type="button" id="ar-go">Распознать</button></div>
+        <button class="btn primary" type="button" id="ar-go">Запустить</button></div>
       <span class="hint" id="ar-status" role="status"></span>
+    </div>
+    <div class="stack8" id="ar-steps" hidden></div>
+    <div class="stack8" id="ar-answer" hidden>
+      <div class="md ar-md" id="ar-md"></div>
+      <div id="ar-sources"></div>
+      <div class="ar-out"><button class="btn" type="button" data-ar-out="copy">Копировать</button><button class="btn" type="button" data-ar-out="md">Скачать .md</button></div>
     </div>
     <div class="stack8" id="ar-result" hidden>
       <span class="label">Проверьте значения — их можно поправить</span>
@@ -473,9 +504,11 @@
         <button class="btn" type="button" data-ar-out="text">Текстом</button>
         <button class="btn" type="button" data-ar-out="csv">Таблица CSV</button>
         <button class="btn" type="button" data-ar-out="json">JSON</button>
+        <select id="ar-todoc" class="sel-auto" aria-label="В документ"></select>
       </div>
       <div id="ar-done" class="ar-done" hidden></div>
     </div>
+    <div class="stack8" id="ar-history" hidden></div>
   </div>
 </div>
 

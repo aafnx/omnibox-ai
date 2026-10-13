@@ -494,7 +494,7 @@ func (r *Runner) send(ctx context.Context, t *turn, body map[string]any) (*http.
 	if t.model.Source == "local" {
 		data, _ := json.Marshal(body)
 		local, session := r.Local, "panel-chat-"+t.chat.ID
-		if t.private {
+		if t.private || ctx.Value(automationRun{}) != nil {
 			if r.Automation == nil {
 				return nil, errors.New("Автоматизации недоступны: служба запущена без них.")
 			}
@@ -655,6 +655,10 @@ func (r *Runner) finish(t *turn, a *answer, start time.Time, out *stream) {
 		if l := r.ChatGPTLimits(); l != nil {
 			out.send("limits", l)
 		}
+	}
+	if t.result != nil {
+		*t.result = msg
+		return
 	}
 	saved, err := r.Chats.Update(t.chat.ID, func(c *chats.Chat) error {
 		c.Messages = append(c.Messages, msg)
