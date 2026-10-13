@@ -125,7 +125,12 @@ type Chat struct {
 	TitleSet  bool `json:"title_set,omitempty"`
 	TitleAuto bool `json:"title_auto,omitempty"`
 	// FollowUps turns the suggested questions on or off for this chat; nil follows the setting.
-	FollowUps *bool     `json:"follow_ups,omitempty"`
+	FollowUps *bool `json:"follow_ups,omitempty"`
+	// ProjectID is the project the chat belongs to: its instructions and documents come with it.
+	ProjectID string `json:"project_id,omitempty"`
+	// Temporary chats live in the service's memory only, never on disk, and go when the owner
+	// leaves them, when the service restarts, or a day after they were last used.
+	Temporary bool      `json:"temporary,omitempty"`
 	Messages  []Message `json:"messages"`
 }
 
@@ -196,6 +201,8 @@ type Summary struct {
 	Messages    int        `json:"messages"`
 	CostUSD     float64    `json:"cost_usd"`
 	FollowUps   *bool      `json:"follow_ups,omitempty"`
+	ProjectID   string     `json:"project_id,omitempty"`
+	Temporary   bool       `json:"temporary,omitempty"`
 }
 
 // Hit is a chat found by Search; MessageID is empty when the title matched.
@@ -204,6 +211,7 @@ type Hit struct {
 	Title     string    `json:"title"`
 	Updated   time.Time `json:"updated"`
 	Pinned    bool      `json:"pinned"`
+	ProjectID string    `json:"project_id,omitempty"`
 	MessageID string    `json:"message_id,omitempty"`
 	Snippet   string    `json:"snippet"`
 }
@@ -226,7 +234,7 @@ func (c *Chat) expired(now time.Time) bool {
 func (c *Chat) Summary() Summary {
 	return Summary{ID: c.ID, Title: c.Title, Created: c.Created, Updated: c.Updated, Pinned: c.Pinned,
 		KeepHours: c.KeepHours, Expires: c.Expires(), AssistantID: c.AssistantID, Model: c.Model,
-		Messages: len(c.Messages), CostUSD: c.CostUSD, FollowUps: c.FollowUps}
+		Messages: len(c.Messages), CostUSD: c.CostUSD, FollowUps: c.FollowUps, ProjectID: c.ProjectID, Temporary: c.Temporary}
 }
 
 // Store keeps chats as files in Dir. Writes are serialized, so a read-modify-write of a chat
@@ -236,10 +244,31 @@ type Store struct {
 	Now func() time.Time
 
 	mu sync.Mutex
+	// temp holds the temporary chats, encoded as their files would be: nothing of them is written.
+	temp map[string][]byte
+}
+
+// tempKeep is how long an untouched temporary chat stays in memory.
+const tempKeep = 24 * time.Hour
+
+// New is a chat to start.
+type New struct {
+	Title       string
+	KeepHours   int // the retention setting now; 0 keeps the chat forever
+	AssistantID string
+	Model       string
+	ProjectID   string
+	Temporary   bool
 }
 
 // Create starts an empty chat; keepHours is the retention setting now (0 keeps it forever).
 func (s *Store) Create(title string, keepHours int, assistantID, model string) (*Chat, error) {
+	return s.Start(New{Title: title, KeepHours: keepHours, AssistantID: assistantID, Model: model})
+}
+
+// Start starts an empty chat, in a project or temporary when asked.
+func (s *Store) Start(n New) (*Chat, error) {
+	title, keepHours, assistantID, model := n.Title, n.KeepHours, n.AssistantID, n.Model
 	title = cleanTitle(title)
 	if title == "" {
 		title = DefaultTitle
@@ -256,8 +285,18 @@ func (s *Store) Create(title string, keepHours int, assistantID, model string) (
 	if err := checkModel(model); err != nil {
 		return nil, err
 	}
+	if n.ProjectID != "" && !validProjectID(n.ProjectID) {
+		return nil, errorf("Некорректный идентификатор проекта.")
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if n.Temporary {
+		s.purgeTemp()
+		now := s.now()
+		c := &Chat{ID: randomHex(12), Title: title, Created: now, Updated: now, AssistantID: assistantID, Model: model,
+			ProjectID: n.ProjectID, Temporary: true, Messages: []Message{}}
+		return c, s.write(c, now)
+	}
 	if err := os.MkdirAll(s.Dir, 0o700); err != nil {
 		return nil, err
 	}
@@ -270,7 +309,7 @@ func (s *Store) Create(title string, keepHours int, assistantID, model string) (
 	}
 	now := s.now()
 	c := &Chat{ID: randomHex(12), Title: title, Created: now, Updated: now, KeepHours: keepHours,
-		TimerStart: now, AssistantID: assistantID, Model: model, Messages: []Message{}}
+		TimerStart: now, AssistantID: assistantID, Model: model, ProjectID: n.ProjectID, Messages: []Message{}}
 	if err := s.write(c, now); err != nil {
 		return nil, err
 	}
@@ -282,6 +321,9 @@ func (s *Store) Get(id string) (*Chat, error) {
 	if !validChatID(id) {
 		return nil, errChatNotFound
 	}
+	// The lock guards the temporary chats in memory; files are replaced atomically anyway.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	return s.read(id)
 }
 
@@ -321,6 +363,7 @@ func (s *Store) update(id string, fn func(*Chat) error) (*Chat, error) {
 		return nil, err
 	}
 	c.ID, c.Created, c.Pinned, c.KeepHours, c.TimerStart = keep.ID, keep.Created, keep.Pinned, keep.KeepHours, keep.TimerStart
+	c.Temporary = keep.Temporary
 	if err := s.write(c, s.now()); err != nil {
 		return nil, err
 	}
@@ -403,6 +446,9 @@ func (s *Store) SetPinned(id string, pinned bool) (*Chat, error) {
 	if err != nil {
 		return nil, err
 	}
+	if c.Temporary && pinned {
+		return nil, errorf("Временный чат не закрепляется: он исчезает, когда вы из него уходите.")
+	}
 	if c.Pinned == pinned {
 		return c, nil
 	}
@@ -424,6 +470,10 @@ func (s *Store) Delete(id string) error {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if _, ok := s.temp[id]; ok {
+		delete(s.temp, id)
+		return nil
+	}
 	err := os.Remove(s.path(id))
 	if errors.Is(err, os.ErrNotExist) {
 		return errChatNotFound
@@ -431,16 +481,59 @@ func (s *Store) Delete(id string) error {
 	return err
 }
 
+// purgeTemp forgets temporary chats untouched for a day; it runs when one is started and when the
+// chats are listed or searched, not on a timer.
+func (s *Store) purgeTemp() {
+	now := s.now()
+	for id, data := range s.temp {
+		var c struct{ Updated time.Time }
+		if json.Unmarshal(data, &c) != nil || now.Sub(c.Updated) > tempKeep {
+			delete(s.temp, id)
+		}
+	}
+}
+
+// SetProject puts a chat into a project, or takes it out with "".
+func (s *Store) SetProject(id, projectID string) (*Chat, error) {
+	if projectID != "" && !validProjectID(projectID) {
+		return nil, errorf("Некорректный идентификатор проекта.")
+	}
+	return s.Update(id, func(c *Chat) error {
+		c.ProjectID = projectID
+		return nil
+	})
+}
+
+// LeaveProject takes every chat out of a deleted project; the chats themselves stay.
+func (s *Store) LeaveProject(projectID string) error {
+	var ids []string
+	if _, err := s.scan(s.now(), func(c *Chat) {
+		if c.ProjectID == projectID {
+			ids = append(ids, c.ID)
+		}
+	}); err != nil {
+		return err
+	}
+	for _, id := range ids {
+		if _, err := s.SetProject(id, ""); err != nil && !errors.Is(err, ErrNotFound) {
+			return err
+		}
+	}
+	return nil
+}
+
 // DeleteAll removes every chat, or every unpinned one when keepPinned is set, and returns how
 // many were removed. With keepPinned a chat that cannot be read is kept: it may be pinned.
 func (s *Store) DeleteAll(keepPinned bool) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Temporary chats are never pinned: they go with the rest.
+	deleted := len(s.temp)
+	s.temp = nil
 	names, err := chatNames(s.Dir)
 	if err != nil {
-		return 0, err
+		return deleted, err
 	}
-	deleted := 0
 	var firstErr error
 	for _, name := range names {
 		id := strings.TrimSuffix(name, ".json")
@@ -509,6 +602,8 @@ func (s *Store) Cleanup(now time.Time) int {
 func (s *Store) scan(now time.Time, visit func(*Chat)) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A temporary chat left open (the browser closed) goes a day after its last message.
+	s.purgeTemp()
 	entries, err := os.ReadDir(s.Dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return 0, nil
@@ -545,7 +640,7 @@ func (s *Store) scan(now time.Time, visit func(*Chat)) (int, error) {
 
 // Search finds chats whose title or message text contains q, ignoring case: up to 50, the
 // latest updated first, each with a short snippet around the first match.
-func (s *Store) Search(q string) ([]Hit, error) {
+func (s *Store) Search(q, project string) ([]Hit, error) {
 	q = strings.Join(strings.Fields(q), " ")
 	if q == "" {
 		return []Hit{}, nil
@@ -553,19 +648,66 @@ func (s *Store) Search(q string) ([]Hit, error) {
 	if runes(q) > maxQuery {
 		return nil, errorf("Запрос для поиска длиннее %d символов.", maxQuery)
 	}
+	if project != "" && !validProjectID(project) {
+		return nil, errorf("Некорректный идентификатор проекта.")
+	}
 	needle := lower(q)
+	words := slices.Compact(slices.Sorted(slices.Values(strings.Fields(strings.ToLower(q)))))
 	hits := []Hit{}
 	_, err := s.scan(s.now(), func(c *Chat) {
+		if project != "" && c.ProjectID != project {
+			return
+		}
+		hit := Hit{ID: c.ID, Title: c.Title, Updated: c.Updated, Pinned: c.Pinned, ProjectID: c.ProjectID}
+		// The words as typed come first; then a chat that has all of them, in any order and in
+		// any of its messages, shown at the message that has the most.
 		if snip, ok := snippet(c.Title, needle); ok {
-			hits = append(hits, Hit{ID: c.ID, Title: c.Title, Updated: c.Updated, Pinned: c.Pinned, Snippet: snip})
+			hit.Snippet = snip
+			hits = append(hits, hit)
 			return
 		}
 		for _, m := range c.Messages {
 			if snip, ok := snippet(m.Text, needle); ok {
-				hits = append(hits, Hit{ID: c.ID, Title: c.Title, Updated: c.Updated, Pinned: c.Pinned, MessageID: m.ID, Snippet: snip})
+				hit.MessageID, hit.Snippet = m.ID, snip
+				hits = append(hits, hit)
 				return
 			}
 		}
+		if len(words) < 2 {
+			return
+		}
+		texts := []string{strings.ToLower(c.Title)}
+		for _, m := range c.Messages {
+			texts = append(texts, strings.ToLower(m.Text))
+		}
+		best, bestN := -1, 0
+		for _, w := range words {
+			if !slices.ContainsFunc(texts, func(t string) bool { return strings.Contains(t, w) }) {
+				return
+			}
+		}
+		for i, t := range texts {
+			n := 0
+			for _, w := range words {
+				if strings.Contains(t, w) {
+					n++
+				}
+			}
+			if n > bestN {
+				best, bestN = i, n
+			}
+		}
+		text := c.Title
+		if best > 0 {
+			text, hit.MessageID = c.Messages[best-1].Text, c.Messages[best-1].ID
+		}
+		for _, w := range words {
+			if snip, ok := snippet(text, []rune(w)); ok {
+				hit.Snippet = snip
+				break
+			}
+		}
+		hits = append(hits, hit)
 	})
 	slices.SortFunc(hits, func(a, b Hit) int {
 		if c := b.Updated.Compare(a.Updated); c != 0 {
@@ -614,7 +756,11 @@ func snippet(text string, needle []rune) (string, bool) {
 }
 
 func (s *Store) read(id string) (*Chat, error) {
-	data, err := platform.ReadShared(s.path(id))
+	data, temp := s.temp[id]
+	var err error
+	if !temp {
+		data, err = platform.ReadShared(s.path(id))
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, errChatNotFound
 	}
@@ -661,6 +807,13 @@ func (s *Store) write(c *Chat, now time.Time) error {
 	}
 	if len(data) > MaxChatBytes {
 		return errorf("Чат больше %d МБ и не сохранён. Начните новый чат или удалите часть сообщений.", MaxChatBytes>>20)
+	}
+	if c.Temporary {
+		if s.temp == nil {
+			s.temp = map[string][]byte{}
+		}
+		s.temp[c.ID] = data
+		return nil
 	}
 	return platform.WriteAtomic(s.path(c.ID), data, 0o600)
 }

@@ -567,7 +567,7 @@ func automationInputs(in automationRequest, vision bool, model string, need bool
 			}
 			images = append(images, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:" + attach.MIME(f.Name) + ";base64," + f.Data}})
 		case attach.Audio, attach.Video, "":
-			return "", nil, nil, fmt.Errorf("«%s»: в автоматизацию можно дать текст, фото, Word, Excel и CSV.", f.Name)
+			return "", nil, nil, fmt.Errorf("«%s»: в автоматизацию можно дать текст, фото, PDF, Word, Excel и CSV.", f.Name)
 		default:
 			text, err := attach.ExtractText(f.Name, data)
 			if err != nil {

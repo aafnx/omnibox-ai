@@ -203,7 +203,7 @@ byId('au-delete').addEventListener('click',async()=>{if(!A.cur?.id||!await confi
 // ── run ──
 function openRun(a,tab){A.run={a,files:[],values:null,text:''};const steps=auSteps(a);byId('ar-title').innerHTML=`${auEmoji(a)}<span>${esc(a.name)}</span>`;byId('ar-policy').textContent=auPolicy(a);
   byId('ar-text').value='';byId('ar-status').textContent='';renderTrace([]);['ar-result','ar-answer','ar-steps'].forEach(id=>byId(id).hidden=true);byId('ar-done').hidden=true;renderRunFiles();
-  byId('ar-text').placeholder=steps[0].kind==='task'?'Дополнительные данные — необязательно: текст, фото, Word, Excel, CSV.':'Данные: текстом, или приложите фото, Word, Excel, CSV.';
+  byId('ar-text').placeholder=steps[0].kind==='task'?'Дополнительные данные — необязательно: текст, фото, PDF, Word, Excel, CSV.':'Данные: текстом, или приложите фото, PDF, Word, Excel, CSV.';
   byId('ar-go').textContent=steps.length===1&&a.kind!=='task'?'Распознать':'Запустить';
   byId('ar-vars').innerHTML=auStepVars(a).map(v=>`<div class="field"><label>${esc(v)}</label><input type="text" data-ar-var="${esc(v)}" maxlength="300" value="${esc(a.vars?.[v]||'')}"></div>`).join('');
   // The model is asked only when some step has none of its own and the automation has none.

@@ -1,6 +1,6 @@
 'use strict';
 // Chat: the threads stored on the PC, the conversation, the composer.
-const C={threads:[],hits:null,chat:null,chosen:'',web:false,attached:[],starting:false,pickerQ:'',renaming:null,follow:null,streams:{},active:new Set()};
+const C={threads:[],projects:[],view:'',temp:false,hits:null,chat:null,chosen:'',web:false,attached:[],starting:false,pickerQ:'',renaming:null,follow:null,streams:{},active:new Set()};
 // busy is the answer being written in the open chat, if any.
 Object.defineProperty(C,'busy',{get(){return C.chat?C.streams[C.chat.id]||null:null;},set(){}});
 try{C.chosen=localStorage.getItem('omnibox-model')||'';}catch(e){}
@@ -22,6 +22,7 @@ function threadRow(t){const cur=C.chat?.id===t.id;
 // The list's menu is about the chat as a whole; what happens inside it is in the composer's "+".
 function threadMenu(t){return `<button type="button" role="menuitem" data-rename="${t.id}"><svg class="i"><use href="#i-edit"/></svg>Переименовать</button>`+
   `<button type="button" role="menuitem" data-pin="${t.id}" class="${t.pinned?'on':''}"><svg class="i"><use href="#i-star"/></svg>${t.pinned?'Убрать из избранного':'В избранное'}</button>`+
+  `<button type="button" role="menuitem" data-move-menu="${t.id}"><svg class="i"><use href="#i-folder"/></svg>${t.project_id?'Другой проект':'В проект'}</button>`+
   `<button type="button" role="menuitem" class="del" data-del-thread="${t.id}"><svg class="i"><use href="#i-trash"/></svg>Удалить</button>`;}
 // ── the composer's "+": settings of this chat and what can be done with it ──
 function renderPlus(){const c=C.chat,has=!!c?.messages?.length,f=followOn(c||{follow_ups:C.followNew});
@@ -45,12 +46,15 @@ async function commitRename(save){const id=C.renaming;if(!id)return;const title=
   catch(e){fail(e);}renderThreads();}
 function renderThreads(){const list=byId('thread-list');
   if(C.hits){setHTML(list,C.hits.length?C.hits.map(h=>`<li class="t"><a href="#chat" data-thread="${h.id}"><span>${esc(h.title)}</span><small>${esc(h.snippet||dateShort(h.updated))}</small></a></li>`).join(''):'<li class="group">Ничего не найдено</li>');return;}
-  const pin=C.threads.filter(t=>t.pinned),rest=C.threads.filter(t=>!t.pinned);
+  if(C.view&&!projById(C.view))C.view='';
+  if(C.view){const items=C.threads.filter(t=>t.project_id===C.view);
+    setHTML(list,projHead(projById(C.view))+(items.length?items.map(threadRow).join(''):'<li class="group">В проекте пока нет чатов</li>'));renderKeep();renderProjChip();return;}
+  const pin=C.threads.filter(t=>t.pinned),rest=C.threads.filter(t=>!t.pinned&&!t.project_id);
   const tg=(title,items)=>{if(!items.length)return '';const key='t:'+title;const shut=collapsed.has(key);return `<li class="group"><button type="button" class="grp-btn tgrp" data-grp="${key}" aria-expanded="${!shut}"><span>${title}</span><span class="grp-n">${items.length}</span>${chev(key)}</button></li>`+(shut?'':items.map(threadRow).join(''));};
-  setHTML(list,tg('Избранные',pin)+tg('Чаты',rest)||'<li class="group">Чатов пока нет</li>');renderKeep();}
+  setHTML(list,projGroup()+(tg('Избранные',pin)+tg('Чаты',rest)||'<li class="group">Чатов пока нет</li>'));renderKeep();renderProjChip();}
 function renderKeep(){const k=byId('keep');const t=C.chat&&C.threads.find(x=>x.id===C.chat.id);k.hidden=!t||t.pinned||!t.expires;if(k.hidden)return;
   k.classList.toggle('soon',hoursLeft(t)<24);k.innerHTML=`<svg class="i"><use href="#i-clock"/></svg>${esc(remain(t))}`;k.title=`Создан ${dateShort(t.created)}, ${leftText(t)}. Срок меняется в «Настройки → Данные и хранение».`;}
-async function loadThreads(){const d=await api('/api/chats');C.threads=d.chats||[];renderThreads();checkActive();}
+async function loadThreads(){const [d,p]=await Promise.all([api('/api/chats'),api('/api/projects').catch(()=>null)]);C.threads=d.chats||[];if(p)C.projects=p.projects||[];renderThreads();checkActive();}
 
 // ── one chat ──
 function chatModelName(key){return modelByKey(key)?.name||(key||'').replace(/^(prismml|ollama|cloud):/,'');}
@@ -119,9 +123,9 @@ async function requestFollowUps(chatId,msgId){stopFollowUps();const ctrl=new Abo
 // The last answer of the open chat, if it may get suggestions now.
 function followTarget(){const msgs=C.chat?.messages||[],m=msgs[msgs.length-1];return followOn(C.chat)&&m?.role==='assistant'&&m.id&&m.text&&!m.error&&!m.meta?.follow_ups?.length?m:null;}
 function renderChat(){const box=byId('message-list');const c=C.chat;
-  if(!c||!c.messages?.length){setHTML(box,`<div class="empty"><b>${c?esc(c.title):'Новый чат'}</b><span>Спросите что-нибудь. Можно приложить файлы и включить поиск в интернете.</span></div>`);}
+  if(!c||!c.messages?.length){setHTML(box,`<div class="empty"><b>${c?esc(c.title):isTemp()?'Временный чат':'Новый чат'}</b><span>${emptyNote()}</span></div>`);}
   else setHTML(box,c.messages.map((m,i)=>m.role==='user'?userHTML(m):botHTML(m,i===c.messages.length-1&&followOn(c),c.messages[i-1])).join(''));
-  enhance(box,true);const s=c&&C.streams[c.id];if(s){s.el=null;paintLive(s);}showChatCost();renderKeep();scrollDown(true);}
+  enhance(box,true);const s=c&&C.streams[c.id];if(s){s.el=null;paintLive(s);}showChatCost();renderKeep();renderTemp();scrollDown(true);}
 // The chat follows the answer while the reader is at its end. Whether they are is learnt from their
 // own scrolling, not measured after the answer grew: a reasoning block or a status line taller than
 // the margin used to leave the chat behind. Scrolled up, an arrow brings them back to the end.
@@ -134,10 +138,10 @@ byId('to-end').addEventListener('click',()=>{const el=byId('messages');atEnd=tru
 function showChatCost(){const c=byId('chat-cost');const paid=(C.chat?.messages||[]).filter(m=>m.meta?.cost_usd>0);c.hidden=!paid.length;if(!paid.length)return;
   const sum=paid.reduce((s,m)=>s+m.meta.cost_usd,0);c.innerHTML=`${money(sum)}<span class="lbl"> за чат</span>`;
   c.title=`Стоимость этого чата по данным OpenRouter: ${paid.length} ${plural(paid.length,'ответ','ответа','ответов')}. Локальные ответы бесплатны.`;}
-async function openChat(id,{follow=true}={}){stopFollowUps();C.chat=await api('/api/chats?id='+encodeURIComponent(id));renderSend();if(follow&&!C.streams[id])checkActive();
+async function openChat(id,{follow=true}={}){if(C.chat?.id!==id)leaveTemp();stopFollowUps();C.chat=await api('/api/chats?id='+encodeURIComponent(id));renderSend();if(follow&&!C.streams[id])checkActive();
   if(C.chat.model&&modelByKey(C.chat.model))setChosen(C.chat.model,false);
   C.web=webDefault(C.chat.assistant_id);renderAll();}
-function newChat(){stopFollowUps();C.chat=null;C.attached=[];C.web=webDefault(S.assistants.default);C.asst=S.assistants.default||'';const a=asstById(C.asst);if(a?.model&&modelByKey(a.model))setChosen(a.model,false);renderAll();byId('prompt').focus();}
+function newChat({temp=false}={}){leaveTemp();C.temp=temp;stopFollowUps();C.chat=null;C.attached=[];C.web=webDefault(S.assistants.default);C.asst=S.assistants.default||'';const a=asstById(C.asst);if(a?.model&&modelByKey(a.model))setChosen(a.model,false);renderAll();byId('prompt').focus();}
 function renderAll(){renderThreads();renderChat();renderPicker();renderAssist();renderThink();renderWeb();renderAttached();renderFoot();}
 
 // ── models: the picker ──
@@ -263,8 +267,8 @@ byId('web-engine').addEventListener('change',async e=>{const v=e.target.value,s=
 
 // ── attachments: refused before sending when the model cannot read them ──
 const KINDS={image:{name:'изображения',need:'vision',ext:['png','jpg','jpeg','webp','gif']},video:{name:'видео',need:'video',ext:['mp4','mov','webm','mkv','avi']},audio:{name:'аудио',need:'audio',ext:['mp3','wav','m4a','ogg','flac','opus']},
-  word:{name:'документы Word',need:'',ext:['docx']},excel:{name:'таблицы Excel',need:'',ext:['xlsx','csv']},text:{name:'текстовые файлы',need:'',ext:['txt','md','json','log','yaml','yml','xml','html','go','py','js','ts','ps1','sh','ini','conf']}};
-const KIND_ICON={image:'i-eye',video:'i-video',audio:'i-audio',word:'i-file',excel:'i-table',text:'i-file'};
+  word:{name:'документы Word',need:'',ext:['docx']},pdf:{name:'PDF',need:'',ext:['pdf']},excel:{name:'таблицы Excel',need:'',ext:['xlsx','csv']},text:{name:'текстовые файлы',need:'',ext:['txt','md','json','log','yaml','yml','xml','html','go','py','js','ts','ps1','sh','ini','conf']}};
+const KIND_ICON={image:'i-eye',video:'i-video',audio:'i-audio',word:'i-file',pdf:'i-file',excel:'i-table',text:'i-file'};
 const MAX_FILE=25*1024*1024;
 const MAX_FILES_BYTES=75*1024*1024;
 function kindOf(name){const ext=(String(name).split('.').pop()||'').toLowerCase();for(const [k,v] of Object.entries(KINDS))if(v.ext.includes(ext))return k;return null;}
@@ -272,7 +276,7 @@ function canRead(m,k){const need=KINDS[k].need;return !need||has(m,need);}
 function tokensOf(size,k){if(k==='image')return 1500;if(k==='audio'||k==='video')return null;return Math.round(size/(k==='word'||k==='excel'?6:4));}
 function addFiles(list){const m=curModel();const refused=[];
   for(const f of list){const k=kindOf(f.name);
-    if(!k){refused.push(`«${f.name}»: такой тип файла не поддерживается. Можно: изображения, видео, аудио, текст, Word, Excel.`);continue;}
+    if(!k){refused.push(`«${f.name}»: такой тип файла не поддерживается. Можно: изображения, видео, аудио, текст, PDF, Word, Excel.`);continue;}
     if(f.size>MAX_FILE){refused.push(`«${f.name}»: больше 25 МБ.`);continue;}
     if(!m){refused.push('Сначала выберите модель: от неё зависит, какие файлы она понимает.');break;}
     if(!canRead(m,k)){refused.push(`${m.name} не понимает ${KINDS[k].name} — «${f.name}» не прикреплён.`);continue;}
@@ -327,7 +331,8 @@ async function send(opts={}){if(C.busy)return;stopFollowUps();if(dict)dict.detac
   const text=opts.retry?'':(opts.text??byId('prompt').value).trim();const files=opts.retry||opts.text!==undefined?[]:C.attached;const again=opts.retry||opts.edit;
   if(!text&&!files.length&&!opts.retry)return;
   if(m.source==='local'&&!m.running){await startLocal(m);if(!modelByKey(m.key)?.running)return;}
-  if(!C.chat){C.chat=await api('/api/chats',{action:'create',model:m.key,assistant_id:chatAsst()||''});C.chat.messages=[];C.threads.unshift(C.chat);
+  if(!C.chat){const n={action:'create',model:m.key,assistant_id:chatAsst()||''};if(C.view)n.project_id=C.view;if(C.temp)n.temporary=true;
+    C.chat=await api('/api/chats',n);C.chat.messages=[];if(!C.chat.temporary)C.threads.unshift(C.chat);
     if(C.followNew!==undefined&&C.followNew!==!!S.chatSettings?.follow_ups){C.chat.follow_ups=C.followNew;api('/api/chats',{action:'follow-ups',id:C.chat.id,mode:C.followNew?'on':'off'}).catch(()=>{});}
     C.followNew=undefined;renderThreads();}
   const chat=C.chat;
@@ -540,7 +545,7 @@ byId('thread-list').addEventListener('dblclick',e=>{const a=e.target.closest('[d
 byId('thread-list').addEventListener('scroll',closeThreadMenu);
 byId('new-chat').addEventListener('click',()=>{newChat();$('.threads').classList.remove('open');});
 let searchTimer=0;
-byId('thread-search').addEventListener('input',e=>{clearTimeout(searchTimer);const q=e.target.value.trim();searchTimer=setTimeout(async()=>{if(!q){C.hits=null;renderThreads();return;}try{C.hits=(await api('/api/chats?q='+encodeURIComponent(q))).hits||[];renderThreads();}catch(x){fail(x);}},250);});
+byId('thread-search').addEventListener('input',e=>{clearTimeout(searchTimer);const q=e.target.value.trim();searchTimer=setTimeout(async()=>{if(!q){C.hits=null;renderThreads();return;}try{C.hits=(await api('/api/chats?q='+encodeURIComponent(q)+(C.view?'&project='+C.view:''))).hits||[];renderThreads();}catch(x){fail(x);}},250);});
 byId('picker-q').addEventListener('input',e=>{C.pickerQ=e.target.value;renderPicker();});
 byId('attach-btn').addEventListener('click',()=>byId('attach-input').click());
 byId('attach-input').addEventListener('change',e=>{addFiles([...e.target.files]);e.target.value='';});

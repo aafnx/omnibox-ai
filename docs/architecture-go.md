@@ -177,13 +177,14 @@ internal/enginemgr/     версии движков из GitHub, установ�
 internal/catalog/       Hugging Face, скачивание GGUF с докачкой (F4)
 internal/update/        самообновление из GitHub Releases, откат
 internal/platform/      интерфейсы ОС и реализации *_windows.go / *_linux.go
-internal/chats/         чаты и ассистенты панели (файл на чат, срок хранения, закрепление)
+internal/chats/         чаты, ассистенты и проекты панели (файл на чат, срок хранения, закрепление; временные чаты — в памяти; текст документов проектов)
+internal/docsearch/     фрагменты документов проекта, подходящие к вопросу (BM25 по словам, без индекса на диске)
 internal/chatrun/       ответ на сообщение чата: история, файлы, веб-поиск, размышления, SSE
 internal/openrouter/    OpenRouter: ключ (DPAPI), модели, баланс, расходы
 internal/chatgpt/       ChatGPT по подписке через Codex app-server: установка, вход по коду, лимиты, ответы без инструментов
 internal/reasoning/     профили размышлений моделей и очистка параметров запроса
 internal/websearch/     поиск: SearXNG, Perplexity, Tavily, Brave, ключи; internal/attach/ — текст из документов; internal/library/ — единый список моделей
-web/                    интерфейс: app.js и страницы chat.js, models.js, server.js, settings.js
+web/                    интерфейс: app.js и страницы chat.js (с projects.js), models.js, server.js, settings.js, automations.js
 tests/                  web_test.cjs (поведение UI); HTTP-тесты — Go-тесты пакетов
 ```
 

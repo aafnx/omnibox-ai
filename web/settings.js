@@ -150,7 +150,7 @@ function renderStorage(){const u=ST.storage;if(!u)return;const v=u.log_retention
 async function refreshStorage(){ST.storage=await api('/api/storage');renderStorage();}
 const WIPE={chats:{text:()=>`Удалить все чаты (${S.chatSettings?.chats||0}), включая избранные? Они сразу стираются с диска, восстановить нельзя.`,run:()=>api('/api/chats',{action:'delete-all',keep_pinned:false}).then(r=>`Удалено чатов: ${r.deleted}.`)},
   logs:{text:()=>`Удалить все журналы (${fsize(ST.storage?.logs_bytes||0)})? Файлы, которые сейчас пишет работающий движок, останутся до следующей ротации.`,run:()=>api('/api/storage',{action:'purge'}).then(u=>{ST.storage=u;return `Удалено файлов журналов: ${u.cleanup?.removed||0}.`;})},
-  all:{text:()=>'Удалить все чаты, журналы и текст запросов? Модели и настройки останутся.',run:()=>api('/api/chat-settings',{action:'delete-all-data'}).then(d=>{S.chatSettings=d;return `Удалено чатов: ${d.deleted_chats}, файлов журналов: ${d.logs?.removed||0}.`;})}};
+  all:{text:()=>'Удалить все чаты, проекты с документами, журналы и текст запросов? Модели и настройки останутся.',run:()=>api('/api/chat-settings',{action:'delete-all-data'}).then(d=>{S.chatSettings=d;return `Удалено чатов: ${d.deleted_chats}, файлов журналов: ${d.logs?.removed||0}.`;})}};
 
 // ── sleep, wake, autostart ──
 function renderSleep(){const sys2=S.status?.system||{};byId('autostart').checked=!!sys2.autostart;

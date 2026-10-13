@@ -25,6 +25,9 @@
     <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1L3.2 9.5l6.1-.9z"/></symbol>
     <symbol id="i-cloud" viewBox="0 0 24 24"><path d="M7 18h10a4 4 0 0 0 .6-8A6 6 0 0 0 6.2 9 4.5 4.5 0 0 0 7 18z"/></symbol>
     <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H9l2 2h8.5A1.5 1.5 0 0 1 21 8.5v9a1.5 1.5 0 0 1-1.5 1.5h-15A1.5 1.5 0 0 1 3 17.5z"/></symbol>
+    <symbol id="i-temp" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5" stroke-dasharray="3.2 2.6"/><path d="M12 8v4l2.5 1.5"/></symbol>
+    <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></symbol>
     <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/></symbol>
     <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
     <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
@@ -105,13 +108,15 @@
         </div>
       </aside>
       <div class="conv" id="conv">
-        <div class="drop" id="drop" hidden><svg class="i"><use href="#i-clip"/></svg><b>Отпустите, чтобы прикрепить</b><span>Изображения, видео, аудио, текст, Word, Excel — до 25 МБ</span></div>
+        <div class="drop" id="drop" hidden><svg class="i"><use href="#i-clip"/></svg><b>Отпустите, чтобы прикрепить</b><span>Изображения, видео, аудио, текст, PDF, Word, Excel — до 25 МБ</span></div>
         <div class="conv-head">
           <button class="btn ghost sm threads-btn" type="button" id="threads-btn" aria-label="Чаты"><svg class="i"><use href="#i-list"/></svg><span class="lbl">Чаты</span></button>
           <div class="picker">
             <button type="button" id="picker-btn" aria-expanded="false"><span class="dot off"></span><span class="pname">Выберите модель</span><svg class="i i15"><use href="#i-down"/></svg></button>
             <div class="menu" id="picker-menu" hidden><input type="search" id="picker-q" placeholder="Найти модель" aria-label="Найти модель"><div class="mscroll" id="picker-list"></div><div class="note" id="picker-note"></div></div>
           </div>
+          <button type="button" class="pchip" id="proj-chip" hidden></button>
+          <button type="button" class="tog tempbtn" id="temp-btn" aria-pressed="false" title="Временный чат: не сохраняется на ПК и исчезает, когда вы из него уходите" aria-label="Временный чат"><svg class="i i15"><use href="#i-temp"/></svg><span class="lbl">Временный</span></button>
           <span class="chatcost" id="chat-cost" hidden tabindex="0"></span><span class="keep" id="keep" tabindex="0" hidden></span>
         </div>
         <div class="messages" id="messages"><div id="message-list"></div></div>
@@ -128,7 +133,7 @@
               <div class="websearch thinkwrap"><button type="button" class="tog" id="think-btn" aria-haspopup="true" aria-label="Размышления" title="Размышления"><svg class="i i15"><use href="#i-brain"/></svg></button><div class="pop" id="think-pop" hidden></div></div>
               <div class="websearch webwrap"><button type="button" class="tog" id="web" aria-pressed="false" aria-expanded="false" aria-haspopup="true" aria-label="Веб-поиск" title="Веб-поиск"><svg class="i i15"><use href="#i-globe"/></svg></button><div class="pop" id="web-pop" hidden><div class="line"><b>Искать в интернете</b><label class="switch"><input type="checkbox" id="web-on" aria-label="Поиск в интернете"><span></span></label></div><div class="line"><span class="muted">Движок</span><select id="web-engine" class="sel-auto" aria-label="Поисковый движок"></select></div><div class="line" id="web-host-line"><span class="muted" id="web-host-label">Адрес</span><span class="mono" id="web-host">не задан</span></div><span class="hint" id="web-hint">Модель сама решает, когда искать. Источники появятся под ответом.</span></div></div>
               <div class="websearch ctxwrap" id="ctx-wrap" hidden><button type="button" class="tog ctxring" id="ctx-btn" aria-haspopup="true" aria-expanded="false" aria-label="Контекст"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7" class="trk"/><circle cx="10" cy="10" r="7" class="val" id="ctx-ring" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 10 10)"/></svg></button><div class="pop ctxpop" id="ctx-pop" hidden></div></div>
-              <button type="button" class="tog attach-r" id="attach-btn" title="Прикрепить файл: изображение, видео, аудио, текст, Word, Excel. Можно перетащить в окно чата." aria-label="Прикрепить файл"><svg class="i i15"><use href="#i-clip"/></svg></button><input type="file" id="attach-input" multiple hidden><button type="button" class="tog mic" id="mic-btn" hidden aria-pressed="false" aria-label="Голосовой ввод" title="Голосовой ввод"><svg class="i i15"><use href="#i-mic"/></svg></button><div class="dict" id="dict" hidden><button type="button" class="tog dict-x" id="dict-cancel" aria-label="Отменить запись" title="Отменить запись"><svg class="i i15"><use href="#i-x"/></svg></button><div class="wave" id="dict-wave" aria-hidden="true"></div><span class="dict-st" id="dict-state" role="status"></span><button type="button" class="tog dict-stop" id="dict-stop" aria-label="Закончить запись" title="Закончить запись"><svg class="i i15"><use href="#i-stop"/></svg></button></div><button type="submit" class="send" id="send" aria-label="Отправить"><svg class="i"><use href="#i-up"/></svg></button>
+              <button type="button" class="tog attach-r" id="attach-btn" title="Прикрепить файл: изображение, видео, аудио, текст, PDF, Word, Excel. Можно перетащить в окно чата." aria-label="Прикрепить файл"><svg class="i i15"><use href="#i-clip"/></svg></button><input type="file" id="attach-input" multiple hidden><button type="button" class="tog mic" id="mic-btn" hidden aria-pressed="false" aria-label="Голосовой ввод" title="Голосовой ввод"><svg class="i i15"><use href="#i-mic"/></svg></button><div class="dict" id="dict" hidden><button type="button" class="tog dict-x" id="dict-cancel" aria-label="Отменить запись" title="Отменить запись"><svg class="i i15"><use href="#i-x"/></svg></button><div class="wave" id="dict-wave" aria-hidden="true"></div><span class="dict-st" id="dict-state" role="status"></span><button type="button" class="tog dict-stop" id="dict-stop" aria-label="Закончить запись" title="Закончить запись"><svg class="i i15"><use href="#i-stop"/></svg></button></div><button type="submit" class="send" id="send" aria-label="Отправить"><svg class="i"><use href="#i-up"/></svg></button>
             </div>
           </form>
           <div class="foot" id="chat-foot">ИИ может ошибаться — проверяйте важное.</div>
@@ -435,6 +440,27 @@
   <footer><button class="btn ghost sm danger-text sp-right" type="button" id="ae-delete">Удалить</button><button class="btn" type="button" data-close>Отмена</button><button class="btn primary" type="button" id="ae-save">Сохранить</button></footer>
 </aside>
 
+<!-- project editor -->
+<aside class="drawer" id="proj-drawer" hidden aria-label="Проект">
+  <header class="relh">
+    <button class="btn ghost sm x" type="button" data-close aria-label="Закрыть"><svg class="i"><use href="#i-x"/></svg></button>
+    <span class="label">Проект</span><h1 id="pj-title" class="dh1">Новый проект</h1>
+  </header>
+  <div class="scroll">
+    <div class="row2 pj-name">
+      <div class="field"><label for="pj-emoji">Значок</label><input id="pj-emoji" class="emo-input" type="text" maxlength="8" placeholder="📁"></div>
+      <div class="field"><label for="pj-name">Название</label><input id="pj-name" type="text" maxlength="80" placeholder="Например, Ремонт дачи"></div>
+    </div>
+    <div class="field"><label for="pj-instr">Указания</label>
+      <textarea id="pj-instr" rows="7" placeholder="Что модели знать и учитывать во всех чатах проекта: задача, тон, формат ответов."></textarea>
+      <div class="line"><span class="hint">Передаются модели в каждом чате проекта, вместе с указаниями ассистента.</span><span class="hint" id="pj-count">0 / 8000</span></div></div>
+    <section class="stack8"><div class="line"><h2>Документы</h2><label class="btn ghost sm filelabel" id="pj-add"><svg class="i i15"><use href="#i-plus"/></svg>Добавить<input type="file" id="pj-file" multiple accept=".pdf,.docx,.xlsx,.csv,.txt,.md,.json,.html,.xml" hidden></label></div>
+      <ul class="pj-files" id="pj-files"></ul>
+      <span class="hint" id="pj-note">PDF, Word, Excel, CSV или текст, до 25 МБ. На ПК хранится только их текст; модель получает документы целиком, а если они не помещаются — подходящие к вопросу фрагменты.</span></section>
+  </div>
+  <footer><button class="btn ghost sm danger-text sp-right" type="button" id="pj-delete">Удалить проект</button><button class="btn" type="button" data-close>Отмена</button><button class="btn primary" type="button" id="pj-save">Сохранить</button></footer>
+</aside>
+
 <!-- automation settings -->
 <aside class="drawer au-drawer" id="au-drawer" hidden aria-label="Автоматизация">
   <header class="relh">
@@ -487,9 +513,9 @@
   <div class="scroll">
     <div class="stack8" id="ar-input">
       <div id="ar-vars" class="stack8"></div>
-      <textarea id="ar-text" rows="4" placeholder="Данные: текстом, или приложите фото, Word, Excel, CSV."></textarea>
+      <textarea id="ar-text" rows="4" placeholder="Данные: текстом, или приложите фото, PDF, Word, Excel, CSV."></textarea>
       <div class="ar-files" id="ar-files"></div>
-      <div class="line ar-actions"><label class="btn ghost sm filelabel"><svg class="i i15"><use href="#i-clip"/></svg>Приложить<input type="file" id="ar-file" multiple accept="image/*,.docx,.xlsx,.csv,.txt,.md" hidden></label>
+      <div class="line ar-actions"><label class="btn ghost sm filelabel"><svg class="i i15"><use href="#i-clip"/></svg>Приложить<input type="file" id="ar-file" multiple accept="image/*,.pdf,.docx,.xlsx,.csv,.txt,.md" hidden></label>
         <select id="ar-model" class="sel-auto" aria-label="Модель"></select>
         <button class="btn primary" type="button" id="ar-go">Запустить</button><button class="btn" type="button" id="ar-stop" hidden>Остановить</button></div>
       <div class="banner ar-need" id="ar-need" hidden></div>
@@ -543,6 +569,7 @@
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <script src="/app.js"></script>
 <script src="/chat.js"></script>
+<script src="/projects.js"></script>
 <script src="/models.js"></script>
 <script src="/server.js"></script>
 <script src="/settings.js"></script>

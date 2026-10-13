@@ -43,7 +43,9 @@ const (
 type Runner struct {
 	Chats      *chats.Store
 	Assistants *chats.Assistants
-	Config     func() *config.Config
+	// Projects give a chat in a project its instructions and documents.
+	Projects *chats.Projects
+	Config   func() *config.Config
 	// Model describes a model by key; Context is the running context of a local model.
 	Model func(ctx context.Context, key string) (library.Model, int, error)
 	// Local sends a request to the running local model through /v1 and its queue.
@@ -228,7 +230,10 @@ type turn struct {
 	native    bool // the model searches itself (ChatGPT with OpenAI's web search)
 	read      bool // pages of the results are read in full
 	effort    string
-	private   bool // an automation's request: Automation instead of Local
+	private   bool // an automation's or a temporary chat's request: Automation instead of Local
+	// project is the chat's project with the text of its documents.
+	project *chats.Project
+	docs    []chats.Doc
 	// sites are an automation step's own sites: the search stays on them, their pages and the
 	// links between them are read.
 	sites []string
@@ -261,7 +266,9 @@ func (r *Runner) prepare(ctx context.Context, in Request) (*turn, error) {
 	if model.Source == "local" && !model.Running {
 		return nil, refuse(409, "Модель %s не запущена. Выберите её в списке моделей чата — она запустится.", model.Name)
 	}
-	t := &turn{chat: chat, model: model, context: ctxLen, web: in.Web, effort: reasoning.Choose(model.Reasoning, in.Effort)}
+	t := &turn{chat: chat, model: model, context: ctxLen, web: in.Web, effort: reasoning.Choose(model.Reasoning, in.Effort),
+		private: chat.Temporary}
+	r.withProject(t)
 	if r.Config != nil {
 		t.read = in.Web && r.Read != nil && !r.Config().ChatSettings().NoReadPages
 	}
@@ -287,7 +294,7 @@ func (r *Runner) prepare(ctx context.Context, in Request) (*turn, error) {
 	for _, f := range in.Files {
 		kind := attach.KindOf(f.Name)
 		if kind == "" {
-			return nil, refuse(400, "«%s»: такой тип файла не поддерживается. Можно: изображения, видео, аудио, текст, Word, Excel.", f.Name)
+			return nil, refuse(400, "«%s»: такой тип файла не поддерживается. Можно: изображения, видео, аудио, текст, Word, Excel, PDF.", f.Name)
 		}
 		if base64.StdEncoding.DecodedLen(len(f.Data)) > attach.MaxFile+3 {
 			return nil, refuse(400, "«%s»: больше 25 МБ.", f.Name)
@@ -356,6 +363,22 @@ func (r *Runner) prepare(ctx context.Context, in Request) (*turn, error) {
 	t.user = stored.Messages[len(stored.Messages)-1]
 	t.history = stored.Messages[:len(stored.Messages)-1]
 	return t, nil
+}
+
+// withProject gives the turn its chat's project; a project that is gone or cannot be read is
+// left out, and the chat answers without it.
+func (r *Runner) withProject(t *turn) {
+	if t.chat.ProjectID == "" || r.Projects == nil {
+		return
+	}
+	p, docs, err := r.Projects.Docs(t.chat.ProjectID)
+	if err != nil {
+		if !errors.Is(err, chats.ErrNotFound) {
+			r.logf("chat: project %s: %v", t.chat.ProjectID, err)
+		}
+		return
+	}
+	t.project, t.docs = &p, docs
 }
 
 func understands(m library.Model, need string) bool {

@@ -240,7 +240,7 @@ async function copyText(text){if(navigator.clipboard&&window.isSecureContext){aw
 
 // ── drawers and dialogs ──
 function show(el){byId('scrim').hidden=false;el.hidden=false;}
-function hideAll(){byId('scrim').hidden=true;['drawer','add','asst-drawer','au-drawer','au-run'].forEach(id=>byId(id).hidden=true);if(typeof auForget==='function')auForget();}
+function hideAll(){byId('scrim').hidden=true;['drawer','add','asst-drawer','proj-drawer','au-drawer','au-run'].forEach(id=>byId(id).hidden=true);if(typeof auForget==='function')auForget();}
 document.addEventListener('keydown',e=>{if(e.key==='Escape')hideAll();});
 
 // ── navigation ──
