@@ -180,7 +180,20 @@ function openRun(a,tab){A.run={a,files:[],values:null,text:''};const steps=auSte
   // The model is asked only when some step has none of its own and the automation has none.
   const sel=byId('ar-model');if(a.model||steps.every(s=>s.model)){auModels(sel,a.model||steps[0].model,a.private,null);sel.disabled=true;}else{sel.disabled=false;const chat=modelByKey(C.chosen);
     auModels(sel,a.private&&chat&&chat.source!=='local'?'':C.chosen,a.private,null);}
-  byId('ar-tabs').hidden=!a.history;arTab(tab||'run');show(byId('au-run'));}
+  byId('ar-tabs').hidden=!a.history;renderRunNeed();arTab(tab||'run');show(byId('au-run'));}
+// A run never starts a model by itself: a model on the PC that is not running is named here with a
+// button, and starting it is the owner's own action, as choosing it in the chat is.
+const arModelKeys=()=>{const r=A.run,pick=byId('ar-model').value;return [...new Set(auSteps(r.a).map(s=>s.model||r.a.model||pick).filter(Boolean))];};
+function renderRunNeed(){const box=byId('ar-need');if(!A.run){box.hidden=true;return;}
+  const local=arModelKeys().map(modelByKey).filter(m=>m?.source==='local'),off=local.filter(m=>!m.running),m=off[0];
+  box.hidden=!m;if(!m){box.innerHTML='';return;}
+  const busy=A.run.starting===m.key;
+  box.innerHTML=`<span>Модель ${esc(m.name)} не запущена: автоматизация сама модели не запускает.${local.length>1?' Шаги используют разные модели на ПК, а работает одна за раз — выберите для шагов одну.':''}</span>`+
+    `<button class="btn sm primary" type="button" data-ar-start="${esc(m.key)}"${busy?' disabled':''}>${busy?'Запускается…':'Запустить модель'}</button>`;}
+byId('ar-model').addEventListener('change',renderRunNeed);
+byId('ar-need').addEventListener('click',async e=>{const b=e.target.closest('[data-ar-start]'),r=A.run;if(!b||!r||r.starting)return;const m=modelByKey(b.dataset.arStart);if(!m)return;
+  r.starting=m.key;renderRunNeed();try{await startLocal(m);}catch(x){fail(x);}finally{r.starting='';renderRunNeed();}});
+on('library',()=>{if(A.run)renderRunNeed();});
 function arTab(t){$$('#ar-tabs [data-ar-tab]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.arTab===t)));
   byId('ar-input').hidden=t!=='run';byId('ar-history').hidden=t!=='history';if(t==='history'){['ar-answer','ar-result','ar-steps'].forEach(id=>byId(id).hidden=true);loadHistory();}}
 byId('ar-tabs').addEventListener('click',e=>{const b=e.target.closest('[data-ar-tab]');if(b)arTab(b.dataset.arTab);});
