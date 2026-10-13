@@ -107,7 +107,13 @@ func (r *Runner) run(ctx context.Context, t *turn, out *stream) {
 	finalOnly := false
 	for round := 0; round < maxRounds && ctx.Err() == nil; round++ {
 		body := r.request(t, messages, tools && !finalOnly && round < maxRounds-1 && len(a.searches) < maxSearches)
+		asked, before := r.now(), len(a.text)
+		if out.trace != nil {
+			size, _ := json.Marshal(body["messages"])
+			out.note("Модель %s отвечает: запрос %d тыс. знаков", t.model.Name, utf8.RuneCount(size)/1000)
+		}
 		calls, err := r.generate(ctx, t, body, a, out)
+		out.note("Модель ответила за %s: %d знаков, вызовов инструментов: %d", r.now().Sub(asked).Round(time.Second), utf8.RuneCountInString(a.text[min(before, len(a.text)):]), len(calls))
 		// An answer written before the stray command is kept when it is an answer already.
 		if errors.Is(err, errToolMarkup) && utf8.RuneCountInString(strings.TrimSpace(a.text)) >= 200 {
 			err = nil
@@ -594,12 +600,14 @@ func (r *Runner) search(ctx context.Context, a *answer, q string, out *stream) s
 	a.sideCost += found.CostUSD
 	if err != nil {
 		out.send("status", map[string]string{"text": err.Error()})
+		out.note("Поиск «%s» не удался: %v", q, err)
 		return "Поиск не удался: " + err.Error()
 	}
 	results := found.Results
 	if found.Summary == "" {
 		results = websearch.Relevant(results, a.subject)
 	}
+	out.note("Поиск «%s»: найдено %d", q, len(results))
 	if len(results) == 0 && found.Summary == "" {
 		return "Ничего не найдено."
 	}

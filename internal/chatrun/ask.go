@@ -86,6 +86,9 @@ type Task struct {
 	// links between them; the owner listed them in the automation.
 	Sites   []string
 	Timeout time.Duration
+	// Trace hears each thing the task does, with the time since it began; it may be called from
+	// several goroutines at once.
+	Trace func(string)
 }
 
 // taskNote tells the model nobody waits to answer its questions: a scheduled run is read later.
@@ -144,9 +147,20 @@ func (r *Runner) Task(ctx context.Context, q Task) (chats.Message, error) {
 	}
 	// OpenAI's own search cannot be kept on the sites: OmniBox searches and reads them itself.
 	t.native = t.web && len(t.sites) == 0 && model.Source == "chatgpt" && r.ChatGPTSearch != nil && r.ChatGPTSearch()
-	r.run(ctx, t, &stream{})
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) && result.Text == "" {
-		result.Error = "Модель не ответила вовремя. Попробуйте ещё раз или выберите модель быстрее."
+	out := &stream{}
+	if q.Trace != nil {
+		begun := time.Now()
+		out.trace = func(s string) {
+			d := time.Since(begun).Round(time.Second)
+			q.Trace(fmt.Sprintf("%d:%02d %s", int(d.Minutes()), int(d.Seconds())%60, s))
+		}
+	}
+	r.run(ctx, t, out)
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		out.note("Время шага вышло: %d мин", int(q.Timeout.Minutes()))
+		if result.Text == "" {
+			result.Error = fmt.Sprintf("Модель не ответила за %d мин. Ход выполнения — ниже: видно, где ушло время. Помогает модель быстрее (облачная), меньше страниц или выключенные размышления у модели.", int(q.Timeout.Minutes()))
+		}
 	}
 	return result, nil
 }

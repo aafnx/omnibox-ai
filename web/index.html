@@ -491,9 +491,10 @@
       <div class="ar-files" id="ar-files"></div>
       <div class="line ar-actions"><label class="btn ghost sm filelabel"><svg class="i i15"><use href="#i-clip"/></svg>Приложить<input type="file" id="ar-file" multiple accept="image/*,.docx,.xlsx,.csv,.txt,.md" hidden></label>
         <select id="ar-model" class="sel-auto" aria-label="Модель"></select>
-        <button class="btn primary" type="button" id="ar-go">Запустить</button></div>
+        <button class="btn primary" type="button" id="ar-go">Запустить</button><button class="btn" type="button" id="ar-stop" hidden>Остановить</button></div>
       <div class="banner ar-need" id="ar-need" hidden></div>
       <span class="hint" id="ar-status" role="status"></span>
+      <details class="au-trace" id="ar-trace" hidden open><summary>Ход выполнения</summary><ol id="ar-trace-list"></ol></details>
     </div>
     <div class="stack8" id="ar-steps" hidden></div>
     <div class="stack8" id="ar-answer" hidden>

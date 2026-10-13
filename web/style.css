@@ -941,3 +941,6 @@ select{min-width:0;max-width:100%;text-overflow:ellipsis}
 .au-tadd{border-style:dashed}
 .au-tadd .label{margin-bottom:-2px}
 .au-frow select[data-au-fcheck],#au-tadd-check{width:auto;max-width:45%;flex:0 0 auto}
+.au-trace{border:1px solid var(--line);border-radius:var(--r-s);padding:6px 10px;font-size:12.5px;color:var(--muted)}
+.au-trace>summary{cursor:pointer;font-weight:500;color:var(--text)}
+.au-trace ol{margin:6px 0 0;padding-left:20px;max-height:240px;overflow:auto;display:grid;gap:2px;font-variant-numeric:tabular-nums;overflow-wrap:anywhere}

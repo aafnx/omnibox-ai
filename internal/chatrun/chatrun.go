@@ -198,6 +198,15 @@ func writeError(w http.ResponseWriter, status int, message string) {
 // stream sends the answer's events to its job; a side task without a job sends nowhere.
 type stream struct {
 	job *job
+	// trace hears what an automation's task does: its owner follows the run and keeps it.
+	trace func(string)
+}
+
+// note tells the trace what the run does now; the chat has no trace.
+func (s *stream) note(format string, args ...any) {
+	if s.trace != nil {
+		s.trace(fmt.Sprintf(format, args...))
+	}
 }
 
 func (s *stream) send(name string, v any) {

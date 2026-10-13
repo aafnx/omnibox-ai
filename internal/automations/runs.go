@@ -34,6 +34,8 @@ type Run struct {
 	CostUSD    float64        `json:"cost_usd,omitempty"`
 	// Steps are the results of every step when there are several; Text and Values are the last's.
 	Steps []StepResult `json:"steps,omitempty"`
+	// Trace is what a one-step run did; with several steps each keeps its own.
+	Trace []string `json:"trace,omitempty"`
 	// Seen is false for a scheduled result the owner has not opened.
 	Seen bool `json:"seen"`
 }
@@ -46,6 +48,8 @@ type StepResult struct {
 	Text   string  `json:"text,omitempty"`
 	Values []Value `json:"values,omitempty"`
 	Error  string  `json:"error,omitempty"`
+	// Trace is what the step did: searches, pages, the model's turns, each with its time.
+	Trace []string `json:"trace,omitempty"`
 }
 
 const (

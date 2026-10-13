@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -48,6 +49,9 @@ type automationRequest struct {
 	Text         string                `json:"text"`
 	Files        []automationFile      `json:"files"`
 	Values       map[string]string     `json:"values"`
+	// Background starts a run as a job the panel follows; Job names one to follow or stop.
+	Background bool   `json:"background"`
+	Job        string `json:"job"`
 }
 
 // serveAutomations is the automations' API. A run's data is read from the request and never
@@ -257,7 +261,25 @@ func (c *chatSide) automationAction(ctx context.Context, run *chatrun.Runner, in
 		if err != nil {
 			return nil, err
 		}
-		return c.execute(ctx, run, a, modelFor(in.Model, a), in, "manual")
+		if !in.Background {
+			return c.execute(ctx, run, a, modelFor(in.Model, a), in, "manual")
+		}
+		p, err := c.prepare(ctx, run, a, modelFor(in.Model, a), in, "manual")
+		if err != nil {
+			return nil, err
+		}
+		id, err := c.Jobs.start(func(ctx context.Context, trace func(string)) (any, error) { return c.perform(ctx, run, p, trace) })
+		if err != nil {
+			return nil, err
+		}
+		return map[string]string{"job": id}, nil
+	case "job":
+		return c.Jobs.state(in.Job)
+	case "stop":
+		if err := c.Jobs.stop(in.Job); err != nil {
+			return nil, err
+		}
+		return map[string]bool{"stopped": true}, nil
 	case "build":
 		a, d, err := c.automation(in.ID)
 		if err != nil {
@@ -288,10 +310,37 @@ func (c *chatSide) automationAction(ctx context.Context, run *chatrun.Runner, in
 	return nil, errors.New("Неизвестное действие.")
 }
 
+// plan is a run checked before it starts: every step's prompt filled, its model known and
+// running, the data read. Whatever would stop the run is refused here, before anything is spent.
+type plan struct {
+	a             automations.Automation
+	in            automationRequest
+	trigger       string
+	prompts, keys []string
+	vision        []bool
+	data          string
+	files         []chats.Attachment
+	images        []map[string]any
+}
+
+// Step time: a step that walks its sites reads many pages and needs longer.
+const (
+	stepTimeout     = 10 * time.Minute
+	siteStepTimeout = 20 * time.Minute
+)
+
 // execute runs an automation's steps with the data given and keeps the result when its history
 // is on. A scheduled run comes here too, with no data and the saved values of the prompts' names.
-// Each step gets the data and what the steps before it gave; a step that fails ends the run.
 func (c *chatSide) execute(ctx context.Context, run *chatrun.Runner, a automations.Automation, key string, in automationRequest, trigger string) (any, error) {
+	p, err := c.prepare(ctx, run, a, key, in, trigger)
+	if err != nil {
+		return nil, err
+	}
+	return c.perform(ctx, run, p, nil)
+}
+
+// prepare checks a run before it starts.
+func (c *chatSide) prepare(ctx context.Context, run *chatrun.Runner, a automations.Automation, key string, in automationRequest, trigger string) (*plan, error) {
 	if a.Kind == automations.KindDocument && len(a.Template.Fields) == 0 {
 		return nil, errors.New("В шаблоне нет полей: найдите их в настройках автоматизации.")
 	}
@@ -332,13 +381,34 @@ func (c *chatSide) execute(ctx context.Context, run *chatrun.Runner, a automatio
 	if err != nil {
 		return nil, err
 	}
+	return &plan{a: a, in: in, trigger: trigger, prompts: prompts, keys: keys, vision: vision, data: data, files: files, images: images}, nil
+}
+
+// perform runs the steps of a checked run. Each step gets the data and what the steps before it
+// gave; a step that fails ends the run. trace, when given, hears what each step does.
+func (c *chatSide) perform(ctx context.Context, run *chatrun.Runner, p *plan, trace func(string)) (any, error) {
+	a, in, trigger, prompts, keys, vision, data, files, images := p.a, p.in, p.trigger, p.prompts, p.keys, p.vision, p.data, p.files, p.images
 	res := automations.Run{Automation: a.ID, Created: time.Now().UTC(), Trigger: trigger, Model: keys[len(keys)-1], Input: in.Text, Seen: trigger == "manual"}
 	for _, f := range in.Files {
 		res.Files = append(res.Files, f.Name)
 	}
 	seen := map[string]bool{}
 	for i, st := range a.Steps {
-		task := chatrun.Task{Model: keys[i], Private: a.Private, Session: "panel-auto-" + a.ID, Text: stepData(data, res.Steps), Files: files, Web: st.Web, Read: st.Read, Sites: st.Sites}
+		task := chatrun.Task{Model: keys[i], Private: a.Private, Session: "panel-auto-" + a.ID, Text: stepData(data, res.Steps), Files: files, Web: st.Web, Read: st.Read, Sites: st.Sites, Timeout: stepTimeout}
+		if len(st.Sites) > 0 {
+			task.Timeout = siteStepTimeout
+		}
+		// Each step keeps its own trace; the run's follower hears it as it goes.
+		var mu sync.Mutex
+		var steps []string
+		task.Trace = func(s string) {
+			mu.Lock()
+			steps = append(steps, s)
+			mu.Unlock()
+			if trace != nil {
+				trace(st.Title(i) + " · " + s)
+			}
+		}
 		// A model that cannot see gets the text only; the first step's model was checked to see.
 		if vision[i] {
 			task.Media = images
@@ -358,7 +428,9 @@ func (c *chatSide) execute(ctx context.Context, run *chatrun.Runner, a automatio
 			}
 			msg.Error = err.Error()
 		}
-		step := automations.StepResult{Name: st.Title(i), Kind: st.Kind, Model: keys[i], Error: msg.Error}
+		mu.Lock()
+		step := automations.StepResult{Name: st.Title(i), Kind: st.Kind, Model: keys[i], Error: msg.Error, Trace: steps}
+		mu.Unlock()
 		if msg.Meta != nil {
 			res.CostUSD += msg.Meta.CostUSD
 			for _, s := range msg.Meta.Sources {
@@ -383,8 +455,9 @@ func (c *chatSide) execute(ctx context.Context, run *chatrun.Runner, a automatio
 			break
 		}
 	}
+	// One step: its result is the run's, and its trace too.
 	if len(a.Steps) == 1 {
-		res.Steps = nil
+		res.Trace, res.Steps = res.Steps[0].Trace, nil
 	}
 	if a.History && !a.Private {
 		if saved, err := c.Automations.SaveRun(res); err != nil {

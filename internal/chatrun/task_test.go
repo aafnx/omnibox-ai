@@ -83,7 +83,10 @@ func TestTaskWalksItsSites(t *testing.T) {
 		sse(call("https://evil.example/x")),
 		sse(`{"choices":[{"delta":{"content":"Законопроект № 2-8 [2]."}}]}`),
 	}
-	msg, err := g.r.Task(context.Background(), Task{Model: local.Key, Session: "panel-auto-x", Prompt: "Найди законопроекты о связи.", Web: true, Read: true, Sites: []string{"sozd.duma.gov.ru"}})
+	var trace []string
+	var tmu sync.Mutex
+	msg, err := g.r.Task(context.Background(), Task{Model: local.Key, Session: "panel-auto-x", Prompt: "Найди законопроекты о связи.", Web: true, Read: true, Sites: []string{"sozd.duma.gov.ru"},
+		Trace: func(s string) { tmu.Lock(); trace = append(trace, s); tmu.Unlock() }})
 	if err != nil || msg.Text != "Законопроект № 2-8 [2]." {
 		t.Fatalf("%v %+v", err, msg)
 	}
@@ -103,5 +106,15 @@ func TestTaskWalksItsSites(t *testing.T) {
 	last := g.bodies[3]["messages"].([]any)
 	if c := last[len(last)-1].(map[string]any)["content"].(string); !strings.Contains(c, "прочитать нельзя") {
 		t.Fatalf("a page off the sites was read: %s", c)
+	}
+	// The trace tells where the time went: the search, the pages, the model's turns.
+	tmu.Lock()
+	tr := strings.Join(trace, "\n")
+	tmu.Unlock()
+	for _, want := range []string{"0:00 Модель составляет поисковые запросы", "site:sozd.duma.gov.ru»: найдено 1", "Прочитана страница https://sozd.duma.gov.ru/oz?q=1",
+		"Модель открыла https://sozd.duma.gov.ru/bill/2-8", "Модель хотела открыть https://evil.example/x — нельзя", "Модель a отвечает: запрос", "Модель ответила за"} {
+		if !strings.Contains(tr, want) {
+			t.Fatalf("trace has no %q:\n%s", want, tr)
+		}
 	}
 }

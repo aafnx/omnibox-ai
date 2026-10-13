@@ -109,8 +109,12 @@ func (r *Runner) readInto(ctx context.Context, messages []map[string]any, a *ans
 				defer cancel()
 				if p, err := r.Read(c, u); err == nil && utf8.RuneCountInString(strings.TrimSpace(p.Text)) >= minPageText {
 					pages[i] = &p
+					out.note("Прочитана страница %s", u)
 				} else if err != nil {
 					r.logf("chat: page %s: %v", websearch.Host(u), err)
+					out.note("Страница %s не прочитана: %v", u, err)
+				} else {
+					out.note("Страница %s почти без текста — пропущена (возможно, собирается скриптами)", u)
 				}
 			}(i, u)
 		}
@@ -142,6 +146,7 @@ func (r *Runner) readTool(ctx context.Context, a *answer, t *turn, url string, o
 	}
 	switch {
 	case !known:
+		out.note("Модель хотела открыть %s — нельзя", url)
 		if len(t.sites) > 0 {
 			return "Эту страницу прочитать нельзя: доступны адреса из результатов поиска, из задачи и страницы сайтов " + strings.Join(t.sites, ", ") + "."
 		}
@@ -156,8 +161,10 @@ func (r *Runner) readTool(ctx context.Context, a *answer, t *turn, url string, o
 	defer cancel()
 	p, err := r.Read(c, url)
 	if err != nil {
+		out.note("Модель открыла %s — не прочитана: %v", url, err)
 		return err.Error()
 	}
+	out.note("Модель открыла %s", url)
 	n := a.source(url, p.Title)
 	a.pages = append(a.pages, url)
 	out.send("sources", a.sources)

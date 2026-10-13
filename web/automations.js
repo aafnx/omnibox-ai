@@ -202,7 +202,7 @@ byId('au-delete').addEventListener('click',async()=>{if(!A.cur?.id||!await confi
 
 // ── run ──
 function openRun(a,tab){A.run={a,files:[],values:null,text:''};const steps=auSteps(a);byId('ar-title').innerHTML=`${auEmoji(a)}<span>${esc(a.name)}</span>`;byId('ar-policy').textContent=auPolicy(a);
-  byId('ar-text').value='';byId('ar-status').textContent='';['ar-result','ar-answer','ar-steps'].forEach(id=>byId(id).hidden=true);byId('ar-done').hidden=true;renderRunFiles();
+  byId('ar-text').value='';byId('ar-status').textContent='';renderTrace([]);['ar-result','ar-answer','ar-steps'].forEach(id=>byId(id).hidden=true);byId('ar-done').hidden=true;renderRunFiles();
   byId('ar-text').placeholder=steps[0].kind==='task'?'Дополнительные данные — необязательно: текст, фото, Word, Excel, CSV.':'Данные: текстом, или приложите фото, Word, Excel, CSV.';
   byId('ar-go').textContent=steps.length===1&&a.kind!=='task'?'Распознать':'Запустить';
   byId('ar-vars').innerHTML=auStepVars(a).map(v=>`<div class="field"><label>${esc(v)}</label><input type="text" data-ar-var="${esc(v)}" maxlength="300" value="${esc(a.vars?.[v]||'')}"></div>`).join('');
@@ -232,17 +232,30 @@ byId('ar-file').addEventListener('change',async e=>{const list=[...(e.target.fil
     try{A.run.files.push({name:f.name,data:await readB64(f)});}catch(x){fail(x);}}renderRunFiles();});
 byId('ar-files').addEventListener('click',e=>{const b=e.target.closest('[data-ar-fdel]');if(!b)return;A.run.files.splice(+b.dataset.arFdel,1);renderRunFiles();});
 const arVarValues=()=>Object.fromEntries($$('#ar-vars [data-ar-var]').map(i=>[i.dataset.arVar,i.value]));
+// A run goes on in the service; the window follows it while open and shows what it does. Closing
+// the window does not stop the run: its result goes to the history when the automation keeps one.
+let AR_POLL=1500;
+function renderTrace(lines){const box=byId('ar-trace');box.hidden=!lines?.length;
+  byId('ar-trace-list').innerHTML=(lines||[]).map(l=>`<li>${esc(l)}</li>`).join('');}
 byId('ar-go').addEventListener('click',async()=>{const r=A.run;if(!r)return;const text=byId('ar-text').value.trim(),steps=auSteps(r.a);
   if(steps[0].kind!=='task'&&!text&&!r.files.length){notice('Дайте данные: текст, фото или файл.',true);return;}
-  const b=byId('ar-go'),st=byId('ar-status');b.disabled=true;
-  st.textContent=(steps.length>1?`Шагов: ${steps.length}. `:'')+(auWeb(r.a)?'Модель ищет и работает… Это может занять несколько минут.':'Модель работает… Это может занять минуту-две.');
-  try{const d=await api('/api/automations',{action:'run',id:r.a.id,model:byId('ar-model').value,text,files:r.files,vars:arVarValues()});
-    if(A.run!==r)return;st.textContent=d.run.cost_usd>0?`Стоимость: ${money(d.run.cost_usd)}`:'';showResult(d.run);}
-  catch(e){st.textContent='';fail(e);}finally{b.disabled=false;}});
+  const b=byId('ar-go'),stop=byId('ar-stop'),st=byId('ar-status');b.disabled=true;renderTrace([]);
+  st.textContent=(steps.length>1?`Шагов: ${steps.length}. `:'')+(auWeb(r.a)?'Модель ищет и работает… Это может занять несколько минут — окно можно закрыть, результат будет в истории.':'Модель работает… Это может занять минуту-две.');
+  try{const {job}=await api('/api/automations',{action:'run',background:true,id:r.a.id,model:byId('ar-model').value,text,files:r.files,vars:arVarValues()});
+    r.job=job;stop.hidden=false;let d;
+    for(;;){if(A.run!==r)return;await new Promise(res=>setTimeout(res,AR_POLL));if(A.run!==r)return;
+      d=await api('/api/automations',{action:'job',job});renderTrace(d.trace);if(d.done)break;}
+    if(d.error){st.textContent='';fail(new Error(d.error));return;}
+    st.textContent=d.run.cost_usd>0?`Стоимость: ${money(d.run.cost_usd)}`:'';showResult(d.run);if(r.a.history)loadAuto().catch(()=>{});}
+  catch(e){st.textContent='';fail(e);}finally{if(A.run===r){b.disabled=false;stop.hidden=true;r.job='';}}});
+byId('ar-stop').addEventListener('click',async()=>{const r=A.run;if(!r?.job)return;byId('ar-stop').hidden=true;byId('ar-status').textContent='Останавливаю…';
+  try{await api('/api/automations',{action:'stop',job:r.job});}catch(e){fail(e);}});
+// The trace of a run or a step, folded: where the time went, which pages opened and which not.
+const auTraceHTML=lines=>lines?.length?`<details class="au-trace"><summary>Ход выполнения</summary><ol>${lines.map(l=>`<li>${esc(l)}</li>`).join('')}</ol></details>`:'';
 const auValuesHTML=vals=>`<div class="au-hvals">${vals.map(v=>`<span class="faint">${esc(v.field)}</span><span>${esc(v.value)}${v.warning?` <span class="warn-text">· ${esc(v.warning)}</span>`:''}</span>`).join('')}</div>`;
 // The steps before the last are shown folded: what each gave to the next. A failed one is open.
 function stepsHTML(steps){return steps.map((s,i)=>`<details class="au-hrun au-sres"${s.error?' open':''}><summary>${i+1}. ${esc(s.name)}${s.error?' · <span class="warn-text">ошибка</span>':''}</summary>`+
-  (s.error?`<div class="err">${esc(s.error)}</div>`:s.values?.length?auValuesHTML(s.values):`<div class="md">${md(s.text||'')}</div>`)+'</details>').join('');}
+  (s.error?`<div class="err">${esc(s.error)}</div>`:s.values?.length?auValuesHTML(s.values):`<div class="md">${md(s.text||'')}</div>`)+auTraceHTML(s.trace)+'</details>').join('');}
 // With several steps the last is the result; when a step failed, every step done is shown.
 const auBefore=run=>run.steps?.length>1?run.steps.slice(0,run.error?run.steps.length:-1):[];
 function showResult(run){const r=A.run,box=byId('ar-steps'),before=auBefore(run);
@@ -287,7 +300,8 @@ async function loadHistory(){const r=A.run,box=byId('ar-history');if(!r)return;b
 function renderHistory(runs){const box=byId('ar-history');
   if(!runs.length){box.innerHTML='<div class="banner">Запусков ещё не было.</div>';return;}
   box.innerHTML=runs.map(x=>{const body=x.error?`<div class="err">${esc(x.error)}</div>`:x.values?.length?auValuesHTML(x.values):`<div class="md">${md(x.text||'',x.sources||[])}</div>`;
-    return `<details class="au-hrun"${runs[0]===x?' open':''}><summary>${esc(auWhen(x.created))} · ${x.trigger==='schedule'?'по расписанию':'вручную'}${x.error?' · <span class="warn-text">ошибка</span>':''}${x.seen?'':' <span class="pill iris">новое</span>'}</summary>${x.input?`<div class="small faint">Данные: ${esc(x.input.slice(0,300))}</div>`:''}${stepsHTML(auBefore(x))}${body}</details>`;}).join('')+
+    const last=x.steps?.length>1&&!x.error?x.steps.at(-1).trace:x.trace;
+    return `<details class="au-hrun"${runs[0]===x?' open':''}><summary>${esc(auWhen(x.created))} · ${x.trigger==='schedule'?'по расписанию':'вручную'}${x.error?' · <span class="warn-text">ошибка</span>':''}${x.seen?'':' <span class="pill iris">новое</span>'}</summary>${x.input?`<div class="small faint">Данные: ${esc(x.input.slice(0,300))}</div>`:''}${stepsHTML(auBefore(x))}${body}${auTraceHTML(last)}</details>`;}).join('')+
     '<div><button class="btn ghost sm danger-text" type="button" id="ar-hdel">Удалить историю</button></div>';}
 byId('ar-history').addEventListener('click',async e=>{if(!e.target.closest('#ar-hdel')||!A.run)return;
   if(!await confirmDialog({title:'Удалить историю?',text:'Все результаты этой автоматизации будут удалены с ПК сразу, без корзины.'}))return;
@@ -296,5 +310,5 @@ byId('au-list').addEventListener('click',e=>{const r=e.target.closest('[data-au-
   const el=r||h||ed;if(!el)return;const id=el.dataset.auRun||el.dataset.auHist||el.dataset.auEdit,a=A.list?.find(x=>x.id===id);if(!a)return;
   if(ed)openAuto(a);else openRun(a,h?'history':'run');});
 // Closing the run forgets its data, values and the link to the document in this page.
-function auForget(){if(!A.run)return;A.run=null;byId('ar-text').value='';byId('ar-values').innerHTML='';byId('ar-done').innerHTML='';byId('ar-files').innerHTML='';byId('ar-md').innerHTML='';byId('ar-steps').innerHTML='';byId('ar-history').innerHTML='';}
+function auForget(){if(!A.run)return;A.run=null;renderTrace([]);byId('ar-stop').hidden=true;byId('ar-go').disabled=false;byId('ar-text').value='';byId('ar-values').innerHTML='';byId('ar-done').innerHTML='';byId('ar-files').innerHTML='';byId('ar-md').innerHTML='';byId('ar-steps').innerHTML='';byId('ar-history').innerHTML='';}
 PAGES.auto={show(){renderAuto();loadAuto().catch(fail);}};
